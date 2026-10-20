@@ -1,0 +1,22 @@
+{
+  "name": "claude-dev-loop",
+  "owner": {
+    "name": "wentbackward"
+  },
+  "metadata": {
+    "description": "The dev-loop plugin: an autonomous, test-first, multi-agent development workflow for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "dev-loop",
+      "source": "./",
+      "description": "Autonomous multi-agent development loop: tickets, worktree implementers, independent review, batched merge gate, ordered merges.",
+      "version": "0.1.0",
+      "author": {
+        "name": "wentbackward"
+      },
+      "license": "MIT",
+      "category": "development"
+    }
+  ]
+}
