@@ -1,0 +1,20 @@
+# Changelog
+
+All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
+
+## 0.1.0 — 2026-10-19
+
+First release.
+
+- Skills: `dev-loop` (the orchestrator workflow with implementer and reviewer prompt templates), `setup`
+  (bootstrap a project), `gate` and `merge`.
+- Agents: `implementer`, `code-reviewer`, `test-engineer`, `verifier`.
+- Hooks: format-on-edit (PostToolUse), stop gate with a 5-block loop guard (Stop), role guard for identity
+  mode (PreToolUse). All are no-ops without `.dev-loop.json`.
+- Scripts: `heavy.sh` (machine-wide heavy-job queue with slots, memory cap, per-slot ports and stale temp
+  cleanup), `gate-train.sh` (one full check run per train of ready branches), `merge-train.sh` (ordered
+  squash merges verified against the gated trees), `open-pr.sh`, `paths.sh`, `doctor.sh`.
+- Optional identity mode: `as-role.sh`, GitHub App and machine-user identities, `github-protect.sh`
+  (rulesets, dry run by default), `setup-identities.sh` (GitHub App manifest flow), app manifests per role.
+- Templates: `CLAUDE.md`, `DECISIONS.md`, `dev-loop.json`, `settings.json` deny rules.
+- Tests: `tests/smoke.sh` and `tests/identity.sh` on throwaway repositories, with no network.

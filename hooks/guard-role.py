@@ -240,10 +240,12 @@ def check_segment(tokens: list[str], roles: list[str], who: str) -> None:
             f"'{' '.join(tokens[:3])}' is not allowed for agents (merges go through merge-train.sh;"
             " repository settings and credentials are for the owner)"
         )
-    hint = roles[0] if roles else "<role>"
-    refuse(
-        f"'{' '.join(tokens[:3])}' writes to GitHub: run it as `as-role.sh {hint} {' '.join(tokens[:3])} ...`"
-    )
+    allowed = [role for role in roles if operation in ROLE_OPERATIONS[role]]
+    command = " ".join(tokens[:3])
+    if not allowed:
+        owners = sorted(role for role, operations in ROLE_OPERATIONS.items() if operation in operations)
+        refuse(f"{who} may not '{command}' (it is the job of: {', '.join(owners)})")
+    refuse(f"'{command}' writes to GitHub: run it as `as-role.sh {allowed[0]} {command} ...`")
 
 
 def tool_paths(tool_input: dict) -> list[str]:
