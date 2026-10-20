@@ -1,0 +1,28 @@
+{
+  "description": "dev-loop: format the edited file and keep Claude from stopping on red fast checks or uncommitted work. Both are no-ops in projects without .dev-loop.json.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/format-on-edit.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.sh\"",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
