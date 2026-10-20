@@ -1,0 +1,28 @@
+{
+  "base_branch": "main",
+  "remote": "origin",
+  "fast_check": "make fmt-check lint",
+  "format": "uv run --quiet ruff format {file}",
+  "format_extensions": [".py"],
+  "checks": [
+    { "name": "check", "command": "make check", "summary": "passed|failed|coverage" },
+    { "name": "e2e", "command": "make e2e", "summary": "passed|failed" },
+    { "name": "docs", "command": "make docs-check", "heavy": false }
+  ],
+  "gate_setup": "",
+  "gate_worktree": "",
+  "notes_dir": "",
+  "logs_dir": "",
+  "heavy": {
+    "slots": 2,
+    "memory_max": "8G",
+    "port_env": "E2E_PORT",
+    "port_base": 8600,
+    "port_step": 10,
+    "clean_temp": [],
+    "clean_temp_minutes": 120
+  },
+  "stop_gate": { "require_clean_tree": true, "max_blocks": 5 },
+  "merge": { "method": "squash", "delete_branch": true },
+  "deploy": ""
+}
