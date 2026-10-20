@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# A stand-in for the browser and for the clicks on GitHub, for the identity tests.
+# The manifest page: reads the form like GitHub would, then calls the redirect URL with a code.
+# The install page: marks the app installed.
+set -u
+url=$1
+echo "$url" >>"$FAKE_CURL_DIR/browser.log"
+case "$url" in
+  http://127.0.0.1:*)
+    "$REAL_CURL" -sS "$url" >"$FAKE_CURL_DIR/page.html"
+    read -r state redirect name < <(python3 -I - "$FAKE_CURL_DIR/page.html" "$FAKE_CURL_DIR" <<'PY'
+import html, json, re, sys
+page = open(sys.argv[1], encoding="utf-8").read()
+state = re.search(r"state=([0-9a-f]+)", page).group(1)
+manifest = json.loads(html.unescape(re.search(r"name='manifest' value='([^']*)'", page, re.S).group(1)))
+with open(f"{sys.argv[2]}/manifest-{manifest['name']}.json", "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle)
+print(state, manifest["redirect_url"], manifest["name"])
+PY
+)
+    "$REAL_CURL" -sS "$redirect?code=code-$name&state=$state" >/dev/null
+    ;;
+  */apps/*/installations/new)
+    slug=${url%/installations/new}
+    slug=${slug##*/}
+    touch "$FAKE_CURL_DIR/installed-$(cat "$FAKE_CURL_DIR/slug-$slug")"
+    ;;
+esac

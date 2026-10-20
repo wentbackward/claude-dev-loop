@@ -58,7 +58,7 @@ for branch in "$@"; do
   fi
   base_ref="train-$branch"
   previous=$branch
-  records+="$branch $source_head $(git rev-parse HEAD)"$'\n'
+  records+="$branch $source_head $(git rev-parse HEAD) pending"$'\n'
   echo "stacked $branch -> $(git rev-parse --short HEAD)"
 done
 

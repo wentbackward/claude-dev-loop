@@ -1,0 +1,17 @@
+{
+  "name": "dev-loop-reviewer-{{OWNER}}",
+  "description": "Reviewer: approves or requests changes on pull requests, reads code, cannot push.",
+  "url": "https://github.com/{{REPO}}",
+  "hook_attributes": {
+    "url": "https://example.invalid/dev-loop-no-webhook",
+    "active": false
+  },
+  "redirect_url": "{{REDIRECT_URL}}",
+  "public": false,
+  "default_permissions": {
+    "pull_requests": "write",
+    "contents": "read",
+    "metadata": "read"
+  },
+  "default_events": []
+}

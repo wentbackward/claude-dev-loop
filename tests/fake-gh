@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# A stand-in for the GitHub CLI, for the smoke test: PRs live in $FAKE_GH_DIR, a squash merge is a
-# real squash commit pushed to the local bare origin. Supports only what merge-train.sh calls.
+# A stand-in for the GitHub CLI, for the smoke tests: PRs live in $FAKE_GH_DIR, a squash merge is a real
+# squash commit pushed to the local bare origin. Every call is logged with the identity (GH_TOKEN) it ran
+# as. Like GitHub, a PR author cannot approve its own PR, and a merge needs an approval when
+# FAKE_GH_REQUIRE_APPROVAL=1. Supports only what the plugin's scripts call.
 set -u
 dir=${FAKE_GH_DIR:?FAKE_GH_DIR not set}
 mkdir -p "$dir"
-echo "gh $*" >>"$dir/calls.log"
-[ "${1:-}" = pr ] || { echo "fake gh: unsupported: $*" >&2; exit 1; }
-action=${2:-}
-shift 2
+who=${GH_TOKEN:-user}
+echo "[$who] gh $*" >>"$dir/calls.log"
 key() { printf '%s' "${1//\//_}"; }
-case "$action" in
-  view)
-    branch=$1
+case "${1:-} ${2:-}" in
+  "pr view")
+    branch=$3
     [ -f "$dir/$(key "$branch").state" ] || exit 1
-    if [ "${2:-}" = --json ]; then cat "$dir/$(key "$branch").state"; fi
+    case "${5:-}" in
+      state) cat "$dir/$(key "$branch").state" ;;
+      reviewDecision) if [ -f "$dir/$(key "$branch").approved" ]; then echo APPROVED; else echo REVIEW_REQUIRED; fi ;;
+    esac
     ;;
-  create)
+  "pr create")
+    shift 2
     head="" title="" body_file=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -27,15 +31,29 @@ case "$action" in
     done
     printf '%s\n' "$title" >"$dir/$(key "$head").title"
     cp "$body_file" "$dir/$(key "$head").body"
+    echo "$who" >"$dir/$(key "$head").author"
     echo OPEN >"$dir/$(key "$head").state"
     ;;
-  merge)
-    branch=$1
+  "pr review")
+    branch=$3
+    [ "$(cat "$dir/$(key "$branch").author" 2>/dev/null)" != "$who" ] ||
+      { echo "fake gh: cannot approve your own pull request" >&2; exit 1; }
+    case " $* " in *" --approve "*) echo "$who" >"$dir/$(key "$branch").approved" ;; esac
+    ;;
+  "pr merge")
+    branch=$3
+    if [ "${FAKE_GH_REQUIRE_APPROVAL:-}" = 1 ] && [ ! -f "$dir/$(key "$branch").approved" ]; then
+      echo "fake gh: approval required" >&2
+      exit 1
+    fi
     origin=$(git remote get-url origin)
+    expected=""
+    [[ " $* " == *" --match-head-commit "* ]] && expected=$(printf '%s\n' "$@" | grep -A1 -- --match-head-commit | tail -1)
     work=$(mktemp -d)
     git clone -q "$origin" "$work/clone"
     (
       cd "$work/clone" || exit 1
+      [ -z "$expected" ] || [ "$(git rev-parse "origin/$branch")" = "$expected" ] || { echo "fake gh: head moved" >&2; exit 1; }
       git merge -q --squash "origin/$branch" >/dev/null
       git commit -q -m "$(cat "$dir/$(key "$branch").title")"
       git push -q origin HEAD:main
@@ -43,5 +61,8 @@ case "$action" in
     rm -rf "$work"
     echo MERGED >"$dir/$(key "$branch").state"
     ;;
-  *) echo "fake gh: unsupported: pr $action" >&2; exit 1 ;;
+  "api "*)
+    printf '%s\n' "$*" >>"$dir/api.log"
+    ;;
+  *) echo "fake gh: unsupported: $*" >&2; exit 1 ;;
 esac

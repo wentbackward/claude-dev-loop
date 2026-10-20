@@ -1,0 +1,17 @@
+{
+  "name": "dev-loop-implementer-{{OWNER}}",
+  "description": "Implementer: pushes feature branches and opens pull requests. Cannot approve its own PRs; the base branch is protected by rulesets.",
+  "url": "https://github.com/{{REPO}}",
+  "hook_attributes": {
+    "url": "https://example.invalid/dev-loop-no-webhook",
+    "active": false
+  },
+  "redirect_url": "{{REDIRECT_URL}}",
+  "public": false,
+  "default_permissions": {
+    "contents": "write",
+    "pull_requests": "write",
+    "metadata": "read"
+  },
+  "default_events": []
+}

@@ -1,6 +1,18 @@
 {
-  "description": "dev-loop: format the edited file and keep Claude from stopping on red fast checks or uncommitted work. Both are no-ops in projects without .dev-loop.json.",
+  "description": "dev-loop: guard GitHub writes in identity mode, format the edited file, and keep Claude from stopping on red fast checks or uncommitted work. All are no-ops in projects without .dev-loop.json.",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard-role.sh\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
