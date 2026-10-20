@@ -53,10 +53,6 @@ record() {
     mv "$train_file.tmp" "$train_file"
 }
 
-# pr_title NOTE / pr_body NOTE: the notes file's first line without a leading "#", and the rest.
-pr_title() { head -n 1 "$1" | sed -E 's/^[[:space:]]*#+[[:space:]]*//'; }
-pr_body() { tail -n +2 "$1" | sed -e '/./,$!d'; }
-
 for branch in "$@"; do
   note=$(dl_note_file "$branch")
   if [ ! -f "$note" ] && ! (cd "$DL_ROOT" && as_role gate gh pr view "$branch" >/dev/null 2>&1); then
@@ -106,14 +102,7 @@ for branch in "$@"; do
   git branch -q -D "replay-$branch"
 
   cd "$DL_ROOT" || exit 2
-  if ! as_role gate gh pr view "$branch" >/dev/null 2>&1; then
-    note=$(dl_note_file "$branch")
-    body_file=$(mktemp)
-    pr_body "$note" >"$body_file"
-    as_role implementer gh pr create --head "$branch" --base "$DL_BASE" --title "$(pr_title "$note")" \
-      --body-file "$body_file" >/dev/null || { rm -f "$body_file"; echo "MERGE could not create the PR for $branch"; exit 7; }
-    rm -f "$body_file"
-  fi
+  "$scripts_dir/open-pr.sh" "$branch" >/dev/null || { echo "MERGE could not open the PR for $branch"; exit 7; }
   if [ "$post_status" = true ]; then
     as_role gate gh api -X POST "repos/$(dl_github_repo)/statuses/$head" -f state=success \
       -f context="$status_context" -f description="batch gate green (tree of the gated train)" >/dev/null ||
