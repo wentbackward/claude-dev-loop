@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# A stand-in for the GitHub CLI, for the smoke test: PRs live in $FAKE_GH_DIR, a squash merge is a
+# real squash commit pushed to the local bare origin. Supports only what merge-train.sh calls.
+set -u
+dir=${FAKE_GH_DIR:?FAKE_GH_DIR not set}
+mkdir -p "$dir"
+echo "gh $*" >>"$dir/calls.log"
+[ "${1:-}" = pr ] || { echo "fake gh: unsupported: $*" >&2; exit 1; }
+action=${2:-}
+shift 2
+key() { printf '%s' "${1//\//_}"; }
+case "$action" in
+  view)
+    branch=$1
+    [ -f "$dir/$(key "$branch").state" ] || exit 1
+    if [ "${2:-}" = --json ]; then cat "$dir/$(key "$branch").state"; fi
+    ;;
+  create)
+    head="" title="" body_file=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --head) head=$2; shift 2 ;;
+        --title) title=$2; shift 2 ;;
+        --body-file) body_file=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s\n' "$title" >"$dir/$(key "$head").title"
+    cp "$body_file" "$dir/$(key "$head").body"
+    echo OPEN >"$dir/$(key "$head").state"
+    ;;
+  merge)
+    branch=$1
+    origin=$(git remote get-url origin)
+    work=$(mktemp -d)
+    git clone -q "$origin" "$work/clone"
+    (
+      cd "$work/clone" || exit 1
+      git merge -q --squash "origin/$branch" >/dev/null
+      git commit -q -m "$(cat "$dir/$(key "$branch").title")"
+      git push -q origin HEAD:main
+    ) || { rm -rf "$work"; exit 1; }
+    rm -rf "$work"
+    echo MERGED >"$dir/$(key "$branch").state"
+    ;;
+  *) echo "fake gh: unsupported: pr $action" >&2; exit 1 ;;
+esac
