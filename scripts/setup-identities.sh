@@ -44,6 +44,7 @@ credentials=$credentials_root/$owner
 
 # display_path PATH: the path with $HOME written as "~", as stored in .dev-loop.json.
 display_path() {
+  # shellcheck disable=SC2088  # a literal "~" is what the config stores
   case "$1" in "$HOME"/*) printf '~/%s\n' "${1#"$HOME"/}" ;; *) printf '%s\n' "$1" ;; esac
 }
 

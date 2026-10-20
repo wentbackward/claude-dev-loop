@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015,SC2016  # pass/fail never fail; single quotes are expanded by the inner shell
 # Smoke test of the plugin's hooks and scripts on a throwaway project with a local bare origin.
 # No network, no real GitHub: `gh` is tests/fake-gh. Run: tests/smoke.sh   (TMPDIR picks the work dir)
 set -u

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015,SC2016  # pass/fail never fail; single quotes are expanded by the inner shell
 # Tests of identity mode with fakes (no network, no real GitHub): as-role.sh credentials, the guard hook,
 # github-protect.sh plans, setup-identities.sh (manifest flow) and merge-train.sh with role identities.
 # Run: tests/identity.sh   (TMPDIR picks the work dir)
@@ -155,7 +156,7 @@ json.dump(config, open(path, "w"), indent=2)
 PY
 out=$("$plugin/scripts/setup-identities.sh" --roles "implementer gate" --yes 2>&1)
 rc=$?
-echo "$out" | sed 's/^/    /'
+printf '%s\n' "$out" | while IFS= read -r line; do echo "    $line"; done
 expect "setup-identities succeeds" 0 "$rc"
 expect "the private key is stored user-only" 600 "$(stat -c %a "$work/credentials/owner/gate.pem")"
 expect "the manifest asks for the gate's permissions" '{"contents": "write", "pull_requests": "write", "statuses": "write", "metadata": "read"}' \
