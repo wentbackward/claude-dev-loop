@@ -26,7 +26,7 @@ confirms the PR is MERGED and deletes the branch. The notes files live in
 | 6 | branch changed since the gate | someone pushed after the gate: review and re-gate |
 | 7 | PR not merged | read the message (branch protection, checks); fix and re-run |
 | 8 | not gated green | run the gate skill first, with exactly these branches |
-| 9 | approval missing (identity mode) | the replay dismissed the approval: have the code-reviewer confirm with `git range-diff` and approve again, then re-run with the branches not merged yet |
+| 9 | approval missing (identity mode) | the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and approve again, then re-run with the branches not merged yet |
 
 Never merge by hand around a failure, and never with `--admin`. Never merge a branch the gate did not
 prove green.

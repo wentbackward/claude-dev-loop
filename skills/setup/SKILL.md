@@ -36,6 +36,8 @@ stop conditions. Skip any question whose answer you already have.
      a `summary` regex that picks the result lines from the log.
    - `heavy`: `slots` 2 and `memory_max` about half the machine's RAM (`free -g`), `port_env` if e2e
      servers read their port from an environment variable.
+   - `models`: keep the template's choice per agent unless the user named models; `inherit` means the
+     main session's model.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and

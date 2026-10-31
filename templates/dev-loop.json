@@ -24,5 +24,11 @@
   },
   "stop_gate": { "require_clean_tree": true, "max_blocks": 5 },
   "merge": { "method": "squash", "delete_branch": true },
+  "models": {
+    "implementer": "inherit",
+    "code-reviewer": "sonnet",
+    "test-engineer": "sonnet",
+    "verifier": "haiku"
+  },
   "deploy": ""
 }

@@ -2,6 +2,14 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- `models` in `.dev-loop.json`: the model per agent (e.g. `sonnet` for the code-reviewer, `haiku` for the
+  verifier). The orchestrator passes it on every agent launch; `doctor.sh` prints and validates it.
+- Agent lifetimes in the `dev-loop` skill: an implementer serves exactly one ticket and is replaced by a
+  fresh one after 3 review rounds or a context compaction; every review round, test-engineer and verifier
+  task gets a fresh agent.
+
 ## 0.1.0 — 2026-10-19
 
 First release.

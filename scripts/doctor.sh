@@ -40,6 +40,15 @@ else
   echo "        notes         $(dl_notes_dir)"
   echo "        logs          $(dl_logs_dir)"
   echo "        heavy slots   $(cfg heavy.slots 2), memory cap $(cfg heavy.memory_max none)"
+  models=""
+  for agent in implementer code-reviewer test-engineer verifier; do
+    model=$(cfg "models.$agent" inherit)
+    case $model in
+      inherit | haiku | sonnet | opus | fable) models="${models:+$models }$agent=$model" ;;
+      *) missing "models.$agent: \"$model\" is not one of inherit, haiku, sonnet, opus, fable" ;;
+    esac
+  done
+  echo "        models        $models"
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; else missing "CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
 fi

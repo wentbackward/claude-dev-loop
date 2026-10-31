@@ -133,12 +133,27 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `heavy.poll_seconds` | `10` | how often a waiting command retries |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges |
+| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
 | `identities` | none (mode off) | per-role identities, see below |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard |
 | `deploy` | none | the deploy command the orchestrator uses |
+
+### Models per agent
+
+Each agent runs on the model named in `models`, so cheap work can go to a small model and the hard work
+to a large one:
+
+```json
+"models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku" }
+```
+
+The orchestrator passes the model on every agent launch (the Agent tool's `model` parameter, which takes
+precedence over the agent's own `model: inherit`). A missing agent, or `inherit`, uses the main session's
+model. A resumed agent keeps the model it started with. `doctor.sh` prints the resolved models and
+reports unknown names. The gate and the heavy-job queue are scripts and use no model.
 
 Environment overrides: `DEV_LOOP_CONFIG` (config path), `DEV_LOOP_HOME` (state, default `~/.dev-loop`),
 `DEV_LOOP_LOCK_DIR`, `DEV_LOOP_HEAVY_SLOTS`, `DEV_LOOP_NO_JQ=1` (read JSON with python3).

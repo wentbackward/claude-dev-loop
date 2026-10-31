@@ -21,7 +21,12 @@ absolute paths into their prompts.
 3. Identity mode is on when `.dev-loop.json` has `identities`. Then every GitHub write goes through
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
-4. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
+4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
+   `verifier`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these agents, pass that
+   value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
+   `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
+   Agent lifetimes are in section 3a.
+5. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
    written, agents to resume) before starting new work.
 
 ## 1. Tickets
@@ -54,8 +59,8 @@ git -C <repo> worktree add -b <type>/<n>-<slug> ../<repo-name>-<n> <remote>/<bas
 ${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes <type>/<n>-<slug>      # the notes file path for the prompt
 ```
 
-Branch types: `feat/`, `fix/`, `chore/`, `docs/`. Then launch the `implementer` agent (one per ticket) with
-this prompt, filled in completely:
+Branch types: `feat/`, `fix/`, `chore/`, `docs/`. Then launch the `implementer` agent (one per ticket, with
+`model` from `models.implementer`, see step 0) with this prompt, filled in completely:
 
 ```text
 Implement ticket #<n>: <title>.
@@ -76,13 +81,26 @@ Implement ticket #<n>: <title>.
 - Report: branch, head commit, tests added per criterion, commands run with results, anything open.
 ```
 
+## 3a. Agent lifetimes
+
+The state of a ticket lives on disk and GitHub (the branch, the notes file, the issue), not in an agent's
+context. Agents are disposable:
+
+- **Implementer: one per ticket, for that ticket only.** Resume it (SendMessage to its agent id) for its
+  own review fixes, gate failures and rebases. Never give it another ticket, and never resume it after its
+  ticket has merged. Start a fresh implementer for the same ticket, with the branch, the notes file and the
+  latest must-fix list, after 3 review rounds, or when it reports that its context was compacted or it has
+  lost track of the work.
+- **Code-reviewer: a fresh agent for every review round.** Never resume a reviewer.
+- **Test-engineer and verifier: a fresh agent for every task.**
+
 ## 4. Review loop (every branch, before the gate)
 
 When an implementer reports green:
 
 1. Identity mode: open the PR now so the review lands on GitHub:
    `${CLAUDE_PLUGIN_ROOT}/scripts/open-pr.sh <branch>` (opens it as the implementer from the notes file).
-2. Launch the `code-reviewer` agent with:
+2. Launch the `code-reviewer` agent (`model` from `models.code-reviewer`) with:
 
 ```text
 Review branch <branch> (ticket #<n>: <title>) in <absolute worktree path>, against <remote>/<base>.
@@ -91,11 +109,14 @@ data deletion|...>: apply the deeper safety checklist.> Reproduce suspected bugs
 delete them; leave the tree clean. Run only the targeted tests and the fast check (<fast_check>).
 <Identity mode: submit your verdict on the PR as the reviewer:
 <plugin>/scripts/as-role.sh reviewer gh pr review <branch> --approve|--request-changes --body "...">
+<Round 2 or later: the previous round's must-fix list, verbatim. Check each item, then review the whole
+diff again as if for the first time.>
 Output: Must fix / Should fix lists, then VERDICT: APPROVE or VERDICT: CHANGES REQUIRED.
 ```
 
 3. CHANGES REQUIRED: resume the same implementer (SendMessage to its agent id) with the must-fix list
-   verbatim; when it reports, run the reviewer again. Repeat until `VERDICT: APPROVE`. Should-fix items:
+   verbatim, or start a fresh one per section 3a; when it reports, launch a fresh code-reviewer with the
+   previous must-fix list. Repeat until `VERDICT: APPROVE`. Should-fix items:
    fix now if cheap, else open a follow-up issue.
 4. The review is independent: never skip it because the implementer reviewed itself, and never merge a
    branch whose last verdict is not APPROVE.
@@ -121,8 +142,8 @@ Use the `merge` skill: `${CLAUDE_PLUGIN_ROOT}/scripts/merge-train.sh <same branc
 replays each branch on the current base, checks the tree is exactly the gated one, opens the PR from the
 notes file if missing, squash-merges and deletes the branch. If the base moved in between (exit 4), re-gate.
 In identity mode it posts the required `dev-loop/gate` status and merges as the gate identity; exit 9
-means the replay dismissed the approval: have the code-reviewer confirm with `git range-diff` and approve
-again, then re-run merge-train with the remaining branches.
+means the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and
+approve again, then re-run merge-train with the remaining branches.
 
 After merging: remove the merged worktrees (`git worktree remove <path>`), comment on the issues, start
 the next tickets.
@@ -133,7 +154,7 @@ Stacked branches: after the lower branch merges, rebase the upper one with
 ## 7. Run, verify, deploy
 
 - After a ticket that adds or changes a job merges, run it for real (as the spec says), in the background
-  for long runs, and record the result in the issue. Then launch the `verifier` agent on the outputs.
+  for long runs, and record the result in the issue. Then launch the `verifier` agent (`model` from `models.verifier`) on the outputs.
 - Deploy only when the user is not in the middle of using the system (ask, or follow their schedule), with
   the project's deploy command (`deploy` in `.dev-loop.json` or CLAUDE.md), then verify the deployed system
   (status, health, a smoke check) and report it.
