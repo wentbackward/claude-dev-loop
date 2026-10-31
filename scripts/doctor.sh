@@ -51,6 +51,20 @@ else
   echo "        models        $models"
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; else missing "CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
+  # Leftovers of a hand-built loop (the setup skill's "Migrate" step removes them).
+  for agent in implementer code-reviewer test-engineer verifier; do
+    [ -f "$DL_ROOT/.claude/agents/$agent.md" ] &&
+      missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
+  done
+  project_settings="$DL_ROOT/.claude/settings.json"
+  if [ -f "$project_settings" ]; then
+    for event in Stop PostToolUse; do
+      [ -n "$(json_get "hooks.$event" <"$project_settings")" ] &&
+        optional "project $event hooks in .claude/settings.json run besides the plugin's: check they are not a copy"
+    done
+  fi
+  stale=$(find "$DL_ROOT/.claude/worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  [ "$stale" -gt 0 ] && optional "$stale agent worktrees in .claude/worktrees (remove the merged ones)"
 fi
 [ "$problems" -eq 0 ] && echo "doctor: ready" || echo "doctor: $problems problem(s)"
 [ "$problems" -eq 0 ]

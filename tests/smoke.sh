@@ -162,5 +162,16 @@ echo conflict >moved.txt && git add moved.txt && git commit -q -m "feat: conflic
 out=$("$plugin/scripts/gate-train.sh" feat/5-conflict 2>&1)
 expect "gate-train stops on a conflict and names the branch" "3 TRAIN rebase conflict at feat/5-conflict" "$? $(echo "$out" | tail -1)"
 
+# 10. doctor flags the leftovers of a hand-built loop.
+mkdir -p .claude/agents && echo "---" >.claude/agents/code-reviewer.md
+out=$("$plugin/scripts/doctor.sh" 2>&1)
+expect "doctor flags a project agent that shadows the plugin's" yes \
+  "$(echo "$out" | grep -q "MISSING .claude/agents/code-reviewer.md shadows" && echo yes || echo no)"
+rm -r .claude/agents
+echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}' >.claude/settings.json
+expect "doctor notes a project Stop hook" yes \
+  "$("$plugin/scripts/doctor.sh" 2>&1 | grep -q "note    project Stop hooks" && echo yes || echo no)"
+rm .claude/settings.json
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

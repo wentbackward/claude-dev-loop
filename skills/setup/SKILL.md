@@ -17,6 +17,20 @@ show the user what changed.
   `build.gradle`, a `Makefile`, `.pre-commit-config.yaml`, CI workflows (they show the real check commands).
 - The spec: `docs/*SPEC*.md`, `SPEC.md`, `docs/spec/`, or a design doc the README links.
 - An existing `CLAUDE.md`, `.claude/settings.json`, `.dev-loop.json`, `docs/DECISIONS.md`.
+- Leftovers of a hand-built loop (the project ran its own loop before the plugin, or started from an early
+  copy of it); see step 3a:
+  - `.claude/agents/` files named `implementer`, `code-reviewer`, `test-engineer` or `verifier` (they
+    shadow the plugin's agents), or agents that do the same job under another name (a data or QA auditor
+    is an early `verifier`).
+  - Hooks in `.claude/settings.json` and scripts in `.claude/hooks/` that format on edit or gate the Stop
+    (the plugin brings its own; both would run).
+  - Gate, merge-train, heavy-queue or PR-opening scripts the project or `CLAUDE.md` refers to, inside or
+    outside the repository, and the notes and logs they keep.
+  - `CLAUDE.md` workflow sections that describe their own gate or merge (full checks per branch, merging
+    with `gh pr merge` by hand, a private script path).
+  - The project's Claude memories (`~/.claude/projects/<project path with / as ->/memory/`) that tell the
+    session to use that tooling.
+  - Worktrees: `git worktree list`, `.claude/worktrees/` and `../<repo>-*` directories of merged work.
 
 ## 2. Ask once, only for what is still unknown
 
@@ -57,9 +71,31 @@ stop conditions. Skip any question whose answer you already have.
    at those instead.
 6. Add `.dev-loop/` to `.gitignore` when `notes_dir` or `logs_dir` point inside the repository.
 
+## 3a. Migrate a hand-built loop (only when step 1 found leftovers)
+
+The plugin replaces the copies; the project-specific knowledge in them stays.
+
+1. Before deleting a copy, move what is specific to this project into `CLAUDE.md` (a "Process specifics"
+   section): extra tests to run before every push, reserved ports, browser or environment quirks, the
+   verification commands and spot checks of an old QA agent, the deploy procedure. Settings the old gate
+   used (checks, slots, memory cap, port variable, temp cleanup, setup commands) go into `.dev-loop.json`.
+2. Inside the repository, on the setup branch: delete the shadowing agents, the duplicate hooks and their
+   `hooks` entries in `.claude/settings.json`, and stale `.gitignore` lines for their state files; replace
+   the `CLAUDE.md` workflow sections with the template's; tell the session in `CLAUDE.md` to work through
+   the `dev-loop` skill and not to write gate, merge, queue or worktree tooling of its own.
+3. Outside the repository, show the user the list and ask before changing anything:
+   - Old scripts, notes and logs: move them to an archive directory rather than deleting them. Keep files
+     a procedure still reads (for example a deploy log used as a `find -newer` marker).
+   - Memories that describe the old tooling: rewrite them to point at the plugin, or delete them.
+   - Worktrees: only when no agent is running. Save the uncommitted changes of each one (`git diff HEAD`
+     and the untracked files) to the archive, keep every branch, then `git worktree remove --force --force`
+     (locked ones included) and `git worktree prune`.
+4. Record the migration in `docs/DECISIONS.md`: what was retired, where the project specifics went.
+
 ## 4. Check and commit
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh` must end with `doctor: ready` (gh authenticated, config valid).
+- `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh` must end with `doctor: ready` (gh authenticated, config valid,
+  no project agent shadowing a plugin agent) and print no leftover notes you have not dealt with.
 - Run the fast check once and each full check once (through `${CLAUDE_PLUGIN_ROOT}/scripts/heavy.sh`) to
   prove the commands work; fix the config if not.
 - Commit on a branch: `chore: set up the dev loop` with the files above, then follow the dev loop to merge

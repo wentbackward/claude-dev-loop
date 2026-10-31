@@ -9,6 +9,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - Agent lifetimes in the `dev-loop` skill: an implementer serves exactly one ticket and is replaced by a
   fresh one after 3 review rounds or a context compaction; every review round, test-engineer and verifier
   task gets a fresh agent.
+- Migrating a hand-built loop: the `setup` skill finds the leftovers (project agents that shadow the
+  plugin's, duplicate hooks, private gate scripts, old workflow sections, memories, stale worktrees), moves
+  the project specifics into `CLAUDE.md` and `.dev-loop.json`, and archives the rest with the user's OK.
+  `doctor.sh` reports shadowing agents as a problem and duplicate hooks and agent worktrees as notes.
 
 ## 0.1.0 — 2026-10-19
 
