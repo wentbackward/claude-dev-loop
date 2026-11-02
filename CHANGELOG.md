@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.3.0 — 2026-11-02
 
 - `doctor` skill: `/dev-loop:doctor` runs `doctor.sh` in any project and explains the fix for each problem.
 

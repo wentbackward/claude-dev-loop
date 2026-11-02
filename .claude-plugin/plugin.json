@@ -1,6 +1,6 @@
 {
   "name": "dev-loop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Autonomous multi-agent development loop: tickets, parallel implementers in git worktrees, independent code review, one batched full-check gate per train of ready branches (machine-wide heavy-job queue with a memory cap), ordered squash merges, run and verify.",
   "author": {
     "name": "wentbackward"
