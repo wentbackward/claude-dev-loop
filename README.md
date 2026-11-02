@@ -35,7 +35,8 @@ first: language, toolchain, Makefile, CI, spec. Then it asks only for what it co
 - Makefile targets that are missing (`fmt`, `fmt-check`, `lint`, `typecheck`, `test`, `cov`, `check`,
   `e2e`).
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh` checks the prerequisites and prints the paths it resolved.
+`/dev-loop:doctor` (the script: `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh`) checks the prerequisites and
+prints the paths it resolved.
 
 ## The loop
 
@@ -73,6 +74,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | skill | `dev-loop` | the orchestrator workflow, with the exact implementer and reviewer prompt templates |
 | skill | `setup` | bootstrap a project (CLAUDE.md, DECISIONS.md, `.dev-loop.json`, deny rules, Makefile) |
 | skill | `gate` / `merge` | run the batch gate and the ordered merge, and read their results |
+| skill | `doctor` | check the machine and the project (`/dev-loop:doctor`), and explain each problem's fix |
 | agent | `implementer` | one ticket, test first, in its worktree; pushes and writes the notes file |
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
