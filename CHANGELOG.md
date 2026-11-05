@@ -30,8 +30,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - The architecture ratchet can't be loosened quietly (#17): a branch whose card header edits make
   violations disappear (`depends_on`, `max_lines`, `layer`, `paths`, a composition root) needs a reason
   under `## Architecture`, as baseline growth does (`arch-check.sh --loosened <from> <ref>` lists what the
-  edits hide); a baseline entry that occurred at the base and a branch fixes must be removed by that
-  branch, else the gate is red; placeholders (`none`, `n/a`, `TODO`, `-`) are not reasons; two cards with
+  edits hide), and so does a change to `architecture` in its `.dev-loop.json`; a baseline entry that occurred at the base and a branch fixes must be removed by that
+  branch, else the gate is red; placeholders (`none`, `n/a`, `TODO`, `-`, also as `none (...)`) are not reasons; two cards with
   the same `paths` glob are a broken card.
 - Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
   - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules

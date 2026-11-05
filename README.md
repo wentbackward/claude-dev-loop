@@ -280,8 +280,11 @@ violations may only shrink:
   that makes violations disappear (a name added to `depends_on`, a higher `max_lines` or `layer`, narrower
   `paths`, a new composition root): `arch-check.sh --loosened <from> <ref>` judges the code of `<ref>` by
   the cards of `<from>` and lists what `<ref>`'s cards hide (exit 1), without running `check` when no
-  header changed. A placeholder (`none`, `n/a`, `TODO`, `-` and the like, also `none: ...`) is not a
-  reason. Two cards with the same `paths` glob are a broken card.
+  header changed (a renamed or removed component's violations show there under its old name). A branch
+  that changes the `architecture` block of its `.dev-loop.json` needs the same reason, since the gate
+  reads the main checkout's config. A placeholder (`none`, `n/a`, `TODO`, `-`, `not applicable` and the
+  like, also followed by punctuation, as in `none: ...` or `none (...)`) is not a reason; a sentence such
+  as `none of the edges ...` is. Two cards with the same `paths` glob are a broken card.
 - **The gate** runs after `gate_setup` and before the checks: the baseline and card rules for each branch,
   then `arch-check.sh` on the train's top. When the top is red, or reports as fixed a baseline entry that
   occurred at the base, each branch's train ref is checked in order and named with the new lines it brings

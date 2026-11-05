@@ -40,7 +40,8 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
      adds it to the baseline with a reason: the fix is an interface the lower layer defines and the higher
      one implements. An added baseline entry, or a card header edit that hides a violation (a new
      `depends_on` name, a higher `max_lines` or `layer`, narrower `paths`, a new composition root; see
-     `arch-check.sh --loosened <remote>/<base> HEAD`), needs a convincing `## Architecture` reason in the
+     `arch-check.sh --loosened <remote>/<base> HEAD`), or a change to `architecture` in `.dev-loop.json`,
+     needs a convincing `## Architecture` reason in the
      notes.
      Fan-out is expected of a composition root (keep it thin) and a warning sign everywhere else.
 4. **Reproduce, do not speculate.** When you suspect a bug, prove it: write a throwaway test (name it so it

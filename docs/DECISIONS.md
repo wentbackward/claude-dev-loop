@@ -151,11 +151,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   then checked in order (as for a new violation) and the first whose train ref reports the entry as fixed
   is named. A train in which one branch fixes an entry and a later one brings it back is green: the merged
   result equals the base. A reason does not excuse a kept fixed entry (removing it is always possible).
-- A reason is a line under `## Architecture` with a letter or digit that is not a placeholder: after list
-  markers, emphasis and trailing punctuation are stripped, its first word (up to `:`, `=` or `-`) is not
-  `none`, `nothing`, `n/a`, `na`, `todo`, `tbd`, `tba`, `fixme`, `xxx`, `nil`, `null`, `no`, `empty` or
-  `later`, in any case. So `none: no architecture change` is not a reason either. HTML comment lines do
-  not count.
+- A reason is a line under `## Architecture` with a letter or digit that is not a placeholder. After list
+  markers, emphasis and trailing punctuation are stripped, a line is a placeholder when it starts with
+  `none`, `nothing`, `n/a`, `na`, `todo`, `tbd`, `tba`, `fixme`, `xxx`, `nil`, `null`, `no`, `empty`,
+  `later`, `not applicable`, `not needed`, `none needed`, `no change(s)` or `nothing to report/add/say`
+  (any case), followed by nothing or, after spaces, by a non-word character (`:`, `(`, `,`, `;`, a dash).
+  So `none: no architecture change` and `No, core must ...` are not reasons, while `none of the edges ...`
+  and `no-op rename ...` (a hyphen right after the word joins it) are. HTML comment lines do not count.
+  A determined author can still write a sentence that says nothing; the reviewer judges that.
+- A change to the `architecture` block of a branch's `.dev-loop.json` (its JSON as `json_get` prints it,
+  compared with the train ref below) needs the same reason: the gate reads the main checkout's config, so
+  a branch's `check: "true"` would otherwise apply unchecked after its merge. `docs` and `checks` are a
+  separate issue.
+- When `arch-check.sh` cannot judge the base (exit 2) while the top reports fixed entries, the gate ends
+  with exit 2 rather than passing them.
 - Two cards listing the identical `paths` glob are an error on the later card (byte order), naming the
   other; the same glob twice in one card is not.
 - **Reason:** the simplest deterministic rules that close the gaps of #13 without a tool run per branch on
