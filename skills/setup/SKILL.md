@@ -133,7 +133,8 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
   it (or commit to the base directly in a brand-new repository with no history). Keep the main checkout on
   the base branch: until this merge the base has no `.dev-loop.json`, so `gate-train.sh` and
   `merge-train.sh` read it from the setup branch (merge-train: the first branch of the gated train) and
-  print `config read from <remote>/<branch>:.dev-loop.json`; no `DEV_LOOP_CONFIG` is needed.
+  print `config read from <remote>/<branch>:.dev-loop.json` (they fetch the branch first; a branch that is
+  only local prints `refs/heads/<branch>`); no `DEV_LOOP_CONFIG` is needed.
 
 ## 5. Optional: one GitHub identity per role
 
