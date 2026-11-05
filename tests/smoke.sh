@@ -1561,8 +1561,8 @@ expect "merge-train records the files, lines, ticket and review rounds of a merg
   '[["src.txt"],{"added":1,"deleted":0},1,1]' "$(ledger_of feat/1-first '[.files, .lines, .ticket, .review_rounds]')"
 expect "without architecture a merge records no components" '[]' "$(ledger_of feat/1-first .components)"
 expect "the ledger keeps its old fields" '["feat/2-second","2"]' "$(ledger_of feat/2-second '[.branch, .pr]')"
-common_fn() { # common_fn FUNCTION ARGS...: run a helper of scripts/lib/common.sh
-  bash -c '. "$1/scripts/lib/common.sh"; f=$2; shift 2; "$f" "$@"' _ "$plugin" "$@"
+common_fn() { # common_fn FUNCTION ARGS...: run a helper of scripts/lib/common.sh (config loaded)
+  bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; f=$2; shift 2; "$f" "$@"' _ "$plugin" "$@"
 }
 printf 'feat: x (#7)\n\nCloses #7\n\n## Review fixes\n- a\n\n## Review fixes (round 3)\n- b\n' >"$work/rounds.md"
 expect "the review rounds are one plus a Review fixes section per round" 3 \
@@ -1616,6 +1616,39 @@ expect "the evidence branch merges" 0 "$?"
 expect "with architecture a merge records its files, components, lines, ticket and review rounds" \
   '[["app/api/new.py","app/store/s.py"],["api","store"],{"added":3,"deleted":0},130,3]' \
   "$(ledger_of feat/130-fields '[.files, .components, .lines, .ticket, .review_rounds]')"
+git fetch -q origin && git reset -q --hard origin/main
+# Unusual file names: the ledger stores the real paths as valid JSON (a byte that is not UTF-8 becomes
+# U+FFFD), with jq and with python3, and the readers keep going after such a line.
+git checkout -q -b feat/131-names
+for name in 'app/store/q"b\c.py' $'app/store/t\tb.py' $'app/store/bad\xff.py' $'app/store/n\nl.py'; do
+  echo 1 >"$name"
+done
+git add app && git commit -q -m "feat: odd names (Refs #131)" && git push -q -u origin feat/131-names
+git checkout -q main
+printf 'feat: odd names (#131)\n\nCloses #131\n' \
+  >"$(DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/paths.sh" notes feat/131-names)"
+DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/gate-train.sh" feat/131-names >/dev/null 2>&1
+DEV_LOOP_NO_JQ=1 DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/merge-train.sh" feat/131-names >/dev/null 2>&1
+expect "a merge with unusual file names merges" 0 "$?"
+odd_files='["app/store/bad'$'\xef\xbf\xbd''.py","app/store/n\nl.py","app/store/q\"b\\c.py","app/store/t\tb.py"]'
+expect "the ledger stores the real paths of unusual names, and their components" "$odd_files [\"store\"]" \
+  "$(ledger_of feat/131-names '.files, .components' | paste -sd' ' -)"
+python3 -I -c 'import json, sys; [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]' \
+  "$DEV_LOOP_HOME/project/merged.jsonl" 2>/dev/null && pass "every ledger line is valid UTF-8 JSON for python3" ||
+  fail "python3 cannot read the ledger"
+expect "jq and python3 encode file lists alike" \
+  "$(printf 'a"b\\c\0t\tb\0bad\377.py\0n\nl\0' | common_fn dl_json_list_z)" \
+  "$(printf 'a"b\\c\0t\tb\0bad\377.py\0n\nl\0' | DEV_LOOP_NO_JQ=1 common_fn dl_json_list_z)"
+expect "a JSON string escapes control characters and keeps other text" '"a\tb\nc\"d\\e\u0001f é"' \
+  "$(common_fn dl_json_string $'a\tb\nc"d\\e\001f é')"
+expect "a JSON string replaces a byte that is not UTF-8" '"x'$'\xef\xbf\xbd''y"' "$(common_fn dl_json_string $'x\xffy')"
+printf '{"branch":"feat/132-raw","source_head":"r\377w","head":"raw2"}\n{"branch":"feat/133-after","head":"after"}\n' \
+  >>"$DEV_LOOP_HOME/project/merged.jsonl"
+DEV_LOOP_NO_JQ=1 common_fn dl_ledger_heads 2>/dev/null | grep -qxF "feat/133-after after" &&
+  pass "the ledger readers keep going after a line that is not UTF-8 (python3)" ||
+  fail "dl_ledger_heads stops at a line that is not UTF-8"
+expect "the ledger count keeps going after a line that is not UTF-8 (python3)" \
+  "$(common_fn dl_ledger_count_since)" "$(DEV_LOOP_NO_JQ=1 common_fn dl_ledger_count_since)"
 git fetch -q origin && git reset -q --hard origin/main
 
 # A seeded ledger: an old line without the new fields (its files come from git), a line that is not
