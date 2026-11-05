@@ -2298,7 +2298,7 @@ expect "the judge gets the address scenarios.run printed and the scenario id" \
   "id=login target=http://127.0.0.1:9550/ checks=done" "$(awk '$1 == "login" { print $3, $4, $5 }' "$work/judge-calls.log")"
 results="$("$plugin/scripts/paths.sh" logs)/train-scenario-results.jsonl"
 expect "each judge result JSON is recorded in the logs" "browse login" \
-  "$(grep -o '"id": "[a-z]*"' "$results" 2>/dev/null | sed 's/.*: "//; s/"//' | LC_ALL=C sort | paste -sd' ' -)"
+  "$(grep -o '"id": *"[a-z]*"' "$results" 2>/dev/null | sed 's/.*: *"//; s/"//' | LC_ALL=C sort | paste -sd' ' -)"
 run_pid=$(cat "$work/run.pid" 2>/dev/null)
 [ -n "$run_pid" ] && pass "scenarios.run was started" || fail "scenarios.run did not start"
 expect "the system scenarios.run started is stopped after judging" "" "$(alive "$run_pid")"
@@ -2454,6 +2454,9 @@ expect "scenarios.judge replaces the default judge" "my-judge --fast" \
   "$(printf '{"scenarios": {"judge": "my-judge --fast"}}\n' >"$work/judge-own.json"; scen_config="$work/judge-own.json" scenlib 'dl_scenarios_judge_command')"
 out=$(DEV_LOOP_CONFIG="$work/judge-model.json" "$plugin/scripts/doctor.sh" 2>&1)
 echo "$out" | grep -qE '^ +models .*scenario-judge=sonnet' && pass "doctor lists models.scenario-judge" || fail "no scenario-judge model in doctor"
+printf '{"checks": [{"name": "scenarios", "command": "true"}], "scenarios": {}}\n' >"$work/judge-name.json"
+DEV_LOOP_CONFIG="$work/judge-name.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -qF 'MISSING check name "scenarios" is reserved' &&
+  pass "doctor reserves the check name scenarios when scenarios are on" || fail "no reserved-name MISSING for scenarios"
 judge_agent="$plugin/agents/scenario-judge.md"
 awk 'NR == 1, /^tools:/' "$judge_agent" 2>/dev/null | grep -qE '^name: scenario-judge$' &&
   grep -E '^tools:' "$judge_agent" | grep -vqE 'Write|Edit' && pass "the scenario-judge agent exists and cannot write" ||
