@@ -55,8 +55,8 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    only what is now built, in the doc that owns the fact, and link instead of repeating. The ticket's
    `Docs:` and `Components:` lines say what the branch may change. For a feature, your first commit
    changes Features to the intended state, and the planned entry moves to Features (the dev-loop skill's
-   section 1a). Check with `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
-   doc change and for broken relative links in changed Markdown files.
+   section 1a). Check with `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red
+   for mapped code without a doc change and for broken relative links in changed Markdown files.
 5b. **Component cards stay true.** When the project configures `architecture` in `.dev-loop.json`, keep
    the component cards (`architecture.cards`, default `docs/architecture/`) true in the same branch: a new
    file goes into a card's `paths`, a changed responsibility or public interface into its card. A new
