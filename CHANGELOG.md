@@ -40,8 +40,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   every required scenario at `>= pass` and the mean at `>= min_satisfaction`. A red train names each
   unsatisfied scenario with the judge's `missing` line only; the `scenarios.sealed` share is only
   counted. With `affected`, only scenarios whose `spec` or `tags` match a changed path run, plus the
-  required ones. Results are recorded in `train-scenario-results.jsonl`; with `scenarios`,
-  `doctor.sh` lists `models.scenario-judge` and reserves the check name `scenarios`.
+  required ones. Results are recorded in `train-scenario-results.jsonl`; `doctor.sh` lists
+  `models.scenario-judge` (with `scenarios`, or when it is set) and reserves the check name `scenarios`.
 
 ## 0.6.0 — 2026-11-05
 

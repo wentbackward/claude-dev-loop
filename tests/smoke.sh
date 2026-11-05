@@ -2454,6 +2454,9 @@ expect "scenarios.judge replaces the default judge" "my-judge --fast" \
   "$(printf '{"scenarios": {"judge": "my-judge --fast"}}\n' >"$work/judge-own.json"; scen_config="$work/judge-own.json" scenlib 'dl_scenarios_judge_command')"
 out=$(DEV_LOOP_CONFIG="$work/judge-model.json" "$plugin/scripts/doctor.sh" 2>&1)
 echo "$out" | grep -qE '^ +models .*scenario-judge=sonnet' && pass "doctor lists models.scenario-judge" || fail "no scenario-judge model in doctor"
+printf '{"checks": ["true"], "models": {"scenario-judge": "gpt"}}\n' >"$work/judge-model-off.json"
+DEV_LOOP_CONFIG="$work/judge-model-off.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -qF 'MISSING models.scenario-judge: "gpt"' &&
+  pass "doctor checks models.scenario-judge when it is set without scenarios" || fail "no MISSING for models.scenario-judge"
 printf '{"checks": [{"name": "scenarios", "command": "true"}], "scenarios": {}}\n' >"$work/judge-name.json"
 DEV_LOOP_CONFIG="$work/judge-name.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -qF 'MISSING check name "scenarios" is reserved' &&
   pass "doctor reserves the check name scenarios when scenarios are on" || fail "no reserved-name MISSING for scenarios"
