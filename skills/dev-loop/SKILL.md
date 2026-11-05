@@ -45,6 +45,11 @@ absolute paths into their prompts.
   built; planned work stays in the tickets and the `docs.planned` list, which links them. When all the
   work of a spec has merged, archive the spec (move it to an archive folder, linked from the planned list
   or the decisions log) so it is not kept as a second truth.
+- **Components** (`architecture` in `.dev-loop.json`): each ticket names the components it changes (their
+  cards in `architecture.cards`). Slice a ticket to one component where possible: when a change crosses
+  components, the interface comes first (in the component that owns it, usually the lower layer), then
+  one ticket per consumer. A ticket that needs an upward dependency gets an interface the lower component
+  defines, not a baseline exception.
 - Keep issues current: comment progress at each step (started, in review, gated, merged, run result) and
   close them through `Closes #n` in the PR.
 
@@ -80,6 +85,8 @@ Implement ticket #<n>: <title>.
   ## Summary, "Closes #<n>", ## Decisions, ## Docs (the doc changes, or "none: <reason>"),
   ## Test evidence (commands and pass counts).
 - Docs: update <the doc sections the ticket names> in this branch; describe only what is built.
+- Components: <the components the ticket changes>; keep their cards true; a new dependency must be allowed
+  by the cards (arch-check.sh HEAD), or say why under ## Architecture in the notes.
 - Dependencies: <none | #m merged | stacked on <branch>>. Files other agents are editing now: <list>; avoid them.
 - Tests: write the failing tests first. Run ONLY the tests for what you touch, plus the fast check:
   <fast_check>. Do NOT run the full suite, coverage gate, e2e or long builds: the batch gate runs them
@@ -143,6 +150,9 @@ the machine-wide heavy-job queue.
 - **GREEN**: merge (step 6).
 - **docs-check red for <branch>**: a branch changed mapped code without its docs (or a `none: <reason>`
   in its notes' `## Docs`), or broke a relative link. Send the lines to its implementer, gate the rest.
+- **arch-check red for <branch>**: the branch brings a new architecture violation (upward, undeclared,
+  cycle, budget), a broken card, or baseline entries without a reason under `## Architecture` in its
+  notes. Send the lines to its implementer, gate the rest.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for

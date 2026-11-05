@@ -68,6 +68,24 @@ link that does not resolve. The gate prints `docs-check red for <branch> (...)` 
 (as every gate setting), so a branch cannot change the rules of its own check. Without `docs` this stage
 does not run.
 
+## Architecture ratchet (opt-in)
+
+With `architecture.check` configured in `.dev-loop.json`, the gate checks the architecture after
+`gate_setup` (so the project's dependency tool can use what it installs) and before the checks:
+
+- a branch whose own commits add entries to the baseline (`architecture.baseline`) is red unless its notes
+  have an `## Architecture` section that says why: `arch-check red for <branch>: it adds baseline
+  entries ...`, with the entries;
+- `${CLAUDE_PLUGIN_ROOT}/scripts/arch-check.sh HEAD` on the train's top. A violation not in the baseline,
+  a broken card or a failing `architecture.check` is red: each branch's train ref is then checked in order,
+  and `arch-check red for <branch> (<sha>):` lists the new lines that branch brings. Fixed baseline entries
+  print as `arch-check: fixed ... (remove it from the baseline)` and keep the train green: the next branch
+  removes them.
+
+Red ends `TRAIN RED` before the checks; a config error (exit 2 of `arch-check.sh`) ends the gate with
+exit 2. The config comes from the main checkout; the cards and the baseline from the branch. Without
+`architecture` this stage does not run.
+
 ## Read the result (last line)
 
 - `TRAIN GREEN` (exit 0): recorded for the merge. Run the `merge` skill with the same branches in the same

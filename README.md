@@ -47,7 +47,8 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    (`feat/<n>-<slug>`). Each one writes the failing tests first, then the code, and runs only targeted
    tests and the fast check. It makes small Conventional Commits (`Refs #n`), pushes its branch and writes
    a PR notes file. That file sits outside git; its first line is a plain title, then a summary,
-   `Closes #n`, the doc changes (`## Docs`) and the test evidence. Implementers never open or merge PRs.
+   `Closes #n`, the doc changes (`## Docs`), the reasons for new architecture exceptions
+   (`## Architecture`, when there are any) and the test evidence. Implementers never open or merge PRs.
 3. **Review.** The `code-reviewer` agent reviews every branch, independently of the implementer's own
    review. It reproduces suspected bugs as throwaway tests, and applies a deeper checklist on paths that
    touch money, orders, auth or deleting data. Must-fix items go back to the implementer, and the branch is
@@ -80,6 +81,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
+| script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
@@ -204,6 +206,73 @@ every merge:
 
 Without `docs` (or with no aspects, as in `templates/dev-loop.json`) none of this runs.
 
+## Architecture ratchet (optional)
+
+Agents add dependencies wherever the code they read suggests one, and a codebase drifts into one big
+cycle. With an `architecture` block in `.dev-loop.json`, each component has a card that says what it owns,
+its layer and what it may use, and the gate keeps every new dependency inside those rules while the known
+violations may only shrink:
+
+```json
+"architecture": {
+  "cards": "docs/architecture/",
+  "check": "python3 tools/import_edges.py",
+  "baseline": "docs/architecture/baseline.txt",
+  "budget": 8000
+}
+```
+
+- **A component card** is one Markdown file per component in `cards` (from `templates/COMPONENT.md`),
+  with a header the scripts read and free text after it (responsibility, public interface):
+
+  ```
+  ---
+  component: storage
+  layer: 0
+  kind: component        # or: composition-root
+  paths: src/app/storage/* src/app/catalogue.py
+  depends_on: instruments
+  max_lines: 8000
+  ---
+  ```
+
+  `layer` is a number, 0 at the bottom; no dependency may go up a layer. `paths` are globs on the
+  repository path where `*` also matches `/`; a file belongs to the card whose matching glob is longest.
+  `depends_on` is optional: when the line is there (even empty), a dependency on any other component is
+  flagged. A composition root (entry points, the CLI, the job runner, app wiring) may depend on the layers
+  below it without listing them; its fan-out is not flagged. `max_lines` overrides `budget`; without
+  either, the component has no budget. A Markdown file in the folder whose first line is not `---` (an index) is not a card.
+- **`check`** is the project's own command (an `ast` scan, import-linter, dependency-cruiser...), run at
+  the repository root. It prints one edge per line, `<from> <to>`: repository paths, or component names.
+  The plugin ships no dependency tool.
+- **`scripts/arch-check.sh <ref>`** (deterministic; exit 0 when every violation is in the baseline, 1 for a
+  new violation or an error at `<ref>` such as a broken card or a failing `check`, 2 for a usage or config
+  error) reads the cards at `<ref>`, runs `check` in a checkout of `<ref>` (this worktree when it is at
+  `<ref>` with no tracked file modified, else a temporary worktree) and prints one stable line per
+  violation, as `new` or `known`: `upward A -> B`, `undeclared A -> B`, `cycle A B C` (a group of
+  components that depend on each other, once, its members sorted) and `budget A <lines>/<max>` (the
+  lines of the component's tracked text files). A baseline entry that no longer occurs prints as
+  `fixed ... (remove it from the baseline)`. A file in no component is a note.
+- **The ratchet.** `arch-check.sh --baseline [<ref>]` writes today's violations to the baseline file,
+  sorted, to be committed. A budget entry stays known while the component does not grow past its
+  baselined size. In the gate a branch may add baseline entries only with a reason under `## Architecture`
+  in its notes, so by default the baseline only shrinks.
+- **The gate** runs after `gate_setup` and before the checks: the baseline rule for each branch, then
+  `arch-check.sh` on the train's top. When the top is red, each branch's train ref is checked in order and
+  named with the new lines it brings (`arch-check red for <branch>`), and the train ends `TRAIN RED`. The
+  config comes from the main checkout's `.dev-loop.json`; the cards and the baseline from the branch.
+- **`doctor.sh`** prints the components by layer with their sizes against their budgets, reports a broken
+  card or a failing `check` as MISSING, and notes components over budget, files in no component and the
+  baseline size.
+- **The agents.** Each ticket names its components and is sliced to one where possible (the interface
+  first, then the consumers). The implementer keeps the cards true and allows a new dependency only
+  through the cards, or says why under `## Architecture`. The reviewer treats a false card or a new upward
+  dependency solved by an exception as a must fix: the fix is an interface the lower layer defines. Setup
+  drafts the first component map from the code, asks the user to confirm the boundaries and layers, and
+  records the baseline.
+
+Without `architecture.check` (empty in `templates/dev-loop.json`) none of this runs.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -245,6 +314,10 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `docs.planned` | none | the planned list (built and planned are kept apart) |
 | `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
 | `docs.max_lines` | `1000` | the size budget per current-state file (`doctor.sh` notes bigger ones) |
+| `architecture.check` | none (off) | the command printing the dependency edges `<from> <to>` (paths or component names); set, it turns the architecture ratchet on (see Architecture ratchet) |
+| `architecture.cards` | `docs/architecture/` | the folder of the component cards |
+| `architecture.baseline` | `docs/architecture/baseline.txt` | the known violations, one per line, sorted |
+| `architecture.budget` | none | the default `max_lines` per component (a card may override it) |
 
 ### Models per agent
 

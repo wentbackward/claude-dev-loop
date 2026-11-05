@@ -866,5 +866,245 @@ expect "the template's empty docs block keeps the docs off" "2 0" \
   "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD >/dev/null 2>&1
     echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs ")"
 
+# 14. Architecture: component cards, arch-check.sh, the baseline ratchet in the gate and doctor (all only
+# with "architecture" configured). The edge list comes from a fake command: tools/edges.sh prints edges.txt.
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+mkdir -p docs/architecture app/store app/core/util app/ui app/cli tools
+card() { # card FILE HEADER_LINES...: a component card with that header and a free-text body
+  local file=$1
+  shift
+  { echo "---"; printf '%s\n' "$@"; echo "---"; echo "## Responsibility"; echo "Test component."; } >"docs/architecture/$file"
+}
+card store.md "component: store" "layer: 0" "kind: component        # or: composition-root" "paths: app/store/*" "depends_on:"
+card util.md "component: util" "layer: 0" "paths: app/core/util/*"
+card core.md "component: core" "layer: 1" "paths: app/core/* app/core.py" "depends_on: store" "max_lines: 2"
+card ui.md "component: ui" "layer: 2" "paths: app/ui/*"
+card cli.md "component: cli" "layer: 3" "kind: composition-root" "paths: app/cli/*" "depends_on: ui"
+printf '1\n2\n3\n' >app/store/s.py
+printf '1\n2\n' >app/core/c.py
+echo 1 >app/core/util/u.py
+echo 1 >app/ui/u.py
+echo 1 >app/cli/main.py
+printf '#!/usr/bin/env bash\ncat edges.txt\n' >tools/edges.sh && chmod +x tools/edges.sh
+cat >edges.txt <<'EOF'
+app/core/c.py app/store/s.py
+app/ui/u.py app/core/c.py
+app/cli/main.py app/ui/u.py
+app/cli/main.py app/store/s.py
+app/cli/main.py util
+app/store/s.py app/store/s.py
+EOF
+git add docs app tools edges.txt && git commit -q -m "feat: components" && git push -q origin main
+cat >"$work/arch.json" <<'EOF'
+{
+  "base_branch": "main",
+  "checks": [{"name": "unit", "command": "touch \"$SMOKE_WORK/arch-checks-ran\"; ./check.sh", "heavy": false}],
+  "architecture": {"check": "./tools/edges.sh", "budget": 100}
+}
+EOF
+arch_check() { # arch_check ARGS...: run arch-check.sh with the architecture config; sets out and rc
+  out=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/arch-check.sh" "$@" 2>&1)
+  rc=$?
+  echo "$out"
+}
+violations() { echo "$out" | sed -n 's/^arch-check: new //p' | paste -sd'|' -; }
+arch_check HEAD
+expect "arch-check is green for a clean component map without a baseline" 0 "$rc"
+echo "$out" | grep -q "cli" && fail "a composition root's fan-out was flagged" ||
+  pass "a composition root's fan-out (undeclared, by name) is not flagged"
+echo "$out" | grep -q "no component" && fail "a file was reported in no component: $out" ||
+  pass "every edge endpoint maps to a component (globs, names, the longest glob wins)"
+
+# Every kind of violation, from the edge list.
+a0=$(git rev-parse HEAD)
+git checkout -q -b feat/90-tangle
+cat >>edges.txt <<'EOF'
+app/store/s.py app/ui/u.py
+app/core/c.py app/core/util/u.py
+core util
+./scripts/stray.py app/store/s.py
+EOF
+printf '3\n4\n' >>app/core/c.py
+git commit -q -am "feat: tangle"
+arch_check HEAD
+expect "arch-check is red for new violations" 1 "$rc"
+expect "arch-check finds upward, undeclared, cycles and budgets as stable sorted lines" \
+  "budget core 4/2|cycle core store ui|undeclared core -> util|undeclared store -> ui|upward store -> ui" "$(violations)"
+expect "a cycle is shown once" 1 "$(echo "$out" | grep -c "cycle")"
+echo "$out" | grep -qxF "arch-check: note: no component: scripts/stray.py" && pass "a file in no component is a note" ||
+  fail "no note for scripts/stray.py: $out"
+echo "$out" | grep "no component" | grep -q "new" && fail "a file in no component counted as a violation" ||
+  pass "a file in no component is not a violation"
+
+# The baseline: --baseline writes a stable sorted file; known violations are green.
+arch_check --baseline
+expect "arch-check --baseline exits 0" 0 "$rc"
+expect "--baseline writes today's violations, sorted" \
+  "budget core 4/2|cycle core store ui|undeclared core -> util|undeclared store -> ui|upward store -> ui" \
+  "$(paste -sd'|' - <docs/architecture/baseline.txt 2>/dev/null)"
+cp docs/architecture/baseline.txt "$work/baseline-1.txt"
+arch_check --baseline HEAD
+cmp -s docs/architecture/baseline.txt "$work/baseline-1.txt" && pass "--baseline writes the same file twice" ||
+  fail "--baseline is not stable"
+git add docs/architecture/baseline.txt && git commit -q -m "chore: architecture baseline"
+arch_check HEAD
+expect "known violations are green" 0 "$rc"
+expect "known violations are listed as known" 5 "$(echo "$out" | grep -c '^arch-check: known ')"
+echo 5 >>app/core/c.py && git commit -q -am "feat: core grows"
+arch_check HEAD
+expect "a component that grows past its baselined size is a new violation" "1 budget core 5/2" "$rc $(violations)"
+printf '1\n2\n3\n' >app/core/c.py && git commit -q -am "feat: core shrinks"
+arch_check HEAD
+expect "a component that shrinks under its baselined size stays green" 0 "$rc"
+grep -v "app/core/c.py app/core/util/u.py\|^core util" edges.txt >edges.new && mv edges.new edges.txt &&
+  git commit -q -am "fix: core no longer uses util"
+arch_check HEAD
+expect "a fixed violation keeps it green" 0 "$rc"
+echo "$out" | grep -qxF "arch-check: fixed undeclared core -> util (remove it from the baseline)" &&
+  pass "a fixed baseline entry is reported" || fail "no fixed line: $out"
+echo "app/store/s.py app/core/c.py" >>edges.txt && git commit -q -am "feat: store uses core"
+arch_check HEAD
+expect "a new violation next to known ones is red" "1 undeclared store -> core|upward store -> core" "$rc $(violations)"
+tangle=$(git rev-parse HEAD)
+
+# In a checkout of <ref>: another commit than HEAD, or a dirty worktree, run in a temporary worktree.
+worktrees=$(git worktree list | wc -l)
+git checkout -q main
+arch_check "$tangle"
+expect "arch-check of another commit judges that commit" "1 undeclared store -> core|upward store -> core" "$rc $(violations)"
+echo "app/ui/u.py app/cli/main.py" >>edges.txt
+arch_check HEAD
+expect "arch-check of HEAD with uncommitted changes judges the commit" 0 "$rc"
+git checkout -q -- edges.txt
+expect "arch-check leaves no temporary worktree behind" "$worktrees" "$(git worktree list | wc -l)"
+
+# Broken cards and config errors.
+git checkout -q -B feat/91-broken "$a0"
+card bad.md "component: bad" "layer: high" "paths: app/bad/*"
+printf -- '---\ncomponent: open\nlayer: 0\npaths: x/*\n' >docs/architecture/open.md
+git add docs && git commit -q -m "docs: broken cards"
+arch_check HEAD
+expect "a broken card makes arch-check red" 1 "$rc"
+echo "$out" | grep "^arch-check: error:" | grep "docs/architecture/bad.md" | grep -qF "layer" &&
+  pass "the error names the card and its bad field" || fail "bad card message: $out"
+echo "$out" | grep "^arch-check: error:" | grep -qF "docs/architecture/open.md" &&
+  pass "a card without its closing --- is reported" || fail "open card not reported: $out"
+arch_check --baseline
+expect "--baseline refuses while a card is broken" 1 "$rc"
+git checkout -q main
+out=$("$plugin/scripts/arch-check.sh" 2>&1)
+expect "arch-check without arguments is a usage error" 2 "$?"
+arch_check no-such-ref
+expect "arch-check with an unknown ref is an error" 2 "$rc"
+out=$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/arch-check.sh" HEAD 2>&1)
+expect "arch-check without architecture in the config is a config error" 2 "$?"
+sed 's/"budget": 100/"budget": "lots"/' "$work/arch.json" >"$work/arch-bad.json"
+out=$(DEV_LOOP_CONFIG="$work/arch-bad.json" "$plugin/scripts/arch-check.sh" HEAD 2>&1)
+expect "a budget that is not a number is a config error" 2 "$?"
+sed 's#"./tools/edges.sh"#"exit 4"#' "$work/arch.json" >"$work/arch-fails.json"
+out=$(DEV_LOOP_CONFIG="$work/arch-fails.json" "$plugin/scripts/arch-check.sh" HEAD 2>&1)
+expect "a failing architecture.check is red" 1 "$?"
+echo "$out" | grep -q "^arch-check: error: architecture.check failed" && pass "the failing command is named" ||
+  fail "failing command message: $out"
+
+# The gate: on the train's top, after the docs stage and before the checks; it names the branch.
+git checkout -q -B main origin/main
+git checkout -q -B feat/92-innocent "$a0" && echo "app/ui/u.py app/store/s.py" >>edges.txt &&
+  git commit -q -am "feat: ui uses store" && git push -q -u origin feat/92-innocent
+git checkout -q -B feat/93-upward feat/92-innocent && echo "app/core/c.py app/ui/u.py" >>edges.txt &&
+  git commit -q -am "feat: core uses ui" && git push -q -u origin feat/93-upward
+git checkout -q main
+rm -f "$work/arch-checks-ran"
+gate_arch() { # gate_arch CONFIG BRANCH...: run the gate; sets out and rc
+  local config=$1
+  shift
+  out=$(DEV_LOOP_CONFIG="$config" "$plugin/scripts/gate-train.sh" "$@" 2>&1)
+  rc=$?
+  echo "$out"
+}
+gate_arch "$work/arch.json" feat/92-innocent feat/93-upward
+expect "the gate is red for a new violation" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/93-upward" >/dev/null && pass "the architecture failure names the branch" ||
+  fail "the branch is not named: $out"
+echo "$out" | grep -qF "upward core -> ui" && pass "the gate prints the new violation" || fail "no violation in: $out"
+echo "$out" | grep -q "arch-check red for feat/92-innocent" && fail "the innocent branch was named" ||
+  pass "a branch without a new violation is not named"
+[ ! -e "$work/arch-checks-ran" ] && ! echo "$out" | grep -q "^unit " &&
+  pass "the architecture failure stops the train before the checks" || fail "the checks ran after an architecture failure"
+git checkout -q -B feat/97-after feat/93-upward && echo after >>src.txt && git commit -q -am "feat: after" &&
+  git push -q -u origin feat/97-after
+git checkout -q main
+gate_arch "$work/arch.json" feat/92-innocent feat/93-upward feat/97-after
+echo "$out" | grep -q "arch-check red for feat/93-upward" && ! echo "$out" | grep -q "arch-check red for feat/97-after" &&
+  pass "a violation below the train's top names the branch that brought it, not the ones above" ||
+  fail "wrong branch named: $out"
+expect "the gate leaves its worktree on the base after an architecture failure" "$(git rev-parse origin/main)" \
+  "$(git -C "$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" gate)" rev-parse HEAD 2>/dev/null)"
+gate_arch "$work/nodocs.json" feat/92-innocent feat/93-upward
+expect "without architecture in the config the gate does not check it" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep -q "arch-check" && fail "the gate ran arch-check without architecture" ||
+  pass "without architecture the gate prints no architecture lines"
+
+# A branch that adds baseline entries needs a reason under "## Architecture" in its notes.
+git checkout -q -B feat/94-excepted "$a0" && echo "app/core/c.py app/ui/u.py" >>edges.txt && git add edges.txt &&
+  git commit -q -m "feat: core uses ui"
+DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/arch-check.sh" --baseline >/dev/null 2>&1
+git add docs/architecture/baseline.txt && git commit -q -m "chore: baseline the exception" && git push -q -u origin feat/94-excepted
+git checkout -q main
+notes94=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" notes feat/94-excepted)
+printf 'feat: x (#94)\n\n## Architecture\n\n## Test evidence\n- ok\n' >"$notes94"
+rm -f "$work/arch-checks-ran"
+gate_arch "$work/arch.json" feat/94-excepted
+expect "a branch that adds baseline entries without a reason is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/94-excepted" | grep -qF "## Architecture" &&
+  pass "the message names the branch and the notes section" || fail "baseline growth message: $out"
+echo "$out" | grep -qF "upward core -> ui" && pass "the message lists the added entries" || fail "no entries in: $out"
+printf 'feat: x (#94)\n\n## Architecture\n- core reads the ui theme until #95 moves it down\n' >"$notes94"
+gate_arch "$work/arch.json" feat/94-excepted
+expect "a baseline entry with a reason in ## Architecture is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+[ -e "$work/arch-checks-ran" ] && pass "the checks run after a green architecture stage" || fail "the checks did not run"
+rm -f "$notes94"
+
+# A fixed baseline entry is reported by the gate (the next branch removes it).
+git checkout -q -B main origin/main
+cp "$work/baseline-1.txt" docs/architecture/baseline.txt && git add docs && git commit -q -m "chore: stale baseline" &&
+  git push -q origin main
+git checkout -q -B feat/96-plain origin/main && echo more >>src.txt && git commit -q -am "feat: plain" &&
+  git push -q -u origin feat/96-plain
+git checkout -q main
+gate_arch "$work/arch.json" feat/96-plain
+expect "fixed baseline entries keep the gate green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep -F "fixed upward store -> ui" | grep -qF "remove it from the baseline" &&
+  pass "the gate reports fixed baseline entries" || fail "no fixed entries in: $out"
+
+# doctor prints the component map with sizes, reports broken cards and notes files in no component.
+git checkout -q -B main origin/main
+card bad.md "component: bad" "layer: high" "paths: app/bad/*"
+echo "lib/loose.sh app/store/s.py" >>edges.txt
+out=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out"
+echo "$out" | grep -E "arch +layer 0 +store +component +3/100 lines" >/dev/null &&
+  pass "doctor prints a component with its layer, kind and size against the budget" || fail "no store line"
+echo "$out" | grep -E "arch +layer 1 +core +component +2/2 lines" >/dev/null &&
+  pass "doctor uses a card's max_lines over the default budget" || fail "no core line"
+echo "$out" | grep -E "arch +layer 3 +cli +composition-root" >/dev/null && pass "doctor shows a composition root" ||
+  fail "no cli line"
+[ "$(echo "$out" | grep -E '^ +arch +layer' | awk '{print $3}' | paste -sd' ' -)" = "0 0 1 2 3" ] &&
+  pass "doctor lists the components by layer" || fail "components not by layer"
+echo "$out" | grep -E "^MISSING .*docs/architecture/bad.md" | grep -qF "layer" && pass "doctor reports a broken card as MISSING" ||
+  fail "no MISSING for the broken card"
+echo "$out" | grep -E "^note .*no component" | grep -qF "lib/loose.sh" && pass "doctor notes a file in no component" ||
+  fail "no note for lib/loose.sh"
+echo "$out" | grep -E "^note .*architecture baseline" | grep -qF "5 entries" && pass "doctor notes the baseline size" ||
+  fail "no baseline size note"
+git checkout -q -- edges.txt && rm -f docs/architecture/bad.md
+expect "doctor without architecture prints no architecture lines" 0 \
+  "$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "arch ")"
+expect "the template's empty architecture block keeps the check off" "2 0" \
+  "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/arch-check.sh" HEAD >/dev/null 2>&1
+    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "arch ")"
+[ -f "$plugin/templates/COMPONENT.md" ] && grep -q "^kind: component" "$plugin/templates/COMPONENT.md" &&
+  pass "the component card template has the header" || fail "no templates/COMPONENT.md"
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

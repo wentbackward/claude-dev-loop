@@ -54,6 +54,47 @@ doctor_docs() {
   done
 }
 
+# shellcheck source=lib/arch.sh
+. "$scripts_dir/lib/arch.sh"
+
+# doctor_arch: print the component map (by layer, sizes against budgets) of the working tree; report broken
+# cards and a failing architecture.check as MISSING; note files in no component and the baseline size.
+doctor_arch() {
+  local cards baseline results layer name kind lines max entries
+  cards=$(dl_arch_cards_dir)
+  baseline=$(dl_arch_baseline_path)
+  echo "        arch check    $(cfg architecture.check)"
+  echo "        arch cards    $cards"
+  dl_arch_budget >/dev/null || missing "architecture.budget: \"$(cfg architecture.budget "")\" is not a number"
+  if [ ! -d "$DL_ROOT/$cards" ]; then
+    missing "architecture.cards: $cards does not exist"
+    return
+  fi
+  results=$(dl_arch_analyse "$DL_ROOT")
+  while IFS=$'\t' read -r layer name kind lines max; do
+    [ -n "$name" ] || continue
+    if [ "$max" = - ]; then max=""; else max="/$max"; fi
+    printf '        arch layer %-3s %-16s %-16s %s%s lines\n' "$layer" "$name" "$kind" "$lines" "$max"
+  done < <(printf '%s\n' "$results" | dl_arch_tagged S | LC_ALL=C sort -t$'\t' -k1,1n -k2,2)
+  [ -n "$(printf '%s\n' "$results" | dl_arch_tagged S)$(printf '%s\n' "$results" | dl_arch_tagged E)" ] ||
+    missing "no component cards in $cards (a card is a Markdown file whose first line is ---; templates/COMPONENT.md)"
+  while IFS= read -r line; do
+    [ -n "$line" ] && missing "architecture: $line"
+  done < <(printf '%s\n' "$results" | dl_arch_tagged E)
+  while IFS= read -r line; do
+    [ -n "$line" ] && optional "component over its line budget: $line"
+  done < <(printf '%s\n' "$results" | dl_arch_tagged V | grep '^budget ')
+  while IFS= read -r line; do
+    [ -n "$line" ] && optional "no component: $line (add it to a card's paths, or leave it out of architecture.check)"
+  done < <(printf '%s\n' "$results" | dl_arch_tagged N | LC_ALL=C sort -u)
+  if [ -f "$DL_ROOT/$baseline" ]; then
+    entries=$(grep -cv '^[[:space:]]*\(#.*\)\{0,1\}$' "$DL_ROOT/$baseline")
+    optional "architecture baseline: $entries entries ($baseline)"
+  else
+    optional "architecture baseline: none yet (arch-check.sh --baseline writes $baseline)"
+  fi
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
@@ -122,6 +163,7 @@ else
   done
   echo "        models        $models"
   dl_docs_on && doctor_docs
+  dl_arch_on && doctor_arch
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
     ok ".claude/CLAUDE.md"
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi

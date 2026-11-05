@@ -55,6 +55,15 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    only what is now built, in the doc that owns the fact, and link instead of repeating. Check with
    `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
    doc change and for broken relative links in changed Markdown files.
+5b. **Component cards stay true.** When the project configures `architecture` in `.dev-loop.json`, keep
+   the component cards (`architecture.cards`, default `docs/architecture/`) true in the same branch: a new
+   file goes into a card's `paths`, a changed responsibility or public interface into its card. A new
+   dependency between components must be allowed by the cards (not up a layer, and in `depends_on` when the
+   card lists it); solve an upward need with an interface the lower component defines. Check with
+   `<plugin>/scripts/arch-check.sh HEAD`: a `new` line is a violation. Only when a violation other than an
+   upward dependency cannot be avoided in this ticket, add it to the baseline (`arch-check.sh --baseline`, commit the file) and say why
+   in an `## Architecture` section of the notes; the gate is red for added baseline entries without it.
+   Remove baseline entries the check reports as `fixed`.
 6. Self-review your diff (`git diff <remote>/<base>...HEAD`) against the acceptance criteria and CLAUDE.md:
    every criterion tested, no dead or commented-out code, no debug output, no secrets.
 7. Run your targeted tests and the fast check once more; both green.
@@ -66,7 +75,9 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    - line 1: a plain title, no leading `#`, e.g. `feat(scope): what changed (#<n>)`;
    - a blank line, then `## Summary` (what changed and why, in plain words), `Closes #<n>`,
      `## Decisions` (if any), `## Docs` (required: the doc files and sections you changed, or one line
-     `none: <reason>` when no current-state doc is affected), `## Test evidence` (the exact commands you
+     `none: <reason>` when no current-state doc is affected), `## Architecture` (only when the branch
+     adds baseline entries: why each one cannot be avoided now, and the ticket that removes it),
+     `## Test evidence` (the exact commands you
      ran and their pass counts).
 
 ## When review findings come back

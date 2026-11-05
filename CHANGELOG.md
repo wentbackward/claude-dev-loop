@@ -12,6 +12,21 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   <remote>/<branch> is missing` instead of `no config at`, and names a local-only branch as
   `refs/heads/<branch>` (#9).
 - `doctor.sh` accepts the project instructions at `.claude/CLAUDE.md` as well as `CLAUDE.md`.
+- Component cards and an architecture ratchet (off without `architecture.check` in `.dev-loop.json`):
+  - `architecture` config: `cards` (default `docs/architecture/`), `check` (the project's command printing
+    `<from> <to>` edges, paths or component names), `baseline` (default `docs/architecture/baseline.txt`)
+    and `budget` (default `max_lines` per component).
+  - A component card per component (`templates/COMPONENT.md`): `component`, `layer`, `kind` (`component`
+    or `composition-root`), `paths`, `depends_on`, `max_lines`.
+  - `scripts/arch-check.sh <ref>`: upward and undeclared dependencies, cycles and components over budget
+    as stable lines, new, known or fixed against the baseline; files in no component as notes;
+    `--baseline` writes the sorted baseline.
+  - `gate-train.sh` runs it on the train's top after `gate_setup` and before the checks, names the branch
+    that brings a new violation and ends `TRAIN RED`; a branch that adds baseline entries needs a reason
+    under `## Architecture` in its notes.
+  - `doctor.sh` prints the component map with sizes against budgets, reports broken cards, and notes files
+    in no component and the baseline size.
+  - The setup, dev-loop, gate and doctor skills and the implementer and reviewer agents carry the rules.
 - Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
   - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules
     `{"paths": [globs], "docs": [aspects]}` (`*` also matches `/`) and `max_lines` (default 1000).

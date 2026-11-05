@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the current-state docs, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
+description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the current-state docs, the component map, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
 ---
 
 # Doctor
@@ -35,6 +35,12 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |
 | `note <file> has <n> lines, over docs.max_lines` | split it: an index and one file per area |
 | `note docs map rule <n> (...) matches no tracked file` | fix the globs (`*` also matches `/`), or drop the rule |
+| `MISSING architecture: <card>: ...` | fix the card's header (see `templates/COMPONENT.md`) |
+| `MISSING architecture: architecture.check failed ...` | run the command by hand in the project and fix it |
+| `MISSING architecture.cards: ... does not exist` or `no component cards` | the `setup` skill's step 3c, or fix `architecture.cards` |
+| `note component over its line budget` | split the component, or raise its `max_lines` with a reason in the decisions log |
+| `note no component: <path>` | add the path to a card's `paths`, or leave it out of `architecture.check` |
+| `note architecture baseline: <n> entries` | known violations; each ticket that fixes one removes it |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
