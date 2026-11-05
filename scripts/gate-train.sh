@@ -24,6 +24,10 @@
 #   "docs": {"aspects", "map", ...}  right after stacking, run docs-check.sh for each branch on its own
 #                       commits (from the train ref below it, or the base) with its notes file; a red branch
 #                       is named and the train ends TRAIN RED before gate_setup and the checks.
+#   "architecture": {"check", "cards", "baseline", "budget"}  after gate_setup and before the checks: a
+#                       branch whose commits add baseline entries needs a reason under "## Architecture" in
+#                       its notes; then arch-check.sh on the train's top. With a new violation, each branch's
+#                       train ref is checked in order and named for the new lines it brings; TRAIN RED.
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
 # longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
@@ -136,6 +140,69 @@ if [ -n "$setup" ]; then
     exit 1
   fi
 fi
+
+# shellcheck source=lib/arch.sh
+. "$scripts_dir/lib/arch.sh"
+
+# arch_lines OUTPUT: the new violations and errors of an arch-check.sh output.
+arch_lines() {
+  printf '%s\n' "$1" | grep -E '^arch-check: (new|error:) '
+}
+
+# check_arch: with "architecture" configured, a branch may add baseline entries only with a reason in its
+# notes' "## Architecture" section; then arch-check.sh on the train's top (HEAD). When the top is red,
+# each branch's train ref is checked in order and named for the new lines it brings first.
+check_arch() {
+  local branch from="$DL_REMOTE/$DL_BASE" added out rc red="" top seen="" branch_out fresh
+  for branch in "$@"; do
+    added=$(dl_arch_baseline_growth "$from" "train-$branch")
+    if [ -n "$added" ] && ! dl_arch_notes_reason "$(dl_note_file "$branch")"; then
+      echo "arch-check red for $branch: it adds baseline entries without a reason under \"## Architecture\" in its notes:"
+      printf '%s\n' "$added" | sed 's/^/  /'
+      red=yes
+    fi
+    from="train-$branch"
+    top=$branch
+  done
+  out=$("$scripts_dir/arch-check.sh" HEAD 2>&1)
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    for branch in "$@"; do
+      if [ "$branch" = "$top" ]; then
+        branch_out=$out
+      else
+        git checkout -q "train-$branch"
+        branch_out=$("$scripts_dir/arch-check.sh" HEAD 2>&1)
+      fi
+      fresh=$(arch_lines "$branch_out" | grep -vxF -f <(printf '%s\n' "$seen"))
+      if [ -n "$fresh" ]; then
+        echo "arch-check red for $branch ($(git rev-parse --short "train-$branch")):"
+        printf '%s\n' "$fresh" | sed 's/^/  /'
+        seen+="$fresh"$'\n'
+      fi
+    done
+    git checkout -q "train-$top"
+    if [ -z "$seen" ]; then
+      echo "arch-check red on the train's top ($top):"
+      printf '%s\n' "$out" | sed 's/^/  /'
+    fi
+    red=yes
+  elif [ "$rc" -ne 0 ]; then
+    echo "arch-check error on the train's top ($top):"
+    printf '%s\n' "$out" | sed 's/^/  /'
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    exit 2
+  else
+    printf '%s\n' "$out" | grep -E '^arch-check: (fixed|note:) ' | sed 's/^/  /'
+  fi
+  if [ -n "$red" ]; then
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    echo "TRAIN RED"
+    exit 1
+  fi
+  echo "arch-check green on the train's top: $(printf '%s\n' "$out" | tail -n 1 | sed 's/^arch-check: ok ([^)]*): //')"
+}
+dl_arch_on && check_arch "$@"
 
 # entry_field PATH FIELD DEFAULT: a field of the check entry at PATH; a plain string entry is its command.
 entry_field() {
