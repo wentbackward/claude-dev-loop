@@ -199,12 +199,15 @@ alive() { # alive PID...: the PIDs still running, space separated
 
 # Defaults: the checks run one after the other, all of them, even after a failure.
 gate_with '"checks": [
-  {"name": "a", "command": "sleep 3; echo a-done"},
+  {"name": "a", "command": "sleep 3; echo a-done changed=${DL_CHANGED_FILES:-unset}"},
   {"name": "b", "command": "exit 3", "heavy": false},
   {"name": "c", "command": "sleep 3; echo c-done"}]'
 expect "default gate runs every check in order, even after a failure" "a rc=0|b rc=3|c rc=0" "$(result_lines)"
 expect "default gate is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
 [ "$elapsed" -ge 6 ] && pass "default gate runs the checks sequentially" || fail "default gate took $elapsed s (< 6)"
+logs=$("$plugin/scripts/paths.sh" logs)
+grep -q "a-done changed=unset" "$logs/train-a.log" && [ ! -e "$logs/train-changed-files.txt" ] &&
+  pass "default gate lists no changed files" || fail "default gate computed DL_CHANGED_FILES"
 
 # affected: runs first (through heavy.sh), gets the changed files, and its summary is printed.
 gate_with '"parallel": true,
@@ -218,6 +221,11 @@ expect "affected is reported first, then the checks in config order" "affected r
 echo "$out" | grep -q "^2 affected passed" && pass "affected summary is printed" || fail "no affected summary"
 grep -q '^\[heavy.sh\] slot' "$("$plugin/scripts/paths.sh" logs)/train-affected.log" 2>/dev/null &&
   pass "affected runs through heavy.sh by default" || fail "affected did not run through heavy.sh"
+
+# affected as a plain command string.
+gate_with '"affected": "cp \"$DL_CHANGED_FILES\" \"$SMOKE_WORK/changed.txt\"", "checks": [{"name": "unit", "command": "true", "heavy": false}]'
+expect "a plain-string affected runs first with the changed files" "0 affected rc=0|unit rc=0 fast.txt|src.txt" \
+  "$rc $(result_lines) $(sort "$work/changed.txt" 2>/dev/null | paste -sd'|')"
 
 # affected fails without fail_fast: the checks still run, the train is red.
 gate_with '"affected": "exit 5", "checks": [{"name": "unit", "command": "touch \"$SMOKE_WORK/marker\"", "heavy": false}]'
@@ -257,9 +265,11 @@ expect "parallel gate without fail_fast lets the others finish" "1 x rc=0|y rc=4
 # parallel + fail_fast: a failure stops a long sibling, its children (even one ignoring SIGTERM) and heavy.sh.
 gate_with '"parallel": true, "fail_fast": true, "checks": [
   {"name": "slow", "command": "echo $$ $PPID >\"$SMOKE_WORK/slow.pids\"; (trap \"\" TERM; exec sleep 300) & echo $! >>\"$SMOKE_WORK/slow.pids\"; sleep 300 & echo $! >>\"$SMOKE_WORK/slow.pids\"; wait"},
+  {"name": "quiet", "command": "trap \"exit 0\" TERM; sleep 300 & wait", "heavy": false},
   {"name": "bad", "command": "sleep 1; exit 3", "heavy": false}]'
 expect "fail_fast gate is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
-expect "fail_fast reports the failure and the stopped sibling" "slow stopped|bad rc=3" "$(result_lines)"
+expect "fail_fast reports the failure, the stopped sibling and one that ended with 0" \
+  "slow stopped|quiet rc=0|bad rc=3" "$(result_lines)"
 [ "$elapsed" -lt 10 ] && pass "fail_fast stops the sibling promptly ($elapsed s)" || fail "fail_fast took $elapsed s"
 # shellcheck disable=SC2046  # the pid list splits on purpose
 expect "fail_fast leaves no process of the stopped check behind" "" "$(alive $(cat "$work/slow.pids" 2>/dev/null))"
@@ -273,6 +283,41 @@ gate_with '"fail_fast": true, "checks": [
   {"name": "unit", "command": "touch \"$SMOKE_WORK/marker\"", "heavy": false}]'
 expect "sequential fail_fast skips the remaining checks" "1 bad rc=3|unit skipped no" \
   "$rc $(result_lines) $([ -e "$work/marker" ] && echo yes || echo no)"
+
+# The gate itself gets SIGTERM while parallel checks run: it stops them and reports red.
+cat >"$work/gate.json" <<'EOF'
+{"base_branch": "main", "parallel": true,
+ "checks": [{"name": "long", "command": "echo $$ $PPID >\"$SMOKE_WORK/slow.pids\"; sleep 300 & echo $! >>\"$SMOKE_WORK/slow.pids\"; wait"}],
+ "heavy": {"slots": 2, "port_env": "SMOKE_PORT", "port_base": 9100, "port_step": 10, "poll_seconds": 1}}
+EOF
+rm -f "$work/slow.pids"
+DEV_LOOP_CONFIG="$work/gate.json" "$plugin/scripts/gate-train.sh" feat/6-fast >"$work/term.out" 2>&1 &
+gate_pid=$!
+for _ in $(seq 50); do [ "$(wc -w <"$work/slow.pids" 2>/dev/null)" = 3 ] && break; sleep 0.2; done
+kill -TERM "$gate_pid"
+wait "$gate_pid"
+rc=$?
+expect "a gate stopped by SIGTERM is red with exit 1" "1 TRAIN RED" "$rc $(tail -1 "$work/term.out")"
+grep -q "^long stopped" "$work/term.out" && pass "a gate stopped by SIGTERM reports the stopped check" ||
+  fail "no stopped line after SIGTERM"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "a gate stopped by SIGTERM leaves no check process behind" "" "$(alive $(cat "$work/slow.pids" 2>/dev/null))"
+expect "a gate stopped by SIGTERM leaves no heavy slot held" "9110" \
+  "$(DEV_LOOP_CONFIG="$work/gate.json" "$plugin/scripts/heavy.sh" bash -c 'echo $SMOKE_PORT' 2>/dev/null)"
+
+# Without setsid on PATH the gate starts its process groups with perl.
+mkdir -p "$work/nosetsid"
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+  [ -d "$dir" ] && find "$dir" -mindepth 1 -maxdepth 1 ! -name setsid -exec ln -s -t "$work/nosetsid" {} + 2>/dev/null
+done
+expect "the test PATH hides setsid" "" "$(PATH="$work/nosetsid" command -v setsid)"
+PATH="$work/nosetsid" gate_with '"parallel": true, "fail_fast": true, "checks": [
+  {"name": "slow", "command": "echo $$ $PPID >\"$SMOKE_WORK/slow.pids\"; sleep 300 & echo $! >>\"$SMOKE_WORK/slow.pids\"; wait"},
+  {"name": "bad", "command": "sleep 1; exit 3", "heavy": false}]'
+expect "the perl fallback stops the sibling" "1 slow stopped|bad rc=3" "$rc $(result_lines)"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "the perl fallback leaves no process behind" "" "$(alive $(cat "$work/slow.pids" 2>/dev/null))"
 git checkout -q main
 
 # 11. doctor flags the leftovers of a hand-built loop.
@@ -291,6 +336,13 @@ expect "doctor flags a parallel that is not true or false" yes \
   "$(echo "$out" | grep -q 'MISSING parallel: "yes" is not true or false' && echo yes || echo no)"
 expect "doctor flags an affected stage without a command" yes \
   "$(echo "$out" | grep -q 'MISSING affected: no "command"' && echo yes || echo no)"
+printf '{"checks": [{"name": "unit", "command": "true"}, {"name": "unit", "command": "true"}, {"name": "affected", "command": "true"}]}\n' \
+  >"$work/doctor.json"
+out=$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1)
+expect "doctor flags two checks with the same name" yes \
+  "$(echo "$out" | grep -q 'MISSING check name "unit" is used twice' && echo yes || echo no)"
+expect "doctor flags a check named affected" yes \
+  "$(echo "$out" | grep -q 'MISSING check name "affected" is reserved' && echo yes || echo no)"
 printf '{"checks": ["true"], "parallel": true, "fail_fast": true, "affected": "make test-affected"}\n' >"$work/doctor.json"
 expect "doctor prints the gate options" "gate options  affected on, parallel true, fail_fast true" \
   "$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -o 'gate options.*')"
