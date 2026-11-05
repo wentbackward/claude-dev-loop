@@ -2421,6 +2421,19 @@ run_pid=$(cat "$work/run.pid" 2>/dev/null)
 [ -n "$run_pid" ] && expect "fail_fast stops the system scenarios.run started" "" "$(alive "$run_pid")" ||
   fail "scenarios.run did not start before fail_fast"
 
+# A judge that runs longer than scenarios.judge_seconds is stopped and counts as invalid, also on the rejudge.
+jstore_reset
+jscenario login true 0.9
+rm -f "$work/judge.pids"
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "heavy": false, "judge_seconds": 1,
+  "judge": "echo $$ >>\"$SMOKE_WORK/judge.pids\"; exec sleep 300"}'
+expect "a judge over judge_seconds makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qxF "scenario login unsatisfied (0, required): invalid judge output (the judge ran longer than 1 s)" &&
+  pass "a judge over judge_seconds counts as invalid" || fail "no timeout line"
+expect "a judge over judge_seconds is rejudged once" 2 "$(grep -c . "$work/judge.pids" 2>/dev/null)"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "a judge over judge_seconds is stopped" "" "$(alive $(cat "$work/judge.pids" 2>/dev/null))"
+
 # A run command that ends without printing how to reach the system makes the train red; nothing is judged.
 jstore_reset
 jscenario login true 0.9
@@ -2445,14 +2458,27 @@ printf '%s\n' "$out" | grep -qE '^scenarios red: 1 invalid scenario file' && pas
 printf '{"checks": ["true"], "scenarios": {}, "models": {"scenario-judge": "sonnet"}}\n' >"$work/judge-model.json"
 judge_cmd=$(scen_config="$work/judge-model.json" scenlib 'dl_scenarios_judge_command')
 case $judge_cmd in
-  "claude -p --agent dev-loop:scenario-judge --model sonnet "*) pass "the default judge uses the agent and models.scenario-judge" ;;
+  "claude -p \""*"\" --agent dev-loop:scenario-judge --model sonnet "*) pass "the default judge uses the agent and models.scenario-judge" ;;
   *) fail "default judge command: $judge_cmd" ;;
 esac
 case $(scen_config="$work/scen-default.json" scenlib 'dl_scenarios_judge_command') in
   *--model*) fail "the default judge passes --model without models.scenario-judge" ;;
-  "claude -p --agent dev-loop:scenario-judge "*) pass "the default judge inherits the model without models.scenario-judge" ;;
+  "claude -p \""*"\" --agent dev-loop:scenario-judge --no-session"*) pass "the default judge inherits the model without models.scenario-judge" ;;
   *) fail "no default judge command" ;;
 esac
+# The default command, run with a fake claude that prints its arguments: the prompt follows -p, and no
+# variadic option (--add-dir, --allowedTools) is followed by a separate argument it would swallow.
+mkdir -p "$work/fake-claude"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@"\n' >"$work/fake-claude/claude" && chmod +x "$work/fake-claude/claude"
+judge_args=$(PATH="$work/fake-claude:$PATH" DL_SCENARIO_FILE="$jstore/x.md" DL_SCENARIO_ID=x DL_SCENARIO_TARGET=http://t/ \
+  bash -c "$judge_cmd")
+expect "the default judge gets its prompt right after -p" "-p|Judge the scenario x in $jstore/x.md against the running system: http://t/. End with the JSON object." \
+  "$(printf '%s\n' "$judge_args" | sed -n '1,2p' | paste -sd'|' -)"
+printf '%s\n' "$judge_args" | grep -qxE -- '--add-dir|--allowedTools|--allowed-tools|--disallowedTools|--mcp-config|--betas|--file|--plugin-dir' &&
+  fail "a variadic option of the default judge takes a separate argument: $judge_args" ||
+  pass "the default judge passes variadic options as --option=value"
+printf '%s\n' "$judge_args" | grep -qxF -- "--add-dir=$jstore" && printf '%s\n' "$judge_args" | grep -qxF -- "--model" &&
+  pass "the default judge adds the scenario's folder and the model" || fail "default judge arguments: $judge_args"
 expect "scenarios.judge replaces the default judge" "my-judge --fast" \
   "$(printf '{"scenarios": {"judge": "my-judge --fast"}}\n' >"$work/judge-own.json"; scen_config="$work/judge-own.json" scenlib 'dl_scenarios_judge_command')"
 out=$(DEV_LOOP_CONFIG="$work/judge-model.json" "$plugin/scripts/doctor.sh" 2>&1)
