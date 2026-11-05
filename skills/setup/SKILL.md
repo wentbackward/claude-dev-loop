@@ -37,7 +37,9 @@ show the user what changed.
 In one question round (AskUserQuestion if available), with your inferred answer as the default option:
 the language/toolchain if ambiguous, the fast check and the full check commands if no Makefile or CI
 shows them, the spec location if none was found, and the cost cap and project-specific dangers for the
-stop conditions. Skip any question whose answer you already have.
+stop conditions. Ask the operating mode once, default `collaborative`, in one line: "collaborative: you
+may read every PR; dark: you review scenarios and outcomes, not code, and the gate also judges the
+running system against holdout scenarios". Skip any question whose answer you already have.
 
 ## 3. Write
 
@@ -59,6 +61,8 @@ stop conditions. Skip any question whose answer you already have.
      the user agrees on a layout.
    - `architecture`: the component cards and the dependency check, see step 3c; leave `check` empty
      (off) until the user confirms the component map.
+   - `"factory"`: the mode the user chose; leave it out for `collaborative`. For `dark`, run step 3d
+     before the first gate.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
@@ -151,6 +155,21 @@ new dependency inside those rules, and the known violations only shrink.
    ticket per group of them (move misplaced shared code down, invert an upward dependency through an
    interface the lower layer defines, split a composition root per layer). `doctor.sh` then prints the
    component map with sizes and budgets.
+
+## 3d. Go dark (`"factory": "dark"`; also later, when the user switches)
+
+Going from `collaborative` to `dark` is a normal config change on a branch (`chore: go dark`), with a
+`## Config` reason in its notes:
+
+1. Check the scenario store: `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh scenarios` prints it (outside every
+   worktree); create it if missing. Keep an explicit `"scenarios": false` only if the user wants dark
+   without scenarios.
+2. Run the `scenario-writer` agent (the `dev-loop` skill's section 1b) for each open ticket, so every
+   ticket has its scenarios before it starts, and at least one scenario is `required: true`.
+3. `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh` must print `factory dark, scenarios on (...)` and no
+   `MISSING factory dark` line.
+4. Add an entry to `docs/DECISIONS.md`: the date, the switch to `dark`, why, and what the user now
+   reviews (scenarios and outcomes instead of diffs).
 
 ## 4. Check and commit
 

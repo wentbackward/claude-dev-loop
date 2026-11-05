@@ -7,9 +7,25 @@
 # `[a, b]`, values optionally quoted, ` # comments` after unquoted values. Keys: id, title, spec, tags,
 # required (true or false). The body below the front matter must not be empty.
 
-# dl_scenarios_on: true when the project config has a scenarios block (the store is opt-in).
+# dl_scenarios_setting: whether scenarios are on and where that came from: `on|off explicit` when the config
+# has "scenarios" (false, null, "" and "false" turn them off, anything else on), else `on preset` with "factory":
+# "dark", else `off default`. hooks/guard-role.py applies the same rule.
+dl_scenarios_setting() {
+  if cfg_has scenarios; then
+    case $(cfg scenarios "") in
+      "" | false) echo "off explicit" ;;
+      *) echo "on explicit" ;;
+    esac
+  elif [ "$(dl_factory)" = dark ]; then
+    echo "on preset"
+  else
+    echo "off default"
+  fi
+}
+
+# dl_scenarios_on: true when scenarios are on (opt-in with a scenarios block, or by the dark factory preset).
 dl_scenarios_on() {
-  [ -n "$(cfg scenarios "")" ]
+  case $(dl_scenarios_setting) in on*) return 0 ;; *) return 1 ;; esac
 }
 
 # dl_scenarios_dir: the absolute store directory; scenarios.dir with ~ and <repo> expanded, relative paths
@@ -148,6 +164,16 @@ dl_scenarios_required_count() {
     [ "$(dl_scenario_field "$file" required)" = true ] && count=$((count + 1))
   done < <(dl_scenarios_files "$1")
   echo "$count"
+}
+
+# dl_scenarios_ready DIR: true when DIR holds at least one valid scenario whose required is true (what a dark
+# factory needs).
+dl_scenarios_ready() {
+  local file
+  while IFS= read -r file; do
+    [ "$(dl_scenario_field "$file" required)" = true ] && [ -z "$(dl_scenario_problems "$file")" ] && return 0
+  done < <(dl_scenarios_files "$1")
+  return 1
 }
 
 # dl_scenarios_share_ok VALUE: true when VALUE is a number from 0 to 1 (pass, min_satisfaction, sealed).

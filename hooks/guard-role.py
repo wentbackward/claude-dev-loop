@@ -2,8 +2,9 @@
 GitHub writes go only through as-role.sh, with the agent's own role.
 
 Best effort, local only: the deterministic guarantees come from GitHub (token permissions and rulesets).
-A no-op unless the project's .dev-loop.json configures "scenarios" or "identities". Exit 2 refuses the
-tool call. `guard-role.py --scenarios-dir [DIR]` prints the store path as resolved from DIR (for tests).
+A no-op unless the project's .dev-loop.json turns scenarios on ("scenarios", or "factory": "dark") or
+configures "identities". Exit 2 refuses the tool call. `guard-role.py --scenarios-dir [DIR]` prints the
+store path as resolved from DIR (for tests).
 """
 
 import glob
@@ -80,8 +81,15 @@ def load_config(cwd: str) -> dict:
 
 
 def scenarios_on(config: dict) -> bool:
-    """True when the config has a scenarios block (as dl_scenarios_on in scripts/lib/scenarios.sh)."""
-    return isinstance(config, dict) and config.get("scenarios") not in (None, "")
+    """True when scenarios are on, as dl_scenarios_setting in scripts/lib/scenarios.sh: an explicit
+    "scenarios" key decides (null, false, "" and the string "false", which cfg prints alike, are off),
+    else "factory": "dark" turns them on."""
+    if not isinstance(config, dict):
+        return False
+    if "scenarios" in config:
+        value = config["scenarios"]
+        return not (value is None or value is False or value in ("", "false"))
+    return config.get("factory") == "dark"
 
 
 def scenarios_dir(config: dict, cwd: str) -> str:

@@ -45,6 +45,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `models.scenario-judge` (with `scenarios`, or when it is set) and reserves the check name `scenarios`.
   `dl_scenario_sealed <file|id>` tells which scenarios are sealed, and the `dev-loop` skill lists sealed
   scenarios on the issue only as a count.
+- The factory preset (#34, the last part of #2): `"factory": "collaborative"` (the default) or `"dark"`.
+  Dark turns `scenarios` on by default; an explicit option wins, and `"scenarios": false` or `null` now
+  keeps scenarios off in every mode (before, any value turned them on). A dark factory whose store has no
+  valid required scenario is `MISSING factory dark` in `doctor.sh` and `TRAIN RED` at the gate (`scenarios
+  red: factory dark needs ...`). `doctor.sh` prints the mode and marks the scenarios setting `(preset)`,
+  `(explicit)` or `(default)`, and reports any other mode. The `dev-loop` skill keeps one list of stop
+  conditions for both modes and a "Factory mode" section (section 8a); the `setup` skill asks for the mode
+  once and has a go-dark step (3d). The role guard hook applies the same rule, so a dark factory hides
+  the default store from the coding agents. Without `factory`, nothing changes.
 
 ## 0.6.0 — 2026-11-05
 

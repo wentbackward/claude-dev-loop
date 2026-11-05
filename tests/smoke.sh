@@ -2505,5 +2505,167 @@ grep -qF "scenario-judge" "$plugin/skills/gate/SKILL.md" && grep -qF "scenarios.
   pass "the gate skill and the README document the scenario stage" || fail "the scenario stage is not documented"
 git checkout -q -f main
 
+# Factory preset (#34): "factory" is collaborative (default) or dark; dark turns scenarios on by default
+# (an explicit "scenarios", false and null included, wins), needs a store with a valid required scenario
+# (doctor MISSING, gate TRAIN RED), and keeps one list of stop conditions for both modes.
+cd "$work/project" || exit 1
+git fetch -q origin
+git checkout -q -B feat/34-dark origin/main
+echo "line dark" >>src.txt && git commit -q -am "feat: dark (Refs #34)" && git push -q -u origin feat/34-dark
+git checkout -q main
+fstore="$work/factory-store"
+# fconfig NAME JSON_MEMBERS: write $work/factory-NAME.json with these members besides checks.
+fconfig() {
+  printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]%s}\n' "${2:+, $2}" \
+    >"$work/factory-$1.json"
+}
+# factory_lib NAME CODE: run CODE with the scenario library and config NAME, with jq and with python3.
+factory_lib() {
+  local code='. "$0/scripts/lib/common.sh"; . "$0/scripts/lib/scenarios.sh"; dl_load_config; eval "$1"'
+  DEV_LOOP_CONFIG="$work/factory-$1.json" bash -c "$code" "$plugin" "$2" 2>&1
+  printf '|'
+  DEV_LOOP_NO_JQ=1 DEV_LOOP_CONFIG="$work/factory-$1.json" bash -c "$code" "$plugin" "$2" 2>&1
+}
+fconfig none ""
+fconfig collab '"factory": "collaborative"'
+fconfig dark '"factory": "dark"'
+fconfig night '"factory": "night"'
+fconfig dark-off '"factory": "dark", "scenarios": false'
+fconfig dark-null '"factory": "dark", "scenarios": null'
+fconfig dark-on '"factory": "dark", "scenarios": {"dir": "'"$fstore"'"}'
+fconfig plain-off '"scenarios": false'
+fconfig plain-null '"scenarios": null'
+fconfig plain-on '"scenarios": {}'
+for name in none collab dark night; do
+  expect "dl_factory reads factory ($name), with jq and with python3" \
+    "$(case $name in dark) echo "dark|dark" ;; *) echo "collaborative|collaborative" ;; esac)" \
+    "$(factory_lib "$name" 'dl_factory' | tr -d '\n')"
+done
+for pair in none:"off default" collab:"off default" dark:"on preset" dark-off:"off explicit" dark-null:"off explicit" \
+  dark-on:"on explicit" plain-off:"off explicit" plain-null:"off explicit" plain-on:"on explicit"; do
+  name=${pair%%:*} want=${pair#*:}
+  expect "scenarios with config $name: $want, with jq and with python3" "$want|$want" \
+    "$(factory_lib "$name" 'dl_scenarios_setting' | tr -d '\n')"
+  on=${want%% *}
+  expect "dl_scenarios_on with config $name is $on" "$on|$on" \
+    "$(factory_lib "$name" 'dl_scenarios_on && echo on || echo off' | tr -d '\n')"
+done
+expect "a dark factory's store defaults to ~/.dev-loop/<repo>/scenarios" "$DEV_LOOP_HOME/project/scenarios" \
+  "$(DEV_LOOP_CONFIG="$work/factory-dark.json" "$plugin/scripts/paths.sh" scenarios)"
+
+# doctor: the mode, where the scenarios setting came from, a bad mode, and a dark factory without a store.
+fdoctor() { out=$(DEV_LOOP_CONFIG="$work/factory-$1.json" "$plugin/scripts/doctor.sh" 2>&1); }
+fdoctor none
+expect "doctor without factory prints no factory line" 0 "$(printf '%s\n' "$out" | grep -cE '^ +factory |factory:')"
+fdoctor night
+printf '%s\n' "$out" | grep -qF 'MISSING factory: "night" is not collaborative or dark' &&
+  pass "doctor reports a factory that is neither collaborative nor dark" || fail "no MISSING for factory night"
+fdoctor collab
+printf '%s\n' "$out" | grep -qE '^ +factory +collaborative, scenarios off \(default\)$' &&
+  pass "doctor prints the collaborative mode" || fail "no collaborative factory line: $out"
+fdoctor dark
+printf '%s\n' "$out" | grep -qE '^ +factory +dark, scenarios on \(preset\)$' &&
+  pass "doctor marks scenarios set by the dark preset with (preset)" || fail "no (preset) mark: $out"
+printf '%s\n' "$out" | grep -qE '^MISSING factory dark: no scenario store with a valid required scenario' &&
+  pass "doctor reports a dark factory without a scenario store as MISSING" || fail "no MISSING for a dark factory without a store"
+fdoctor dark-off
+printf '%s\n' "$out" | grep -qE '^ +factory +dark, scenarios off \(explicit\)$' &&
+  ! printf '%s\n' "$out" | grep -q '^MISSING factory' &&
+  pass "an explicit scenarios false wins over the dark preset in doctor" || fail "dark with scenarios false: $out"
+rm -rf "$fstore" && mkdir -p "$fstore"
+printf -- '---\nid: browse\ntitle: Browse\nrequired: false\n---\nbody\n' >"$fstore/browse.md"
+printf -- '---\nid: login\nrequired: true\n---\nbody\n' >"$fstore/login.md"
+fdoctor dark-on
+printf '%s\n' "$out" | grep -qE '^ +factory +dark, scenarios on \(explicit\)$' && pass "doctor marks explicit scenarios with (explicit)" ||
+  fail "no (explicit) mark: $out"
+printf '%s\n' "$out" | grep -qE '^MISSING factory dark: no scenario store with a valid required scenario' &&
+  pass "a store whose only required scenario is invalid is not enough for a dark factory" ||
+  fail "no MISSING for a store without a valid required scenario"
+printf -- '---\nid: login\ntitle: Log in\nrequired: true\n---\nbody\n' >"$fstore/login.md"
+fdoctor dark-on
+printf '%s\n' "$out" | grep -q '^MISSING factory' && fail "a dark factory with a valid required scenario is reported: $out" ||
+  pass "a dark factory with a valid required scenario passes doctor"
+expect "dl_scenarios_ready: yes for a store with a valid required scenario, no for a missing store" "yes|yes no|no" \
+  "$(factory_lib dark-on 'dl_scenarios_ready "$(dl_scenarios_dir)" && echo yes || echo no' | tr -d '\n') $(
+    factory_lib dark 'dl_scenarios_ready "$(dl_scenarios_dir)" && echo yes || echo no' | tr -d '\n')"
+
+# The gate: a dark factory without a usable store is red with the reason; with one, the stage judges it.
+fgate() { # fgate NAME: gate feat/34-dark with config NAME; sets out and rc
+  rm -f "$work/factory-judge.log"
+  out=$(DEV_LOOP_CONFIG="$work/factory-$1.json" "$plugin/scripts/gate-train.sh" feat/34-dark 2>&1)
+  rc=$?
+}
+fgate dark
+expect "a dark factory without a scenario store ends TRAIN RED" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qE '^scenarios red: factory dark needs a scenario store with at least one valid required scenario' &&
+  pass "the red train gives the reason" || fail "no dark store reason in: $out"
+fgate dark-off
+expect "a dark factory with scenarios false has no scenario stage" "0 TRAIN GREEN 0" \
+  "$rc $(printf '%s\n' "$out" | tail -n 1) $(printf '%s\n' "$out" | grep -ci scenario)"
+fgate none
+expect "without factory the gate has no scenario stage" "0 TRAIN GREEN 0" \
+  "$rc $(printf '%s\n' "$out" | tail -n 1) $(printf '%s\n' "$out" | grep -ci scenario)"
+cat >"$work/factory-judge.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$DL_SCENARIO_ID" >>"$SMOKE_WORK/factory-judge.log"
+printf '{"id": "%s", "satisfied": 1, "required": true, "evidence": "ok", "missing": ""}\n' "$DL_SCENARIO_ID"
+EOF
+chmod +x "$work/factory-judge.sh"
+fconfig dark-judge '"factory": "dark", "scenarios": {"dir": "'"$fstore"'", "judge": "'"$work"'/factory-judge.sh", "heavy": false}'
+fgate dark-judge
+expect "a dark factory with a valid required scenario judges it and is green" "0 TRAIN GREEN browse login" \
+  "$rc $(printf '%s\n' "$out" | tail -n 1) $(LC_ALL=C sort "$work/factory-judge.log" 2>/dev/null | paste -sd' ' -)"
+
+# The role guard decides "scenarios on" by the same rule: for each config, it refuses the implementer a
+# read of the store exactly when dl_scenarios_on is true.
+git init -q "$work/darkproj"
+# dguard JSON: the guard's exit status for an implementer's Read of the default store of darkproj, whose
+# .dev-loop.json is JSON (read from the project, so the hook's quick no-op check is covered too).
+dguard() {
+  printf '%s\n' "$1" >"$work/darkproj/.dev-loop.json"
+  printf '{"tool_name": "Read", "cwd": "%s", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "%s"}}' \
+    "$work/darkproj" "$DEV_LOOP_HOME/darkproj/scenarios/a.md" |
+    CLAUDE_PROJECT_DIR="$work/darkproj" "$plugin/hooks/guard-role.sh" 2>/dev/null
+  echo $?
+}
+expect "guard: a dark factory without a scenarios key hides the default store from the implementer" 2 \
+  "$(dguard '{"factory": "dark"}')"
+expect "guard: a dark factory with scenarios false lets the implementer read it" 0 \
+  "$(dguard '{"factory": "dark", "scenarios": false}')"
+expect "guard: scenarios null and a collaborative factory leave the guard off" "0 0" \
+  "$(dguard '{"factory": "dark", "scenarios": null}') $(dguard '{"factory": "collaborative"}')"
+fconfig dark-off-text '"factory": "dark", "scenarios": "false"'
+fconfig plain-off-text '"scenarios": "false"'
+same=0
+for name in none collab dark night dark-off dark-null dark-on plain-off plain-null plain-on dark-off-text plain-off-text; do
+  lib=$(factory_lib "$name" 'dl_scenarios_on && echo 2 || echo 0' | cut -d'|' -f1 | tr -d '\n')
+  at=$(DEV_LOOP_CONFIG="$work/factory-$name.json" python3 -I "$plugin/hooks/guard-role.py" --scenarios-dir "$work/project")
+  hook=$(printf '{"tool_name": "Read", "cwd": "%s", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "%s/a.md"}}' \
+    "$work/project" "$at" | DEV_LOOP_CONFIG="$work/factory-$name.json" CLAUDE_PROJECT_DIR="$work/project" \
+    "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)
+  [ "$lib" = "$hook" ] && same=$((same + 1)) || echo "  config $name: dl_scenarios_on says $lib, the guard $hook"
+done
+expect "guard: the hook and dl_scenarios_on agree on every factory and scenarios config" 12 "$same"
+
+# One list of stop conditions for both modes; the skills and the README describe the preset.
+skill="$plugin/skills/dev-loop/SKILL.md"
+expect "the dev-loop skill has exactly one stop-conditions list" 1 "$(grep -c 'Stop and ask the user only for' "$skill")"
+expect "no other skill keeps its own stop-conditions list" "" \
+  "$(grep -l 'Stop and ask the user only for' "$plugin"/skills/*/SKILL.md | grep -v '/dev-loop/')"
+factory_section=$(awk '/^## .*Factory mode/ { on = 1; next } on && /^## / { exit } on' "$skill")
+[ -n "$factory_section" ] && printf '%s\n' "$factory_section" | grep -qF "section 8" &&
+  ! printf '%s\n' "$factory_section" | grep -qiE 'only for:|stop and ask' &&
+  pass "the Factory mode section points to the one list and has no stop conditions of its own" ||
+  fail "the Factory mode section is missing or lists its own stop conditions"
+grep -A6 '^## 8\.' "$skill" | grep -qiE 'every mode|both modes' && pass "the stop conditions say they hold in every mode" ||
+  fail "the stop conditions do not say they hold in every mode"
+grep -qF '"factory"' "$plugin/skills/setup/SKILL.md" && grep -qi 'go dark' "$plugin/skills/setup/SKILL.md" &&
+  pass "the setup skill asks for the mode and has a go-dark step" || fail "the setup skill lacks the mode or go dark"
+grep -qF 'MISSING factory' "$plugin/skills/doctor/SKILL.md" && pass "the doctor skill explains the factory problems" ||
+  fail "the doctor skill lacks the factory rows"
+grep -qE '^## Factory preset' "$plugin/README.md" && grep -qF '| `scenarios` |' "$plugin/README.md" &&
+  pass "the README has the factory preset section and table" || fail "the README lacks the factory preset"
+git checkout -q -f main
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

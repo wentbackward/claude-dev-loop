@@ -17,7 +17,8 @@ absolute paths into their prompts.
 1. Read `CLAUDE.md` (or `.claude/CLAUDE.md`), the spec it names, `.dev-loop.json` and `docs/DECISIONS.md`. If `.dev-loop.json` or
    `CLAUDE.md` is missing, run the `setup` skill of this plugin first.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh`: prerequisites and resolved paths (gate worktree, notes
-   directory, heavy slots). Fix what it reports as MISSING, or stop if that is a stop condition.
+   directory, heavy slots). Fix what it reports as MISSING, or stop if that is a stop condition. Its
+   `factory` line gives the mode (`collaborative` without one): follow section 8a for `dark`.
 3. Identity mode is on when `.dev-loop.json` has `identities`. Then every GitHub write goes through
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
@@ -76,8 +77,9 @@ absolute paths into their prompts.
 ## 1b. Scenarios (`scenarios` in `.dev-loop.json`)
 
 Holdout scenarios are end-to-end user scenarios kept in the scenario store (`scenarios.dir`), outside
-every worktree, where the coding agents never see them. Without `scenarios` in `.dev-loop.json`, skip
-this section.
+every worktree, where the coding agents never see them. Skip this section when scenarios are off: no
+`scenarios` in `.dev-loop.json` and no `"factory": "dark"`, or `"scenarios": false` (`doctor.sh` prints
+`scenarios on` or `off` on its `factory` line).
 
 - **When:** at ticket creation, after the issue exists and before its implementer starts, launch a fresh
   `scenario-writer` agent (`model` from `models.scenario-writer`, see step 0) with:
@@ -303,9 +305,26 @@ The release itself (version, tag, GitHub release) happens only on the user's go.
 
 - When the spec is silent, choose the simplest option that fits it, add one entry to `docs/DECISIONS.md`
   (date, decision, reason, alternatives) and continue. Do not stop for it.
-- Stop and ask the user only for: a missing or rejected credential; a paid action above the project's cost
+- These stop conditions are the only list, the same in every mode (`factory` collaborative or dark).
+  Stop and ask the user only for: a missing or rejected credential; a paid action above the project's cost
   cap; a spec contradiction where both readings change stored data or behaviour the user relies on; anything
   unsafe or irreversible (production data, real money, real orders, deleting history, security settings).
+  Deploy timing follows section 7 in every mode.
+
+## 8a. Factory mode (`factory` in `.dev-loop.json`)
+
+`collaborative` (the default) is everything above. `dark` keeps the same loop and the same stop
+conditions (section 8); it changes where the user looks, not who is responsible:
+
+- **Scenarios are on** unless `.dev-loop.json` sets `"scenarios": false` (an explicit option always wins).
+  The gate is red until the scenario store holds at least one valid required scenario; `doctor.sh`
+  reports it as `MISSING factory dark`.
+- **The user looks at scenarios, outcomes and the verifier's reports**, not at diffs: list new and changed
+  scenarios in the issue (section 1b), report outcomes in user terms, and never ask the user about a diff.
+  The `code-reviewer` alone reviews the code; its APPROVE is still required.
+- **A ticket starts only when its scenarios exist:** run the `scenario-writer` when you create the ticket,
+  and launch its implementer after the writer reported them.
+- **Cleanup:** `cleanup.sh --apply` also deletes the closed and stale branches, without asking.
 
 ## 9. Talking to the user
 

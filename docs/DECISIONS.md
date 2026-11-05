@@ -381,3 +381,22 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   the mean of the last runs (a flaky judge would lower the mean of a passing scenario); sealing the first
   share in hash order (the set would change with the store's size); matching whole path segments (a
   `spec: alerts` would miss `alert_rules.py`).
+
+## 2026-11-05 — The factory preset (#34): one rule for "scenarios on", read in one place
+
+- **Decision:** `dl_factory` (in `scripts/lib/common.sh`, next to `cfg`) returns `dark` or `collaborative`;
+  any other value counts as collaborative and `doctor.sh` reports it. `dl_scenarios_setting` returns
+  whether scenarios are on and the source: `explicit` when the config has a top-level `scenarios` key
+  (`false`, `null`, `""` and the string `"false"` turn them off, anything else on), else `preset` (on) with `dark`, else
+  `default` (off). A new `cfg_has KEY` tells a key set to `null` from a missing one, which `cfg` cannot.
+  The dark store requirement is "at least one scenario file with `required: true` and no problems of its
+  own" (`dl_scenarios_ready`); it applies whenever the factory is dark and scenarios are on, explicit or
+  preset. The gate checks it in the scenario stage (one `scenarios red:` line, so it prints in the
+  summary); `doctor.sh` prints the `factory` line only when `factory` is set, so the output without it
+  stays as before.
+- **Reason:** the issue says an explicit option always wins over the preset, and the review of #30 asked
+  for `"scenarios": false` to mean off. One rule in one function keeps the gate, doctor and paths in
+  step; the role guard hook applies the same rule in Python.
+- **Alternatives:** a separate `scripts/lib/factory.sh` (one function did not need its own file);
+  failing the gate before the checks in `gate-train.sh` (a second place that decides about scenarios);
+  treating an unknown mode as an error everywhere (would stop the gate over a typo doctor already names).
