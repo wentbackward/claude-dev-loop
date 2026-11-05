@@ -61,3 +61,14 @@ dl_docs_rule_matches() {
     done <<<"$patterns"
   done
 }
+
+# dl_docs_prd: the PRD or spec files (docs.prd: a path or a list of paths), one per line.
+dl_docs_prd() {
+  local count i
+  count=$(cfg_len docs.prd)
+  if [ "$count" -gt 0 ]; then
+    for ((i = 0; i < count; i++)); do cfg "docs.prd.$i"; done
+  else
+    case $(cfg docs.prd "") in "" | "["* | "{"*) ;; *) cfg docs.prd ;; esac
+  fi
+}
