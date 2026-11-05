@@ -1,0 +1,149 @@
+# shellcheck shell=bash
+# The holdout scenario store: where the scenarios live (scenarios.dir), what a scenario file holds, and
+# whether it is valid. Source scripts/lib/common.sh first and call dl_load_config.
+#
+# A scenario is one Markdown file with front matter between two --- lines: `key: value` lines, lists as
+# `[a, b]`, values optionally quoted, ` # comments` after unquoted values. Keys: id, title, spec, tags,
+# required (true or false). The body below the front matter must not be empty.
+
+# dl_scenarios_on: true when the project config has a scenarios block (the store is opt-in).
+dl_scenarios_on() {
+  [ -n "$(cfg scenarios "")" ]
+}
+
+# dl_scenarios_dir: the absolute store directory; scenarios.dir with ~ and <repo> expanded, relative paths
+# against the main worktree, default ~/.dev-loop/<repo>/scenarios (the state directory).
+dl_scenarios_dir() {
+  local configured
+  configured=$(cfg scenarios.dir "")
+  if [ -z "$configured" ]; then
+    printf '%s/scenarios\n' "$DL_STATE"
+  else
+    dl_resolve "${configured//"<repo>"/$DL_REPO}"
+  fi
+}
+
+# dl_scenarios_files DIR: the scenario files (*.md at any depth, not under .git), sorted, one per line.
+dl_scenarios_files() {
+  [ -d "$1" ] || return 0
+  find "${1%/}" -type f -name '*.md' ! -path '*/.git/*' | LC_ALL=C sort
+}
+
+# shellcheck disable=SC2016  # an awk program
+_dl_scenario_awk='
+function clean(v, q, rest, i) {
+  gsub(/\t/, " ", v)
+  sub(/^[ \t]+/, "", v)
+  q = substr(v, 1, 1)
+  if (q == "\"" || q == "\047") {
+    rest = substr(v, 2)
+    i = index(rest, q)
+    if (i) return substr(rest, 1, i - 1)
+  }
+  if (v ~ /^#/) return ""
+  sub(/[ \t]+#.*$/, "", v)
+  sub(/[ \t]+$/, "", v)
+  return v
+}
+{ sub(/\r$/, "") }
+NR == 1 { if ($0 ~ /^---[ \t]*$/) { state = 1; next } else exit }
+state == 1 && /^---[ \t]*$/ { state = 2; next }
+state == 1 && match($0, /^[A-Za-z_][A-Za-z0-9_-]*:/) {
+  key = substr($0, 1, RLENGTH - 1)
+  if (!(key in seen)) { seen[key] = 1; print key "\t" clean(substr($0, RLENGTH + 1)) }
+  next
+}
+state == 2 && /[^ \t]/ { body = 1; exit }
+END { print "@shape\t" (state == 0 ? "none" : state == 1 ? "unclosed" : body ? "ok" : "empty") }
+'
+
+# dl_scenario_front FILE: the parsed front matter as `key<TAB>value` lines (first occurrence of a key wins),
+# then `@shape<TAB>ok|empty|unclosed|none` (empty: no body; none: no front matter).
+dl_scenario_front() {
+  awk "$_dl_scenario_awk" "$1"
+}
+
+# _dl_scenario_value KEY < front: the value of KEY in dl_scenario_front output.
+_dl_scenario_value() {
+  awk -F'\t' -v key="$1" '$1 == key { print substr($0, length(key) + 2); exit }'
+}
+
+# dl_scenario_field FILE KEY: the value of KEY in the front matter of FILE (quotes and comments removed).
+dl_scenario_field() {
+  dl_scenario_front "$1" | _dl_scenario_value "$2"
+}
+
+# dl_scenario_list FILE KEY: the items of a list field ([a, b]) one per line; a plain value is one item.
+dl_scenario_list() {
+  dl_scenario_field "$1" "$2" | awk '{
+    v = $0
+    if (v ~ /^\[.*\]$/) v = substr(v, 2, length(v) - 2)
+    n = split(v, items, ",")
+    for (i = 1; i <= n; i++) {
+      item = items[i]
+      gsub(/^[ \t]+|[ \t]+$/, "", item)
+      if (item ~ /^".*"$/ || item ~ /^\047.*\047$/) item = substr(item, 2, length(item) - 2)
+      if (item != "") print item
+    }
+  }'
+}
+
+# dl_scenario_problems FILE: the reasons FILE is invalid on its own, one per line (duplicates are a store
+# matter: dl_scenarios_validate).
+dl_scenario_problems() {
+  local front required
+  front=$(dl_scenario_front "$1")
+  case $(printf '%s\n' "$front" | _dl_scenario_value @shape) in
+    none) echo "no front matter (the first line must be ---)" && return ;;
+    unclosed) echo "front matter is not closed (no second --- line)" && return ;;
+    empty) echo "empty body (describe the user, the steps and what satisfied looks like)" ;;
+  esac
+  [ -n "$(printf '%s\n' "$front" | _dl_scenario_value id)" ] || echo "missing id"
+  [ -n "$(printf '%s\n' "$front" | _dl_scenario_value title)" ] || echo "missing title"
+  required=$(printf '%s\n' "$front" | _dl_scenario_value required)
+  case $required in
+    true | false) ;;
+    *) echo "required: \"$required\" is not true or false" ;;
+  esac
+}
+
+# dl_scenarios_validate DIR: print `<file relative to DIR><TAB><reason>` for each problem (a file may have
+# several); exit 1 when there is any. A duplicate id is reported on every file after the first.
+dl_scenarios_validate() {
+  local dir=${1%/} file rel id first ids="" reason bad=0
+  while IFS= read -r file; do
+    rel=${file#"$dir"/}
+    while IFS= read -r reason; do
+      [ -n "$reason" ] && printf '%s\t%s\n' "$rel" "$reason" && bad=1
+    done < <(dl_scenario_problems "$file")
+    id=$(dl_scenario_field "$file" id)
+    [ -n "$id" ] || continue
+    first=$(printf '%s\n' "$ids" | awk -F'\t' -v id="$id" '$1 == id { print $2; exit }')
+    if [ -n "$first" ]; then
+      printf '%s\tduplicate id %s (also in %s)\n' "$rel" "$id" "$first"
+      bad=1
+    else
+      ids+="$id"$'\t'"$rel"$'\n'
+    fi
+  done < <(dl_scenarios_files "$dir")
+  [ "$bad" -eq 0 ]
+}
+
+# dl_scenarios_count DIR: the number of scenario files in DIR.
+dl_scenarios_count() {
+  dl_scenarios_files "$1" | grep -c . || true
+}
+
+# dl_scenarios_required_count DIR: the number of scenario files whose required is exactly true.
+dl_scenarios_required_count() {
+  local file count=0
+  while IFS= read -r file; do
+    [ "$(dl_scenario_field "$file" required)" = true ] && count=$((count + 1))
+  done < <(dl_scenarios_files "$1")
+  echo "$count"
+}
+
+# dl_scenarios_share_ok VALUE: true when VALUE is a number from 0 to 1 (pass, min_satisfaction, sealed).
+dl_scenarios_share_ok() {
+  printf '%s\n' "$1" | grep -Eq '^(0(\.[0-9]*)?|\.[0-9]+|1(\.0*)?)$'
+}
