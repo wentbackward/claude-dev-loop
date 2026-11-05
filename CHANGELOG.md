@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.5.0 — 2026-11-05
 
 - Branch lifecycle: branches are short-lived and the plugin removes what it made.
   - `merge-train.sh` records every merge in a ledger (`~/.dev-loop/<repo>/merged.jsonl`), deletes the
