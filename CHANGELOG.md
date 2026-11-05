@@ -43,6 +43,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   counted. With `affected`, only scenarios whose `spec` or `tags` match a changed path run, plus the
   required ones. Results are recorded in `train-scenario-results.jsonl`; `doctor.sh` lists
   `models.scenario-judge` (with `scenarios`, or when it is set) and reserves the check name `scenarios`.
+  `dl_scenario_sealed <file|id>` tells which scenarios are sealed, and the `dev-loop` skill lists sealed
+  scenarios on the issue only as a count.
 
 ## 0.6.0 — 2026-11-05
 

@@ -91,7 +91,10 @@ Report: per scenario the file, id, title, required, and new or changed; the open
 
 - **List them in the issue:** comment the new and changed scenarios on the ticket, titles only (`id`,
   title, `required`, new or changed), never a scenario's body, steps or file path: the implementer reads
-  the issue. Scenarios are where the user looks: they may edit them in the store, and their edits win.
+  the issue. Sealed scenarios (`scenarios.sealed`) are listed only as a count ("and 2 sealed scenarios"),
+  never by id or title. Tell them apart per file with `bash -c '. "$1/scripts/lib/common.sh"; .
+  "$1/scripts/lib/scenarios.sh"; dl_load_config; dl_scenario_sealed "$2"' _ ${CLAUDE_PLUGIN_ROOT} <file>`
+  (exit 0: sealed). Scenarios are where the user looks: they may edit them in the store, and their edits win.
 - **A red scenario goes to the implementer as the missing behaviour only:** one line in user terms
   ("closing a position leaves its alert active"), never the scenario's id, title, text, steps or file. A
   sealed scenario is never described, only counted.
