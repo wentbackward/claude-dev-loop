@@ -34,12 +34,25 @@ else
   ok "config $DL_CONFIG"
   if [ -n "$(json_get "" <"$DL_CONFIG")" ]; then ok "valid JSON"; else missing "valid JSON in $DL_CONFIG"; fi
   if [ "$(cfg_len checks)" -gt 0 ]; then ok "$(cfg_len checks) gate checks"; else missing "\"checks\" in $DL_CONFIG"; fi
+  for option in parallel fail_fast; do
+    case $(cfg "$option" false) in
+      true | false) ;;
+      *) missing "$option: \"$(cfg "$option" "")\" is not true or false" ;;
+    esac
+  done
+  affected=$(cfg affected "")
+  case $affected in "{"*) affected=$(cfg affected.command "") ;; esac
+  [ -n "$(cfg affected "")" ] && [ -z "$affected" ] && missing "affected: no \"command\""
+  if [ "$(cfg parallel false)" = true ] && ! command -v setsid >/dev/null 2>&1 && ! command -v perl >/dev/null 2>&1; then
+    missing "setsid or perl (\"parallel\": true runs each check in its own process group)"
+  fi
   if git -C "$DL_ROOT" remote get-url "$DL_REMOTE" >/dev/null 2>&1; then ok "remote $DL_REMOTE"; else missing "git remote $DL_REMOTE"; fi
   echo "        base branch   $DL_BASE"
   echo "        gate worktree $(dl_gate_dir)"
   echo "        notes         $(dl_notes_dir)"
   echo "        logs          $(dl_logs_dir)"
   echo "        heavy slots   $(cfg heavy.slots 2), memory cap $(cfg heavy.memory_max none)"
+  echo "        gate options  affected $([ -n "$affected" ] && echo on || echo off), parallel $(cfg parallel false), fail_fast $(cfg fail_fast false)"
   models=""
   for agent in implementer code-reviewer test-engineer verifier; do
     model=$(cfg "models.$agent" inherit)

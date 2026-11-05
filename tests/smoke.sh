@@ -285,6 +285,15 @@ echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}' >.cl
 expect "doctor notes a project Stop hook" yes \
   "$("$plugin/scripts/doctor.sh" 2>&1 | grep -q "note    project Stop hooks" && echo yes || echo no)"
 rm .claude/settings.json
+printf '{"checks": ["true"], "parallel": "yes", "affected": {"summary": "x"}}\n' >"$work/doctor.json"
+out=$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1)
+expect "doctor flags a parallel that is not true or false" yes \
+  "$(echo "$out" | grep -q 'MISSING parallel: "yes" is not true or false' && echo yes || echo no)"
+expect "doctor flags an affected stage without a command" yes \
+  "$(echo "$out" | grep -q 'MISSING affected: no "command"' && echo yes || echo no)"
+printf '{"checks": ["true"], "parallel": true, "fail_fast": true, "affected": "make test-affected"}\n' >"$work/doctor.json"
+expect "doctor prints the gate options" "gate options  affected on, parallel true, fail_fast true" \
+  "$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -o 'gate options.*')"
 
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
