@@ -353,6 +353,54 @@ printf '{"checks": ["true"], "parallel": true, "fail_fast": true, "affected": "m
 expect "doctor prints the gate options" "gate options  affected on, parallel true, fail_fast true" \
   "$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -o 'gate options.*')"
 
+# 11b. A setup branch that adds .dev-loop.json merges with the main checkout on the base, which has no
+#      config yet: gate-train.sh and merge-train.sh read it from the branch, without DEV_LOOP_CONFIG, and say so.
+setup_project() { # setup_project NAME REMOTE: a project on main without .dev-loop.json, its bare origin as REMOTE
+  git init -q --bare "$work/$1.git"
+  git clone -q -o "$2" "$work/$1.git" "$work/$1" 2>/dev/null
+  (cd "$work/$1" && echo one >src.txt && git add . && git commit -q -m "chore: start" && git push -q "$2" main)
+}
+setup_branch() { # setup_branch NAME REMOTE: chore/80-setup adds the config (remote REMOTE), pushed; back on main
+  (cd "$work/$1" && git checkout -q -b chore/80-setup &&
+    printf '{"remote": "%s", "checks": [{"name": "unit", "command": "echo 1 passed", "heavy": false}]}\n' "$2" \
+      >.dev-loop.json && git add .dev-loop.json && git commit -q -m "chore: set up the dev loop (Refs #80)" &&
+    git push -q -u "$2" chore/80-setup && git checkout -q main)
+}
+setup_project setup-project origin
+setup_branch setup-project origin
+cd "$work/setup-project" || exit 1
+mkdir -p "$DEV_LOOP_HOME/setup-project/notes"
+printf 'chore: set up the dev loop (#80)\n\nCloses #80\n' >"$DEV_LOOP_HOME/setup-project/notes/pr-chore_80-setup.md"
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+rc=$?
+echo "$out"
+expect "gate-train is green for a setup branch while the main checkout has no config" 0 "$rc"
+echo "$out" | grep -q "config read from origin/chore/80-setup:.dev-loop.json" &&
+  pass "gate-train says it read the config from the setup branch" || fail "gate-train config source: $out"
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/merge-train.sh" chore/80-setup 2>&1)
+rc=$?
+echo "$out"
+expect "merge-train merges the setup branch with the main checkout on the base" 0 "$rc"
+echo "$out" | grep -q "config read from origin/chore/80-setup:.dev-loop.json" &&
+  pass "merge-train says it read the config from the recorded train's first branch" || fail "merge-train config source: $out"
+expect "the base now carries the config and the main checkout fast-forwarded" "main yes" \
+  "$(git rev-parse --abbrev-ref HEAD) $([ -f .dev-loop.json ] && echo yes || echo no)"
+# The config names another remote: it is read from that remote's branch, and the gate uses that remote.
+setup_project setup-upstream upstream
+setup_branch setup-upstream upstream
+cd "$work/setup-upstream" || exit 1
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+rc=$?
+echo "$out"
+expect "gate-train reads a setup branch whose config names another remote" "0 yes" \
+  "$rc $(echo "$out" | grep -q "config read from upstream/chore/80-setup:.dev-loop.json" && echo yes || echo no)"
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" 2>&1)
+expect "without branches, a missing config is still a usage error" 2 "$?"
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" feat/81-nothing 2>&1)
+expect "a branch without a config keeps today's error" "2 yes" \
+  "$? $(echo "$out" | grep -q "no config at" && echo yes || echo no)"
+cd "$work/project" || exit 1
+
 # 12. Branch lifecycle: gate and merge clean up after themselves, cleanup.sh classifies the rest.
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 expect "the next gate removed the red train's refs" "" "$(git branch --list train-feat/3-broken)"

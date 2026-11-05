@@ -35,7 +35,7 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$scripts_dir/lib/common.sh"
 
 [ $# -gt 0 ] || dl_die "usage: gate-train.sh <branch> [<branch> ...]"
-dl_load_config required
+dl_load_train_config "$1"
 [ "$(cfg_len checks)" -gt 0 ] || dl_die "no \"checks\" in $DL_CONFIG"
 
 gate=$(dl_ensure_gate_worktree) || exit 2

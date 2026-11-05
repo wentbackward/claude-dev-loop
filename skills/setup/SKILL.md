@@ -105,7 +105,10 @@ The plugin replaces the copies; the project-specific knowledge in them stays.
 - Run the fast check once and each full check once (through `${CLAUDE_PLUGIN_ROOT}/scripts/heavy.sh`) to
   prove the commands work; fix the config if not.
 - Commit on a branch: `chore: set up the dev loop` with the files above, then follow the dev loop to merge
-  it (or commit to the base directly in a brand-new repository with no history).
+  it (or commit to the base directly in a brand-new repository with no history). Keep the main checkout on
+  the base branch: until this merge the base has no `.dev-loop.json`, so `gate-train.sh` and
+  `merge-train.sh` read it from the setup branch (merge-train: the first branch of the gated train) and
+  print `config read from <remote>/<branch>:.dev-loop.json`; no `DEV_LOOP_CONFIG` is needed.
 
 ## 5. Optional: one GitHub identity per role
 
