@@ -1333,14 +1333,13 @@ expect "a reason under ## Config counts, a placeholder or another section does n
 $(config_reason_of Architecture "- lint runs inside ./check.sh since #139")"
 normalized() { # normalized JSON: the value at "block" as normalized JSON, with jq and with the python3 fallback
   printf '%s' "$1" | bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/reasons.sh"; dl_json_normalized block' _ "$plugin"
-  printf ' '
   printf '%s' "$1" | DEV_LOOP_NO_JQ=1 bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/reasons.sh"
     dl_json_normalized block' _ "$plugin"
 }
 expect "a block prints as compact JSON with sorted keys, with jq and with python3" \
   '{"a":{"c":[1,{"x":2,"y":1}],"d":2},"b":"s"} {"a":{"c":[1,{"x":2,"y":1}],"d":2},"b":"s"}' \
-  "$(normalized '{"block": {"b": "s", "a": {"d": 2, "c": [1, {"y": 1, "x": 2}]}}}' | tr '\n' ' ' | sed 's/ $//')"
-expect "a missing block prints nothing, with jq and with python3" " " "$(normalized '{"other": 1}' | tr -d '\n')"
+  "$(normalized '{"block": {"b": "s", "a": {"d": 2, "c": [1, {"y": 1, "x": 2}]}}}' | paste -sd' ' -)"
+expect "a missing block prints nothing, with jq and with python3" "" "$(normalized '{"other": 1}')"
 
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 git checkout -q origin/main~1 -- docs/architecture
@@ -1433,7 +1432,7 @@ reviewer="$plugin/agents/code-reviewer.md"
 grep -qF "## Config" "$reviewer" && grep -qF "## Architecture" "$reviewer" && grep -qi "collaborative" "$reviewer" &&
   pass "the reviewer brief reads every Architecture and Config reason and asks the user before loosening" ||
   fail "the reviewer brief lacks the rules review"
-grep -qF '## Config' "$plugin/README.md" && pass "the README names the ## Config reason" || fail "README lacks ## Config"
+grep -qF "\`## Config\`" "$plugin/README.md" && pass "the README names the ## Config reason" || fail "README lacks ## Config"
 git checkout -q -f main && git clean -qfd
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
