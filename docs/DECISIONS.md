@@ -172,3 +172,31 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** classifying header changes field by field (also red for a widened `depends_on` that
   hides nothing, and a second rule set to keep true); running the tool on every train ref and the base on
   every train (one run per branch even when nothing changed); a reason excusing a kept fixed entry.
+
+## 2026-11-05 — The gate's own rules need a reason under `## Config` (#22)
+
+- **Decision:** the gate-relevant keys are `checks`, `gate_setup`, `affected`, `parallel`, `fail_fast`,
+  `fast_check`, `docs`, `merge`, `cleanup`, `stop_gate`, `models`, `factory`, `identities` and `github`
+  (`DL_GATE_RULE_KEYS` in `scripts/lib/reasons.sh`): the issue's list plus the Stop hook's check, the
+  mode that makes deletions automatic, the role separation and the GitHub settings (rulesets, the gate's
+  status, which branches are loop branches). Not flagged: `base_branch`, `remote`, `format`,
+  `format_extensions`, `notes_dir`, `logs_dir`, `gate_worktree`, `heavy` (machine resources) and
+  `deploy`; `architecture` keeps its own rule of #17 and its `## Architecture` reason.
+- Each key compares as compact JSON with sorted keys (`jq -cS`, or `json.dumps(sort_keys=True)` without
+  jq) between the train ref below the branch (or the base) and the branch's train ref, so a reordered or
+  reformatted block is no change; #17's `architecture` comparison uses the same helper. Array order still
+  counts (the order of the checks is the order they run).
+- A branch whose base has no `.dev-loop.json` is not flagged: it adds the first rules (the setup branch),
+  it loosens none. A branch that deletes the file changes every key it had.
+- The check runs right after stacking, before the docs stage, and needs no config: it reads only git
+  objects and the notes. A red branch is named with its keys (`config-check red for <branch>: ... (checks,
+  merge) ...`), without the before and after blocks, which can be long; the diff shows them.
+- The reason rules move to `scripts/lib/reasons.sh` (`dl_notes_reason FILE SECTION`), shared by
+  `## Architecture` and `## Config`. The placeholder filter also drops trailing filler (`yet`, `at all`,
+  `needed`, `required`, `for now`), repeated placeholders (`none none`, `n/a n/a`), repeated list markers
+  (`-- none`) and `nope`, `none yet`, `none required`, `nothing changed`, `not relevant`, `no reason`.
+  A sentence after a placeholder word (`none of the edges ...`, `nothing at all reads ...`) stays a reason.
+- **Reason:** the simplest rule that closes the gap #17 closed for `architecture`, with one shared filter.
+- **Alternatives:** flagging every key (noise for paths and resources); judging the direction of each
+  change (tighter or looser), which needs a rule per key and is the reviewer's job; reading the config
+  from the branch (then a branch would judge itself).

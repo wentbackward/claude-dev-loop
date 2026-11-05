@@ -43,6 +43,12 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
      `arch-check.sh --loosened <remote>/<base> HEAD`), or a change to `architecture` in `.dev-loop.json`,
      needs a convincing `## Architecture` reason in the
      notes.
+   - **The gate's own rules**: a change to `.dev-loop.json` is a change to the rules that judge the
+     branch, not a detail. Read every `## Architecture` and `## Config` reason in the notes and judge it:
+     the gate's placeholder filter only stops lazy ones, so a reason that says nothing or that the diff
+     contradicts is a must fix. Loosening the rules (a removed or weaker check, `true` for a command, a
+     narrower docs `map` or fewer aspects, a looser `merge`, `cleanup`, `stop_gate`, `factory` or
+     `identities`) needs the user's OK in collaborative mode: until the notes record it, it is a must fix.
      Fan-out is expected of a composition root (keep it thin) and a warning sign everywhere else.
 4. **Reproduce, do not speculate.** When you suspect a bug, prove it: write a throwaway test (name it so it
    is obviously temporary, e.g. `test_zz_review_tmp_*`), run it, record the result in your report, then

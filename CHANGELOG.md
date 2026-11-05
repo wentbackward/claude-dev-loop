@@ -33,6 +33,14 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   edits hide), and so does a change to `architecture` in its `.dev-loop.json`; a baseline entry that occurred at the base and a branch fixes must be removed by that
   branch, else the gate is red; placeholders (`none`, `n/a`, `TODO`, `-`, also as `none (...)`) are not reasons; two cards with
   the same `paths` glob are a broken card.
+- The gate's own rules need a reason (#22): a branch that changes `checks`, `gate_setup`, `affected`,
+  `parallel`, `fail_fast`, `fast_check`, `docs`, `merge`, `cleanup`, `stop_gate`, `models`, `factory`,
+  `identities` or `github` in its `.dev-loop.json` needs a reason under `## Config` in its notes, else
+  the gate names the branch and the keys and ends `TRAIN RED` right after stacking. Config blocks (also
+  `architecture`) compare as JSON with sorted keys, so a reformatting is no change. The placeholder filter
+  also stops filler and repeats (`none yet`, `not needed for now`, `nope`, `no reason`, `none none`,
+  `-- none`). The reviewer reads every `## Architecture` and `## Config` reason, and loosening the gate's
+  rules needs the user's OK in collaborative mode.
 - Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
   - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules
     `{"paths": [globs], "docs": [aspects]}` (`*` also matches `/`) and `max_lines` (default 1000).
