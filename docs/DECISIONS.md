@@ -57,8 +57,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   A name counts that way only when it is also in `merge.rebuildable`, which keeps its meaning (whole
   entries, default the output folders plus the caches); output folders (`dist build target out coverage
   htmlcov .coverage`) count only as a whole entry, as before. Secret and data names are one list
-  (`DL_SECRET_STRONG_PATTERNS` and `DL_SECRET_BROAD_PATTERNS` in `scripts/lib/common.sh`, split by #15), matched without regard to case both on a listed entry
-  and by the scan inside a rebuildable directory.
+  (`DL_SECRET_STRONG_PATTERNS` and `DL_SECRET_BROAD_PATTERNS` in `scripts/lib/common.sh`, split by
+  #15), matched without regard to case both on a listed entry and by the scan inside a rebuildable
+  directory.
 - **Reason:** results in an output folder that ignores itself (`out/results.csv`) are not rebuildable,
   while a tool cache's files always are; a separate key leaves existing `merge.rebuildable` settings
   meaning what they did, and requiring both keys means removing a name from `merge.rebuildable` always
@@ -99,17 +100,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   yet); checking every train ref on every run (one run of the tool per branch even when green); comparing
   budget lines as plain text (every commit that touches a component over budget would be red).
 
-## 2026-11-05 — Broad secret names only on listed entries (#15)
+## 2026-11-05 — Broad secret names are not searched for inside dependency folders (#15)
 
 - **Decision:** the secret and data names are two readonly lists in `scripts/lib/common.sh`:
   `DL_SECRET_STRONG_PATTERNS` (`.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.sqlite`,
   `*.sqlite3`, `*.sqlite-*`, `*.db`) and `DL_SECRET_BROAD_PATTERNS` (`id_rsa*`, `id_ed25519*`, `id_ecdsa*`,
-  `id_dsa*`, `credentials*`, `secrets*`). An entry git lists one by one is checked against both; the scan
-  inside a whole rebuildable folder (any of them, output folders such as `build/` included) uses the
-  strong list only. The lists are set once, so sourcing `common.sh` twice does not fail on `readonly`.
+  `id_dsa*`, `credentials*`, `secrets*`). An entry git lists one by one is checked against both. The scan
+  inside a rebuildable folder uses both, except when the folder is, or lies inside, a dependency or cache
+  folder (any path component in `merge.rebuildable_caches`, so `.venv/lib/` of a `.venv` with its own
+  `.gitignore` counts): there only the strong list is used. The lists are set once, so sourcing
+  `common.sh` twice does not fail on `readonly`.
 - **Reason:** vendored packages ship files such as `credentials.js` or `secrets.py`, which kept every
-  merged worktree with a populated `node_modules/` or `.venv/`; the files a person leaves by hand in a
-  checkout (`.env`, keys, local databases) are still caught by the strong patterns at any depth.
-- **Alternatives:** broad names in output folders but not in dependency folders (two scan rules for one
-  kind of folder that is rebuilt either way); an allow-list of vendored file extensions (`*.js`, `*.py`),
-  which grows with every ecosystem.
+  merged worktree with a populated `node_modules/` or `.venv/`. Output folders (`build`, `dist`, `out`,
+  `target`, ...) hold what a project's own tools write, where `credentials.json` is likely real; there a
+  false match only keeps a worktree, while a missed one deletes a secret for good.
+- **Alternatives:** the strong list in every rebuildable folder (deletes `build/credentials.json`); an
+  allow-list of vendored file extensions (`*.js`, `*.py`), which grows with every ecosystem; judging only
+  the last path component (`.venv/lib/` would be scanned with the broad names again).
