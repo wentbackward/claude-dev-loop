@@ -652,4 +652,5 @@ dl_remove_merged_local() {
   git -C "$DL_ROOT" branch -q -D "$branch" >/dev/null 2>&1 || echo "kept local $branch: git branch -D failed"
 }
 
+# Pick the NUL tool at load time on purpose, so subshells and child scripts inherit it (#27).
 _dl_json_z_pick
