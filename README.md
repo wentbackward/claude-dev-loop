@@ -57,14 +57,17 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    base in a separate gate worktree. It then runs the configured checks once on the top of the stack. A red
    train is never merged, not even for an apparent flake: re-run it, then bisect. A branch that conflicts
    drops out of the train and is rebased after the others merge. The gate reads its rules from the main
-   checkout's `.dev-loop.json`, so a branch that changes them (`checks`, `gate_setup`, `affected`,
-   `parallel`, `fail_fast`, `fast_check`, `docs`, `merge`, `cleanup`, `stop_gate`, `models`, `factory`,
-   `identities` or `github`, compared as JSON with sorted keys, so a reformatting is no change) needs a
-   reason under `## Config` in its notes, by the placeholder rules of `## Architecture` (see Architecture
-   ratchet); else the gate names the branch and the keys and ends `TRAIN RED` right after stacking. The
-   filter only stops lazy placeholders: the reviewer reads every `## Architecture` and `## Config` reason
-   and judges it, and loosening the gate's rules (a weaker or removed check, a narrower docs map) needs
-   the user's OK in collaborative mode.
+   checkout's `.dev-loop.json`, so a branch that changes that file in any way needs a reason under
+   `## Config` in its notes: every key the plugin reads runs, routes or deletes something (`checks`,
+   `deploy`, `format`, `heavy.clean_temp`, `notes_dir`, `remote`, ...), so there is no list of harmless
+   keys, and a new key is covered too. The file compares as JSON with sorted keys, so a reformatting is no
+   change; a deleted file changes every key. Without a reason the gate names the branch and the changed
+   top-level keys and ends `TRAIN RED` right after stacking. `architecture` is judged only by its own rule
+   (a reason under `## Architecture`, see Architecture ratchet). The first `.dev-loop.json` on a base (the
+   setup branch) is not judged by this check: the user reviews the setup. Reasons follow the placeholder
+   rules of `## Architecture`. The filter only stops lazy placeholders (`ok` or `see above` pass it): the
+   reviewer reads every `## Architecture` and `## Config` reason and judges it, and loosening the gate's
+   rules (a weaker or removed check, a narrower docs map) needs the user's OK in collaborative mode.
 5. **Merge.** `merge-train.sh b1 b2 ...` replays each branch on the current base and checks that its tree
    is exactly the gated tree. It pushes the branch, opens the PR from the notes file (a leading `#` in the
    title is stripped) and squash-merges exactly that head. If the base moved in between, it asks for a new
@@ -293,8 +296,10 @@ violations may only shrink:
   reads the main checkout's config (compared as JSON with sorted keys, so a reformatting is no change). A
   placeholder (`none`, `n/a`, `TODO`, `-`, `not applicable`, `nope`, `no reason`, `not relevant` and the
   like, also repeated, as in `none none`, followed by filler, as in `none yet` or `not needed for now`, or
-  by punctuation, as in `none: ...` or `none (...)`) is not a reason; a sentence such as
-  `none of the edges ...` is. The filter only stops lazy placeholders: the reviewer reads every reason.
+  by punctuation, as in `none: ...` (the notes template's placeholder) or `none (...)`) is not a reason; a
+  sentence such as `none of the edges ...`, or a placeholder word, a comma and at least three more words
+  (`No, the check was redundant`), is. The filter only stops lazy placeholders (`ok` or `see above` pass
+  it): the reviewer reads every reason.
   Two cards with the same `paths` glob are a broken card.
 - **The gate** runs after `gate_setup` and before the checks: the baseline and card rules for each branch,
   then `arch-check.sh` on the train's top. When the top is red, or reports as fixed a baseline entry that

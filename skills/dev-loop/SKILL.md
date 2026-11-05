@@ -168,7 +168,7 @@ background. It stacks them on the latest base and runs every configured check on
 the machine-wide heavy-job queue.
 
 - **GREEN**: merge (step 6).
-- **config-check red for <branch>**: the branch changes the gate's rules in its `.dev-loop.json`
+- **config-check red for <branch>**: the branch changes its `.dev-loop.json`
   (the keys are named) without a reason under `## Config` in its notes. Send the line to its
   implementer, gate the rest; loosening a rule needs the user's OK in collaborative mode.
 - **docs-check red for <branch>**: a branch changed mapped code without its docs (or a `none: <reason>`

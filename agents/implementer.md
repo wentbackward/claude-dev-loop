@@ -85,8 +85,8 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
      `none: <reason>` when no current-state doc is affected), `## Architecture` (only when the branch
      adds baseline entries, edits card headers so that violations disappear, or changes `architecture`
      in `.dev-loop.json`: why each one cannot be avoided now, and the ticket that removes it),
-     `## Config` (only when the branch changes a gate-relevant key of `.dev-loop.json`, such as
-     `checks`, `docs` or `merge`: what changes and why; loosening a rule needs the user's OK),
+     `## Config` (only when the branch changes `.dev-loop.json` in a key other than `architecture`:
+     what changes and why; loosening a rule needs the user's OK),
      `## Test evidence` (the exact commands you
      ran and their pass counts).
 
