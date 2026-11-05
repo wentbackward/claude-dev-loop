@@ -92,8 +92,10 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
 | agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift |
+| agent | `architect` | read-only architecture review from the merge evidence; refactoring tickets and extraction-ladder steps |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
+| script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
@@ -148,7 +150,9 @@ record, never by `git branch --merged`.
 | gate logs | the latest train's are kept; older ones by `cleanup.sh` after `cleanup.keep_days` |
 
 `merge-train.sh` appends every merge to a ledger, `~/.dev-loop/<repo>/merged.jsonl` (branch, source and
-pushed head, gated head and tree, PR, merge commit, time). `scripts/cleanup.sh` classifies every local and
+pushed head, gated head and tree, PR, merge commit, time, and the evidence `arch-evidence.sh` reads: the
+`files` the merge changed, their `components` (empty without `architecture`), the `lines` added and
+deleted, the `review_rounds` and the `ticket`). `scripts/cleanup.sh` classifies every local and
 remote branch from the ledger, then the PR list (a replayed copy counts when it brings the same changes),
 then the issue its name points at (`<type>/<n>-...`):
 
@@ -260,7 +264,7 @@ violations may only shrink:
   ---
   component: storage
   layer: 0
-  kind: component        # or: composition-root
+  kind: component        # or: composition-root; service, job, store (run-time components)
   paths: src/app/storage/* src/app/catalogue.py
   depends_on: instruments
   max_lines: 8000
@@ -271,7 +275,9 @@ violations may only shrink:
   repository path where `*` also matches `/`; a file belongs to the card whose matching glob is longest.
   `depends_on` is optional: when the line is there (even empty), a dependency on any other component is
   flagged. A composition root (entry points, the CLI, the job runner, app wiring) may depend on the layers
-  below it without listing them; its fan-out is not flagged. `max_lines` overrides `budget`; without
+  below it without listing them; its fan-out is not flagged. `service`, `job` and `store` mark run-time
+  components (a process, a scheduled job, a data store), checked like any component; `arch-evidence.sh`
+  reports two of them connected in code. `max_lines` overrides `budget`; without
   either, the component has no budget. A Markdown file in the folder whose first line is not `---` (an index) is not a card.
 - **`check`** is the project's own command (an `ast` scan, import-linter, dependency-cruiser...), run at
   the repository root. It prints one edge per line, `<from> <to>`: repository paths, or component names.
@@ -320,6 +326,47 @@ violations may only shrink:
 
 Without `architecture.check` (empty in `templates/dev-loop.json`) none of this runs.
 
+### Merge evidence and the architect
+
+The ratchet keeps new code inside the cards; the `architect` agent asks whether the cards are still the
+right ones. It reads evidence, not impressions:
+
+- **The merge ledger** records per merge the `files` it changed (against the base it was replayed on), their
+  `components` through the cards of the merged head, the `lines` added and deleted, the `review_rounds`
+  (a `Review rounds: <n>` line in the notes file, else one plus a `## Review fixes` heading per round)
+  and the `ticket` (the notes' `Closes #n`, else the branch's number). Older lines stay valid.
+- **`scripts/arch-evidence.sh [--since <n> | --since <time>]`** (deterministic and read-only; exit 0
+  without a signal over its threshold, 1 with one, 2 for a usage or config error) reads the ledger window
+  (by default the merges since the architect last ran, else the last `cadence` merges), the cards, the
+  edges of `check` and git, and prints the window, a summary table and one stable line per finding:
+
+  | signal | finding | threshold (`architecture.*`, default) |
+  |--------|---------|-----------|
+  | size | `size budget A <lines>/<max>`, `size growth A +<n> lines` | over the budget; `growth` (500) lines in the window |
+  | scatter | `scatter <branch> <n> components: ...` | more than `scatter` (3) components in one merge |
+  | co-change | `co-change A B <t>/<u> merges` | together in `co_change` (75) % of the merges that changed either, at least `co_change_min` (3) |
+  | hotspot | `hotspot <path> <n> merges` | a file in more than `hotspot` (5) merges |
+  | cycle | `cycle <n> components: ...` | more than `cycle` (3) components |
+  | misplaced | `misplaced A -> B (...)` | any lower layer using a component of the top layer (UI, CLI) |
+  | fan-out | `fan-out A <n> components: ...` | more than `fan_out` (5) dependencies; composition roots are exempt |
+  | friction | `friction rounds <branch> <n> rounds`, `friction reopened #<t> <n> merges: ...` | more than `review_rounds` (3) rounds; a ticket merged twice |
+  | runtime | `runtime A -> B (...)` | two run-time components (cards with `kind: service`, `job` or `store`) connected in code |
+
+  A ledger line without `files` gets them from its merge commit.
+- **The `architect` agent** (read-only by its brief; its tools include Bash, which can write, and the
+  role guard covers only GitHub writes; `models.architect`) reads the evidence, the cards, the
+  current-state docs, the PRD and the planned list. It keeps the run-time map (services, jobs, stores)
+  and the code map apart, and proposes small refactoring tickets (extract, split, merge, move behind an
+  interface, invert a dependency; behaviour unchanged, the existing tests as the safety net), card and
+  Architecture doc updates as a docs ticket, and steps on the **extraction ladder**: a clean layer, then a
+  package with a public API in the same repository, then a separate repository or service. The last step
+  needs the user's go in every mode. It never edits code, merges or closes tickets.
+- **The loop** runs `arch-evidence.sh` at the start of a session and every `cadence` (20) merges, starts
+  the architect when a signal is over its threshold or the cadence is reached, records each run in
+  `~/.dev-loop/<repo>/architect.txt` (`paths.sh architect`, one UTC time), and schedules its tickets next
+  to feature work, ahead of it only for a red signal. **`doctor.sh`** prints the merges since the
+  architect last ran and the signals over their thresholds, and notes `architect due`.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -350,7 +397,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |
 | `cleanup.stale_days`, `cleanup.keep_days` | `14`, `30` | `cleanup.sh`: when a branch without PR or open issue is stale; how long merged notes and old gate logs are kept |
-| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
+| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`, `architect`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
@@ -367,6 +414,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `architecture.cards` | `docs/architecture/` | the folder of the component cards |
 | `architecture.baseline` | `docs/architecture/baseline.txt` | the known violations, one per line, sorted |
 | `architecture.budget` | none | the default `max_lines` per component (a card may override it) |
+| `architecture.cadence` | `20` | run the `architect` every this many merges; also `arch-evidence.sh`'s window without an architect run |
+| `architecture.scatter`, `growth`, `co_change`, `co_change_min`, `hotspot`, `cycle`, `fan_out`, `review_rounds` | `3`, `500`, `75`, `3`, `5`, `3`, `5`, `3` | the evidence thresholds (see Merge evidence and the architect) |
 
 ### Models per agent
 
@@ -375,7 +424,7 @@ to a large one:
 
 ```json
 "models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku",
-            "doc-auditor": "sonnet" }
+            "doc-auditor": "sonnet", "architect": "opus" }
 ```
 
 The orchestrator passes the model on every agent launch (the Agent tool's `model` parameter, which takes
@@ -398,7 +447,7 @@ enforced by GitHub token permissions and repository rulesets, not by prompts.
 | role | who | may |
 |------|-----|-----|
 | implementer | `implementer` agent | contents write (feature branches only, by ruleset), pull requests write (open PRs); cannot push the base branch, cannot approve its own PRs |
-| tester | `test-engineer`, `verifier`, `doc-auditor` | issues write, contents read: raise tickets, never push code |
+| tester | `test-engineer`, `verifier`, `doc-auditor`, `architect` | issues write, contents read: raise tickets, never push code |
 | reviewer | `code-reviewer` | pull requests write (approve / request changes), contents read |
 | gate | `gate-train.sh` / `merge-train.sh` only | statuses write (the required `dev-loop/gate` status), contents write, merges |
 | orchestrator | main session | issues write, read elsewhere |
@@ -478,7 +527,8 @@ reduces this, but does not prevent it:
 - deny rules for the credential directory and the token cache (`templates/settings.json`);
 - a PreToolUse guard that refuses `git push`, `gh pr create/merge/review`, `gh issue ...` and `gh api`
   writes unless they run through `as-role.sh` with a role the agent may use (implementer: implementer,
-  code-reviewer: reviewer, test-engineer, verifier and doc-auditor: tester, main session: orchestrator).
+  code-reviewer: reviewer, test-engineer, verifier, doc-auditor and architect: tester, main session:
+  orchestrator).
   It also refuses any direct use of the gate role, any merge, ruleset or auth command, and any mention of
   the credential paths. This is best effort: it parses shell commands and cannot see inside scripts the agent writes;
 - for strong isolation, run each role under its own OS user (or container) that holds only its own
