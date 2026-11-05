@@ -1,9 +1,12 @@
-"""PreToolUse guard for identity mode: GitHub writes only through as-role.sh, with the agent's own role.
+"""PreToolUse guard: the holdout scenario store stays hidden from the coding agents, and in identity mode
+GitHub writes go only through as-role.sh, with the agent's own role.
 
 Best effort, local only: the deterministic guarantees come from GitHub (token permissions and rulesets).
-A no-op unless the project's .dev-loop.json configures "identities". Exit 2 refuses the tool call.
+A no-op unless the project's .dev-loop.json configures "scenarios" or "identities". Exit 2 refuses the
+tool call. `guard-role.py --scenarios-dir [DIR]` prints the store path as resolved from DIR (for tests).
 """
 
+import glob
 import json
 import os
 import re
@@ -30,6 +33,8 @@ ROLE_OPERATIONS = {
 }
 WRAPPERS = {"env", "command", "exec", "time", "nohup", "sudo", "xargs"}
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&"}
+SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
+GLOB_CHARS = set("*?[")
 
 
 def refuse(reason: str) -> None:
@@ -51,7 +56,15 @@ def main_root(cwd: str) -> str:
         return ""
     if os.path.basename(common) == ".git":
         return os.path.dirname(common)
-    return cwd
+    try:
+        return subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
 
 
 def load_config(cwd: str) -> dict:
@@ -64,6 +77,144 @@ def load_config(cwd: str) -> dict:
             return json.load(handle)
     except (OSError, ValueError):
         return {}
+
+
+def scenarios_on(config: dict) -> bool:
+    """True when the config has a scenarios block (as dl_scenarios_on in scripts/lib/scenarios.sh)."""
+    return isinstance(config, dict) and config.get("scenarios") not in (None, "")
+
+
+def scenarios_dir(config: dict, cwd: str) -> str:
+    """The absolute store path, resolved exactly like dl_scenarios_dir in scripts/lib/scenarios.sh."""
+    root = main_root(cwd)
+    repo = os.path.basename(root or cwd)
+    home = os.environ.get("HOME", "")
+    state = f"{os.environ.get('DEV_LOOP_HOME') or home + '/.dev-loop'}/{repo}"
+    block = config.get("scenarios")
+    configured = block.get("dir") if isinstance(block, dict) else None
+    if configured is not None and not isinstance(configured, str):
+        configured = json.dumps(configured, separators=(",", ":"))
+    if not configured:
+        return f"{state}/scenarios"
+    configured = configured.replace("<repo>", repo)
+    if configured.startswith("/"):
+        return configured
+    if configured.startswith("~/"):
+        return f"{home}/{configured[2:]}"
+    return f"{root or cwd}/{configured}"
+
+
+def store_forms(store: str) -> set[str]:
+    """The store as written and with symlinks resolved, without a trailing slash."""
+    return {os.path.normpath(store), os.path.realpath(store)}
+
+
+def inside(path: str, forms: set[str]) -> bool:
+    """True when path, as written or with symlinks resolved, is the store or below it."""
+    for candidate in {os.path.normpath(path), os.path.realpath(path)}:
+        if any(candidate == form or candidate.startswith(form.rstrip("/") + "/") for form in forms):
+            return True
+    return False
+
+
+def expand(word: str, cwd: str) -> str:
+    """A shell word as an absolute path: ~ and $VARS expanded, relative to cwd."""
+    home = os.environ.get("HOME", "")
+    if word == "~" or word.startswith("~/"):
+        word = home + word[1:]
+    return os.path.join(cwd, os.path.expandvars(word))
+
+
+def touches_store(path: str, forms: set[str]) -> bool:
+    """True when an absolute path, or a file its glob pattern matches, is inside the store."""
+    if inside(path, forms):
+        return True
+    if GLOB_CHARS & set(path):
+        return any(inside(match, forms) for match in glob.glob(path))
+    return False
+
+
+def word_candidates(word: str) -> list[str]:
+    """The path-like parts of a shell word: itself, without a redirection, and after each =."""
+    bare = re.sub(r"^[0-9]*[<>]+&?", "", word)
+    return [bare] + [part for part in bare.split("=")[1:] if part]
+
+
+def named_forms(forms: set[str]) -> list[str]:
+    """The ways a command may spell the store: absolute, with ~ and with $HOME."""
+    home = os.environ.get("HOME", "").rstrip("/")
+    spelled = set(forms)
+    for form in forms:
+        if home and form.startswith(home + "/"):
+            rest = form[len(home) :]
+            spelled |= {"~" + rest, "$HOME" + rest, "${HOME}" + rest}
+    return sorted(spelled)
+
+
+def bash_touches_store(command: str, cwd: str, forms: set[str]) -> bool:
+    """True when a shell command names the store (best effort: literal spellings, words, cd, globs)."""
+    for spelled in named_forms(forms):
+        if re.search(re.escape(spelled) + r"(?=$|[/\s'\"`;|&)])", command):
+            return True
+    for tokens in segments(command):
+        if os.path.basename(tokens[0]) == "cd":
+            cwd = expand(tokens[1], cwd) if len(tokens) > 1 else os.environ.get("HOME", cwd)
+            continue
+        for word in tokens:
+            if any(touches_store(expand(part, cwd), forms) for part in word_candidates(word)):
+                return True
+    return False
+
+
+def tool_touches_store(tool: str, tool_input: dict, cwd: str, forms: set[str]) -> bool:
+    """True when a file tool (Read, Grep, Glob, Edit, Write, ...) would read or write the store."""
+    base = expand(str(tool_input.get("path") or "."), cwd)
+    paths = [base] if tool_input.get("path") else []
+    if tool == "Glob" and tool_input.get("pattern"):
+        paths.append(os.path.join(base, str(tool_input["pattern"])))
+    paths += [expand(str(tool_input[key]), cwd) for key in ("file_path", "notebook_path") if tool_input.get(key)]
+    return any(touches_store(path, forms) for path in paths)
+
+
+def project_dir(cwd: str) -> str:
+    """cwd when it is inside a git repository, else the session's project directory (CLAUDE_PROJECT_DIR)."""
+    if main_root(cwd):
+        return cwd
+    return os.environ.get("CLAUDE_PROJECT_DIR") or cwd
+
+
+def scenario_hit(event: dict, config: dict, cwd: str) -> bool:
+    """True when the tool call names the scenario store of the project that cwd belongs to."""
+    base = project_dir(cwd)
+    if base != cwd:
+        config = load_config(base)
+    if not scenarios_on(config):
+        return False
+    forms = store_forms(scenarios_dir(config, base))
+    tool, tool_input = event.get("tool_name", ""), event.get("tool_input", {}) or {}
+    if tool == "Bash":
+        return bash_touches_store(str(tool_input.get("command", "")), cwd, forms)
+    return tool_touches_store(tool, tool_input, cwd, forms)
+
+
+def check_scenarios(event: dict, config: dict, cwd: str) -> None:
+    """Refuse a tool call by the implementer, test-engineer or code-reviewer that names the scenario store.
+
+    Any error while checking (a NUL byte in a path, an odd event) refuses the call for these agents, so
+    a crash can never let it through or skip the identity checks that follow.
+    """
+    agent = str(event.get("agent_type") or "").rsplit(":", 1)[-1]
+    if agent not in SCENARIO_BLIND:
+        return
+    try:
+        hit = scenario_hit(event, config, cwd)
+    except Exception as error:  # fail closed for the blind agent types
+        refuse(f"cannot check the tool call against the scenario store ({type(error).__name__}); refused")
+    if hit:
+        refuse(
+            f"the holdout scenario store is off limits to the {agent} agent"
+            " (scenarios are judged by the scenario-judge, never shown to the coding agents)"
+        )
 
 
 def secret_patterns(config: dict) -> list[str]:
@@ -260,13 +411,18 @@ def tool_paths(tool_input: dict) -> list[str]:
 
 
 def main() -> None:
-    """Read the PreToolUse event and refuse what identity mode does not allow."""
+    """Read the PreToolUse event and refuse what the scenario store and identity mode do not allow."""
+    if sys.argv[1:2] == ["--scenarios-dir"]:
+        cwd = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
+        print(scenarios_dir(load_config(cwd), cwd))
+        return
     try:
         event = json.load(sys.stdin)
     except ValueError:
         return
     cwd = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     config = load_config(cwd)
+    check_scenarios(event, config, cwd)
     identities = config.get("identities")
     if not isinstance(identities, dict) or not any(
         isinstance(v, dict) and v.get("type") for v in identities.values()

@@ -19,6 +19,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   example in `templates/scenario.md`. `scripts/lib/scenarios.sh` lists, reads and validates the files;
   `paths.sh scenarios` prints the store; `doctor.sh` prints the store and the counts and reports each
   invalid file. Nothing runs the scenarios yet.
+- Scenario isolation (#31, part 2 of #2): with `scenarios` configured, identity mode or not, the role
+  guard refuses `Read`, `Grep`, `Glob`, `Edit`, `Write` and Bash calls by the `implementer`,
+  `test-engineer` and `code-reviewer` agents that name a path inside `scenarios.dir` (absolute, `~`,
+  `$HOME`, relative, through a symlink or a glob); the main session, `scenario-judge` and `scenario-writer`
+  are allowed. Best effort; the README explains the limits and that in identity mode the coding apps get no
+  access to a scenarios repository. `templates/settings.json` has no deny rule for the store (it would block
+  the judge).
 
 ## 0.6.0 — 2026-11-05
 
