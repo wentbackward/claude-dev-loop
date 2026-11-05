@@ -30,7 +30,10 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
      read every doc the diff affects (the ticket's sections, the docs its `map` rules name, the README and
      user docs it touches) and check it still describes what the code does: built, not planned; one fact
      in one place. A false doc, a missing doc change, or a `none: <reason>` in the notes' `## Docs`
-     section that the diff contradicts is a must fix.
+     section that the diff contradicts is a must fix. For a feature, the branch's Features change is
+     the ticket's spec: check the code against it, and that the ticket's planned entry moved from the
+     planned list (`docs.planned`) to Features. A change outside the ticket's `Docs:` and `Components:`
+     lines needs a reason.
    - **Architecture still true**: when the project configures `architecture` in `.dev-loop.json`, run
      `<plugin>/scripts/arch-check.sh HEAD` and read the component cards the diff touches or should touch:
      their `paths`, `layer`, `depends_on`, responsibility and public interface still describe the code. A

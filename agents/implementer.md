@@ -52,7 +52,11 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    unsafe or irreversible).
 5a. **Docs in the same branch.** When the project configures current-state docs (`docs` in
    `.dev-loop.json`), update every doc the change makes untrue (the ticket names the sections): describe
-   only what is now built, in the doc that owns the fact, and link instead of repeating. Check with
+   only what is now built, in the doc that owns the fact, and link instead of repeating. The ticket's
+   `Docs:` and `Components:` lines say what the branch may change. For a feature, your first commit
+   (`docs: ...`, before the tests) changes Features to the intended new state: it is the ticket's spec,
+   and the reviewer checks the code against it. Move the ticket's entry from the planned list
+   (`docs.planned`) to Features in the same branch, so it is built when it merges. Check with
    `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
    doc change and for broken relative links in changed Markdown files.
 5b. **Component cards stay true.** When the project configures `architecture` in `.dev-loop.json`, keep
