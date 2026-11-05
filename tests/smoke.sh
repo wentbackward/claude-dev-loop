@@ -508,11 +508,18 @@ git worktree add -q "$work/wt53" feat/53-caches && mkdir -p "$work/wt53/.ruff_ca
 branch_on feat/54-cache-key w54.txt && note_for feat/54-cache-key
 git worktree add -q "$work/wt54" feat/54-cache-key && mkdir -p "$work/wt54/.ruff_cache" &&
   echo '*' >"$work/wt54/.ruff_cache/.gitignore" && echo KEY >"$work/wt54/.ruff_cache/x.pem"
+# Results in an output folder with its own .gitignore, and a key deep in a cache, keep their worktrees.
+branch_on feat/55-results w55.txt && note_for feat/55-results
+git worktree add -q "$work/wt55" feat/55-results && mkdir -p "$work/wt55/out" && echo '*' >"$work/wt55/out/.gitignore" &&
+  echo 1,2 >"$work/wt55/out/results.csv"
+branch_on feat/56-deep-key w56.txt && note_for feat/56-deep-key
+git worktree add -q "$work/wt56" feat/56-deep-key && mkdir -p "$work/wt56/.ruff_cache/0.1" &&
+  echo '*' >"$work/wt56/.ruff_cache/.gitignore" && echo KEY >"$work/wt56/.ruff_cache/0.1/x.key"
 git branch -q train-person-work origin/main
 "$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
-  feat/54-cache-key >/dev/null 2>&1
+  feat/54-cache-key feat/55-results feat/56-deep-key >/dev/null 2>&1
 out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
-  feat/54-cache-key 2>&1)
+  feat/54-cache-key feat/55-results feat/56-deep-key 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
 echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
@@ -527,11 +534,28 @@ echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ign
 echo "$out" | grep -q "kept local feat/54-cache-key: its worktree $work/wt54 holds ignored files that are not build output (.ruff_cache/x.pem)" &&
   [ -f "$work/wt54/.ruff_cache/x.pem" ] && pass "a key inside a self-ignoring cache keeps its worktree" ||
   fail "wt54: $out"
+echo "$out" | grep -q "kept local feat/55-results: its worktree $work/wt55 holds ignored files that are not build output (out/results.csv)" &&
+  [ -f "$work/wt55/out/results.csv" ] && pass "results listed one by one in a self-ignoring output folder keep their worktree" ||
+  fail "wt55: $out"
+echo "$out" | grep -q "kept local feat/56-deep-key: its worktree $work/wt56 holds ignored files that are not build output (.ruff_cache/0.1/x.key)" &&
+  [ -f "$work/wt56/.ruff_cache/0.1/x.key" ] && pass "a key in a folder nested in a self-ignoring cache keeps its worktree" ||
+  fail "wt56: $out"
+# Secret and data names inside a cache are matched without regard to case; ordinary cache files are output.
+judged=$(bash -c '. "$1/scripts/lib/common.sh"; shift
+  for e in "$@"; do if dl_rebuildable_entry " .ruff_cache build out " " .ruff_cache " "$e"; then echo "y $e"; else echo "n $e"; fi; done' _ \
+  "$plugin" .ruff_cache/.ENV .ruff_cache/a.DB .ruff_cache/id_rsa .ruff_cache/id_ed25519.pub .ruff_cache/id_ecdsa \
+  .ruff_cache/id_dsa .ruff_cache/credentials .ruff_cache/secrets.json .ruff_cache/k.pfx .ruff_cache/k.P12 \
+  .ruff_cache/d.sqlite-wal .ruff_cache/0.1/x.KEY build/results.csv out/x.o .ruff_cache/CACHEDIR.TAG \
+  .ruff_cache/0.1/ build/ | tr '\n' ' ')
+expect "secret and data names in a cache are never output, whatever their case; outputs only as a whole" \
+  "n .ruff_cache/.ENV n .ruff_cache/a.DB n .ruff_cache/id_rsa n .ruff_cache/id_ed25519.pub n .ruff_cache/id_ecdsa n .ruff_cache/id_dsa n .ruff_cache/credentials n .ruff_cache/secrets.json n .ruff_cache/k.pfx n .ruff_cache/k.P12 n .ruff_cache/d.sqlite-wal n .ruff_cache/0.1/x.KEY n build/results.csv n out/x.o y .ruff_cache/CACHEDIR.TAG y .ruff_cache/0.1/ y build/ " \
+  "$judged"
 [ -n "$(git branch --list train-person-work)" ] && pass "the gate never deletes a person's train-* branch" ||
   fail "the gate deleted train-person-work"
 git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
 git branch -q -D train-person-work
-git worktree remove --force "$work/wt52" && git worktree remove --force "$work/wt54"
+git worktree remove --force "$work/wt52" && git worktree remove --force "$work/wt54" && git worktree remove --force "$work/wt55"
+git worktree remove --force "$work/wt56"
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
