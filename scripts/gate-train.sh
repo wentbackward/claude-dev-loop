@@ -11,12 +11,16 @@
 #
 # Options (.dev-loop.json, all off by default):
 #   "affected": {"command", "summary", "heavy"} (or a plain command): run first, after gate_setup, with
-#     DL_CHANGED_FILES naming a file that lists the paths the train changes against the base, one per line.
+#     DL_CHANGED_FILES naming a file that lists the paths the train changes against the base, one per line
+#     (train-changed-files.txt in the logs directory, kept until the next train; also set for gate_setup
+#     and the checks). Without "affected" the list is not made and the variable is not set.
 #   "parallel": true    run the checks at the same time (each heavy one in its own heavy.sh slot), each in
 #                       its own process group; the results print in config order once all have ended.
 #   "fail_fast": true   after the first failure (affected or a check), skip the checks not started yet and
 #                       stop the running ones (SIGTERM to their process groups, SIGKILL after
-#                       DEV_LOOP_STOP_GRACE_SECONDS, default 10); they print as "<name> stopped".
+#                       DEV_LOOP_STOP_GRACE_SECONDS, default 10); they print as "<name> stopped", or
+#                       with their rc when they had ended with 0. A SIGTERM, SIGINT or SIGHUP to this
+#                       script in parallel mode stops the running checks the same way (TRAIN RED).
 #
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
 # (the output names the branch: drop it from the train, rebase it after the others merge).
@@ -71,9 +75,12 @@ for branch in "$@"; do
   echo "stacked $branch -> $(git rev-parse --short HEAD)"
 done
 
-DL_CHANGED_FILES="$logs/train-changed-files.txt"
-git diff --name-only --no-renames "$DL_REMOTE/$DL_BASE" HEAD >"$DL_CHANGED_FILES" || dl_die "cannot list the changed files"
-export DL_CHANGED_FILES
+if [ -n "$(cfg affected "")" ]; then
+  DL_CHANGED_FILES="$logs/train-changed-files.txt"
+  git diff --name-only --no-renames "$DL_REMOTE/$DL_BASE" HEAD >"$DL_CHANGED_FILES" ||
+    dl_die "cannot list the changed files"
+  export DL_CHANGED_FILES
+fi
 
 setup=$(cfg gate_setup "")
 if [ -n "$setup" ]; then
@@ -180,7 +187,8 @@ collect() {
   pids[$1]=""
 }
 
-# stop_running: stop every running stage's process group (TERM, then KILL after the grace period).
+# stop_running: stop every running stage's process group (TERM, then KILL after the grace period). A stage
+# whose process still ended with 0 (it had finished when the TERM came) keeps rc=0 instead of "stopped".
 stop_running() {
   local i deadline alive
   for ((i = 0; i < stages; i++)); do
@@ -202,16 +210,28 @@ stop_running() {
   for ((i = 0; i < stages; i++)); do
     [ "${results[i]}" = stopped ] || continue
     kill -KILL -- "-${pids[i]}" 2>/dev/null
-    wait "${pids[i]}" 2>/dev/null
+    wait "${pids[i]}" 2>/dev/null && results[i]="rc=0"
     pids[i]=""
   done
+}
+
+# interrupted FROM TO: this script got a signal while stages FROM..TO-1 ran: stop them, report, exit red.
+# shellcheck disable=SC2329  # called from the signal trap in run_parallel
+interrupted() {
+  local i
+  stop_running
+  for ((i = $1; i < $2; i++)); do [ -z "${results[i]}" ] || result_line "$i"; done
+  git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+  echo "TRAIN RED"
+  exit 1
 }
 
 # run_parallel FROM TO: start stages FROM..TO-1 at once, each in its own process group; wait for all,
 # or stop the rest after the first failure under fail_fast; then print the results in config order.
 run_parallel() {
   local i running
-  trap 'stop_running; git checkout -q --detach "$DL_REMOTE/$DL_BASE"; echo "TRAIN RED"; exit 1' TERM INT HUP
+  # shellcheck disable=SC2064  # the range is expanded now on purpose
+  trap "interrupted $1 $2" TERM INT HUP
   for ((i = $1; i < $2; i++)); do
     if [ -n "$failed" ]; then
       results[i]=skipped
