@@ -377,6 +377,19 @@ echo "$out" | grep -q "kept local feat/22-dirty: its worktree $work/wt22 has cha
 [ -d "$work/wt22" ] && [ -n "$(git branch --list feat/22-dirty)" ] && pass "the dirty worktree and its branch stay" ||
   fail "the dirty worktree or its branch went"
 git worktree remove --force "$work/wt22"
+# A locked worktree, and one holding an ignored .env file, keep their merged branches.
+branch_on feat/48-locked w48.txt && note_for feat/48-locked
+branch_on feat/49-env w49.txt && note_for feat/49-env
+git worktree add -q "$work/wt48" feat/48-locked && git worktree lock "$work/wt48"
+git worktree add -q "$work/wt49" feat/49-env && echo '.env' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
+  echo SECRET=x >"$work/wt49/.env"
+"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env >/dev/null 2>&1
+out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env 2>&1)
+echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
+  pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
+echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds a .env file" && [ -f "$work/wt49/.env" ] &&
+  pass "merge-train keeps a worktree holding a .env file" || fail ".env worktree: $out"
+git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
@@ -396,6 +409,7 @@ branch_on feat/28-open w28.txt
 git checkout -q -B spike-old origin/main && echo old >old.txt && git add old.txt &&
   GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" git commit -q -m "spike" && git checkout -q main
 printf '27\tCLOSED\tNOT_PLANNED\n28\tOPEN\t\n' >"$FAKE_GH_DIR/issues.tsv"
+git branch -q train-feat/50-stale origin/main                              # a gate ref no train needs
 git fetch -q origin
 
 class_of() { awk -F'\t' -v s="$2" -v b="$3" '$2 == s && $3 == b {print $1}' "$1"; }
@@ -403,10 +417,12 @@ out=$("$plugin/scripts/cleanup.sh" 2>&1)
 report=$(echo "$out" | sed -n 's/^report: //p')
 for row in "merged local feat/23-merged" "merged local feat/24-replayed" "keep local feat/25-moved" \
   "closed local feat/26-closed" "closed remote feat/26-closed" "closed local fix/27-dropped" \
-  "keep local feat/28-open" "stale local spike-old" "keep local main" "helper local train-feat/21-waiting"; do
+  "keep local feat/28-open" "stale local spike-old" "keep local main" "helper local train-feat/50-stale"; do
   read -r want scope name <<<"$row"
   expect "cleanup classifies $scope $name as $want" "$want" "$(class_of "$report" "$scope" "$name")"
 done
+grep -qF "feat/22-dirty"$'\t'"$(git rev-parse feat/22-dirty)"$'\t'"in the merge ledger" "$report" &&
+  pass "the ledger decides first" || fail "feat/22-dirty not classified by the ledger"
 grep -q "feat/25-moved.*moved on since" "$report" && pass "a kept branch is reported with its reason" ||
   fail "no reason for feat/25-moved"
 [ -n "$(git branch --list feat/23-merged)" ] && pass "a dry run deletes nothing" || fail "the dry run deleted a branch"
@@ -414,12 +430,12 @@ grep -q "feat/25-moved.*moved on since" "$report" && pass "a kept branch is repo
 out=$("$plugin/scripts/cleanup.sh" --apply 2>&1)
 echo "$out"
 expect "--apply deletes the merged and helper branches" "" \
-  "$(git branch --list feat/23-merged feat/24-replayed train-feat/21-waiting)"
+  "$(git branch --list feat/23-merged feat/24-replayed train-feat/50-stale)"
 expect "--apply keeps closed, stale and kept branches without --include" \
   "feat/25-moved feat/26-closed feat/28-open fix/27-dropped spike-old" \
   "$(git branch --list --format='%(refname:short)' feat/25-moved feat/26-closed fix/27-dropped feat/28-open spike-old | paste -sd' ')"
 [ -f "$notes/merged/pr-feat_23-merged.md" ] && pass "cleanup moves the notes of a merged PR" || fail "notes not moved"
-bundle=$(echo "$out" | sed -n 's/^archived the deleted tips to //p')
+bundle=$(echo "$out" | sed -n 's/^archived [0-9]* tips to //p')
 git fetch -q "$bundle" refs/heads/feat/24-replayed:refs/heads/restored 2>/dev/null &&
   expect "the bundle restores a deleted squash-merged branch" "feat: w24" "$(git log -1 --format=%s restored)" ||
   fail "the bundle does not restore feat/24-replayed"
@@ -435,6 +451,57 @@ git ls-remote --exit-code origin feat/26-closed >/dev/null 2>&1 && fail "closed 
   pass "a dark factory deletes the closed remote branch too"
 expect "kept branches survive every run" "feat/25-moved feat/28-open" \
   "$(git branch --list --format='%(refname:short)' feat/25-moved feat/28-open | paste -sd' ')"
+
+# The reviewer's cases: the dangerous direction of every rule.
+git push -q origin origin/main~1:refs/heads/develop                       # a long-lived branch behind main
+git checkout -q -B "fix/42-it's" origin/main && echo q >q.txt && git add q.txt && git commit -q -m "fix: q" &&
+  git push -q -u origin "fix/42-it's" && git checkout -q main                # a quote in the name
+printf '42\tCLOSED\tNOT_PLANNED\n' >>"$FAKE_GH_DIR/issues.tsv"
+branch_on feat/43-reopened w43.txt && gh_pr feat/43-reopened && echo CLOSED >"$FAKE_GH_DIR/feat_43-reopened.state"
+git checkout -q feat/43-reopened && echo more >>w43.txt && git commit -q -am "feat: new work" &&
+  git push -q && git checkout -q main                                          # closed PR, then new work
+branch_on feat/44-remote-only w44.txt && gh_pr feat/44-remote-only && git branch -q -D feat/44-remote-only
+echo CLOSED >"$FAKE_GH_DIR/feat_44-remote-only.state"
+branch_on fix/45-checked-out w45.txt && printf '45\tCLOSED\tNOT_PLANNED\n' >>"$FAKE_GH_DIR/issues.tsv"
+git worktree add -q "$work/wt45" fix/45-checked-out
+git branch -q train-station-fix origin/main                                 # a person's branch, not a gate ref
+git branch -q train-feat/46-live origin/main && printf '%s feat/46-live\n' "$$" >"$DEV_LOOP_HOME/project/train-running.txt"
+branch_on feat/47-old-note w47.txt && gh_pr feat/47-old-note && gh pr merge feat/47-old-note --squash >/dev/null
+note_for feat/47-old-note && touch -t 202001010000 "$("$plugin/scripts/paths.sh" notes feat/47-old-note)"
+mkdir -p "$DEV_LOOP_HOME/project/logs" && echo keep >"$DEV_LOOP_HOME/project/logs/important.txt" &&
+  touch -t 202001010000 "$DEV_LOOP_HOME/project/logs/important.txt"
+git fetch -q origin
+out=$(DEV_LOOP_CONFIG="$work/dark.json" "$plugin/scripts/cleanup.sh" --apply 2>&1)
+echo "$out"
+report=$(echo "$out" | sed -n 's/^report: //p')
+for row in "keep remote develop" "closed local fix/42-it's" "keep local feat/43-reopened" \
+  "keep local fix/45-checked-out" "keep local train-station-fix" "keep local train-feat/46-live"; do
+  read -r want scope name <<<"$row"
+  expect "cleanup classifies $scope $name as $want" "$want" "$(class_of "$report" "$scope" "$name")"
+done
+git ls-remote --exit-code origin develop >/dev/null && pass "a remote branch behind main is never deleted" ||
+  fail "develop was deleted"
+git ls-remote --exit-code origin feat/43-reopened >/dev/null && [ -n "$(git branch --list feat/43-reopened)" ] &&
+  pass "a closed PR's branch with new work is kept" || fail "feat/43-reopened deleted"
+expect "a branch with a quote in its name is deleted, locally and remotely" "0 0" \
+  "$(git branch --list "fix/42-it's" | wc -l | tr -d ' ') $(git ls-remote origin "fix/42-it's" | wc -l | tr -d ' ')"
+echo "$out" | grep -q "deleted [0-9]* local and [0-9]* remote" && ! echo "$out" | grep -q "not deleted" &&
+  pass "every planned deletion is confirmed" || fail "deletions failed: $out"
+bundle=$(echo "$out" | sed -n 's/^archived [0-9]* tips to //p')
+git fetch -q "$bundle" "refs/remotes/origin/feat/44-remote-only:refs/heads/restored44" 2>/dev/null &&
+  pass "the bundle holds a remote-only branch" || fail "the bundle lacks the remote-only branch"
+git branch -q -D restored44 2>/dev/null
+[ -n "$(git branch --list fix/45-checked-out)" ] && pass "a dark factory keeps a branch a worktree has checked out" ||
+  fail "fix/45-checked-out deleted"
+[ -f "$notes/merged/pr-feat_47-old-note.md" ] && pass "an old notes file survives its move to notes/merged" ||
+  fail "the old notes file was deleted on archiving"
+[ -f "$DEV_LOOP_HOME/project/logs/important.txt" ] && pass "cleanup leaves other files in the logs directory" ||
+  fail "cleanup deleted a non-gate file"
+rm -f "$DEV_LOOP_HOME/project/train-running.txt"
+git branch -q -D train-feat/46-live
+git worktree remove --force "$work/wt45"
+expect "the JSON of a branch name with quotes and backslashes parses" 'a"b\c' \
+  "$(bash -c '. "$1/scripts/lib/common.sh"; dl_json_string "a\"b\\c"' _ "$plugin" | jq -r .)"
 
 git branch -q train-feat/99-left origin/main
 expect "doctor counts the leftover train refs" "1 train/replay refs outside a live train, 0 merged branches still local (cleanup.sh)" \

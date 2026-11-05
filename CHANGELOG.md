@@ -13,9 +13,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
     train), keeping a green train still waiting to merge, and records the train it is building.
   - `cleanup.sh`: classifies every local and remote branch (merged, helper, closed, stale, keep) from the
     ledger, the PR list (a replayed copy with the same changes counts as merged) and the issues; a dry run
-    unless `--apply`; saves the deleted tips to a bundle first; closed and stale branches need
-    `--include` unless `"factory": "dark"`; removes merged notes and old gate logs after
-    `cleanup.keep_days`.
+    unless `--apply`; saves the deleted tips to a bundle and checks it before deleting; deletes only at
+    the classified tip; never deletes a remote branch outside the loop (`github.feature_patterns`);
+    closed and stale branches need `--include` unless `"factory": "dark"`; removes merged notes and old
+    gate logs and reports after `cleanup.keep_days`, nothing else in the logs directory.
   - `doctor.sh` notes leftover train/replay refs, merged branches still local, and more than 200 local
     branches.
 

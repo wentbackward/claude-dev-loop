@@ -155,6 +155,22 @@ dl_ensure_gate_worktree() {
   printf '%s\n' "$gate"
 }
 
+# dl_loop_branch NAME: NAME matches github.feature_patterns (default feat/* fix/* chore/* docs/*), the
+# branches the loop itself creates.
+dl_loop_branch() {
+  local i count pattern
+  count=$(cfg_len github.feature_patterns)
+  if [ "$count" -eq 0 ]; then
+    case "$1" in feat/* | fix/* | chore/* | docs/*) return 0 ;; *) return 1 ;; esac
+  fi
+  for ((i = 0; i < count; i++)); do
+    pattern=$(cfg "github.feature_patterns.$i")
+    # shellcheck disable=SC2053  # the pattern is a glob on purpose
+    [[ "$1" == $pattern ]] && return 0
+  done
+  return 1
+}
+
 # dl_running_file: where gate-train.sh records the train it is building ("<pid> <branch>..."), removed
 # when it ends, so cleanup.sh never touches the refs of a train in progress.
 dl_running_file() {
@@ -218,16 +234,19 @@ dl_notes_merged_dir() {
   printf '%s/merged\n' "$(dl_notes_dir)"
 }
 
-# dl_archive_note BRANCH: move the branch's notes file to the merged notes directory (if it exists).
+# dl_archive_note BRANCH: move the branch's notes file to the merged notes directory (if it exists),
+# stamped with the time of the move, so cleanup.keep_days counts from the merge.
 dl_archive_note() {
   local note
   note=$(dl_note_file "$1")
   [ -f "$note" ] || return 0
-  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$note" "$(dl_notes_merged_dir)/"
+  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$note" "$(dl_notes_merged_dir)/" &&
+    touch "$(dl_notes_merged_dir)/$(basename "$note")"
 }
 
 # dl_remove_merged_local BRANCH HEAD...: after BRANCH merged, delete its local branch when its tip is one
-# of the merged HEADs, removing a clean worktree that has it checked out first. Prints what it kept, and why.
+# of the merged HEADs, removing a clean worktree that has it checked out first (with its ignored files, such
+# as node_modules and build output; a worktree holding a .env file is kept). Prints what it kept, and why.
 dl_remove_merged_local() {
   local branch=$1 tip head accepted="" worktree
   shift
@@ -246,6 +265,9 @@ dl_remove_merged_local() {
       return 0
     elif [ "$(printf '%s\n' "$worktree" | sed -n 2p)" = locked ]; then
       echo "kept local $branch: its worktree $path is locked"
+      return 0
+    elif git -C "$path" ls-files --others --ignored --exclude-standard 2>/dev/null | grep -qE '(^|/)\.env(\..*)?$'; then
+      echo "kept local $branch: its worktree $path holds a .env file"
       return 0
     elif ! git -C "$DL_ROOT" worktree remove "$path" >/dev/null 2>&1; then
       echo "kept local $branch: its worktree $path has changes"

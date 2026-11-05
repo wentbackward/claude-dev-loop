@@ -3,24 +3,30 @@
 #
 # Usage: cleanup.sh [--apply] [--include closed] [--include stale] [--verbose]
 #
-# Without --apply it only reports (a dry run). Merged is decided by the merge ledger of merge-train.sh,
-# then by the PR list (gh), never by git ancestry alone: a squash merge leaves none. Classes:
-#   merged    the ledger or a merged PR has this tip (or the same changes), or the base contains it
-#   helper    train-* and replay-* refs outside a live train; agent worktree branches with no own commits
-#   closed    its PR was closed unmerged, or the issue its name points at (<type>/<n>-...) was closed
-#   stale     no PR, no open issue, no commit for cleanup.stale_days (default 14)
-#   keep      an open PR or issue, a worktree has it checked out, a live train, the base, a recent branch,
-#             or a merged PR whose branch moved on since (each kept branch is listed with its reason)
+# Merged is decided by the merge ledger of merge-train.sh, then by the PR list (gh); a squash merge leaves
+# no ancestry. Branches outside the loop (names not matching github.feature_patterns, default feat/* fix/*
+# chore/* docs/*) are only ever deleted locally, and only as stale. Classes:
+#   merged    the ledger or a merged PR has this tip (or a replayed copy with the same changes); a local
+#             loop branch the base contains
+#   helper    local train-<branch> and replay-<branch> refs of loop branches outside a live train; local
+#             agent worktree branches with no commits of their own
+#   closed    its PR was closed unmerged at this tip, or its issue (<type>/<n>-...) closed as not planned
+#   stale     no PR, no open issue, no commit for cleanup.stale_days (default 14); remote: loop branches only
+#   keep      everything else, listed with its reason: an open PR or issue, a worktree has it checked out,
+#             a live train, the base, recent, moved on after its PR, or not a loop branch
 #
-# --apply deletes "merged" and "helper" (local and remote), moves the notes of merged PRs to
-# notes/merged/, and removes notes there and gate logs older than cleanup.keep_days (default 30).
-# "closed" needs --include closed (the user's OK) unless "factory" is "dark"; "stale" needs
-# --include stale unless "factory" is "dark". Before deleting, every deleted tip that the base does not
-# contain is saved to ~/.dev-loop/<repo>/archive/branches-<time>.bundle
-# (restore one: git fetch <bundle> refs/heads/<branch>:refs/heads/<branch>).
-# Remote deletions run as the gate identity in identity mode.
+# Without --apply it is a dry run: it still fetches (with --prune) and writes the classification to
+# <logs_dir>/cleanup-<time>.tsv, and deletes nothing. --apply deletes "merged" and "helper", locally and
+# on the remote; "closed" needs --include closed and "stale" --include stale (the user's OK), unless
+# "factory" is "dark". Each deletion is conditional on the tip that was classified. Before deleting, every
+# tip the base does not contain is saved to ~/.dev-loop/<repo>/archive/branches-<time>.bundle and checked
+# there; restore with git fetch <bundle> refs/heads/<branch>:refs/heads/<branch> (a remote-only branch:
+# refs/remotes/<remote>/<branch>:refs/heads/<branch>). --apply also moves the notes files of merged PRs
+# whose branch is gone to notes/merged/, and removes, after cleanup.keep_days (default 30), notes there
+# and old gate logs and cleanup reports (never other files in the logs directory).
+# Remote deletions run as the gate identity in identity mode. Needs git 2.9 or later.
 #
-# Exit: 0 done, 2 usage/config.
+# Exit: 0 done, 1 some deletions failed (listed), 2 usage/config.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -44,7 +50,8 @@ command -v gh >/dev/null 2>&1 || dl_die "gh (GitHub CLI) is not installed"
 cd "$DL_ROOT" || exit 2
 stale_days=$(cfg cleanup.stale_days 14)
 keep_days=$(cfg cleanup.keep_days 30)
-[[ "$stale_days" =~ ^[0-9]+$ && "$keep_days" =~ ^[0-9]+$ ]] || dl_die "cleanup.stale_days and cleanup.keep_days must be whole days"
+[[ "$stale_days" =~ ^[0-9]+$ && "$keep_days" =~ ^[0-9]+$ ]] ||
+  dl_die "cleanup.stale_days and cleanup.keep_days must be whole days"
 factory=$(cfg factory collaborative)
 [ "$factory" = dark ] && include+="closed stale "
 git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
@@ -70,9 +77,17 @@ dl_ledger_heads >"$work/ledger"
   --json number,state,stateReason \
   --jq '.[] | [(.number | tostring), .state, (.stateReason // "")] | @tsv' >"$work/issues" ||
   dl_die "gh issue list failed"
-git worktree list --porcelain | awk '/^worktree / {p = substr($0, 10)} /^branch refs\/heads\// {print substr($0, 19) "\t" p}' >"$work/worktrees"
+git worktree list --porcelain |
+  awk '/^worktree / {p = substr($0, 10)} /^branch refs\/heads\// {print substr($0, 19) "\t" p}' >"$work/worktrees"
 git for-each-ref --merged "$base" --format='%(refname)' refs/heads "refs/remotes/$DL_REMOTE" >"$work/contained"
 now=$(date +%s)
+
+# loop_branch NAME: a branch the loop creates (github.feature_patterns), read once per run.
+if [ "$(cfg_len github.feature_patterns)" -eq 0 ]; then
+  loop_branch() { case "$1" in feat/* | fix/* | chore/* | docs/*) return 0 ;; *) return 1 ;; esac }
+else
+  loop_branch() { dl_loop_branch "$1"; }
+fi
 
 # same_changes TIP OTHER: TIP and OTHER bring the same changes onto the base (a replayed or rebased copy).
 same_changes() {
@@ -86,17 +101,28 @@ same_changes() {
 
 # classify SCOPE NAME TIP DATE: prints "<class>\t<scope>\t<name>\t<tip>\t<reason>".
 classify() {
-  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number pr_state="" line
+  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days
+  local open="" merged="" closed="" moved=""
   ref=refs/heads/$name
   [ "$scope" = remote ] && ref=refs/remotes/$DL_REMOTE/$name
   out() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$scope" "$name" "$tip" "$2"; }
-  case "$name" in
-    "$DL_BASE" | HEAD) out keep "the base branch"; return ;;
-    train-* | replay-*)
-      if [[ "$live" == *" ${name#*-} "* ]]; then out keep "a live train"; else out helper "gate ref outside a live train"; fi
-      return
-      ;;
+  case "$name" in "$DL_BASE" | HEAD)
+    out keep "the base branch"
+    return
+    ;;
   esac
+  if [ "$scope" = local ]; then
+    case "$name" in train-* | replay-*)
+      if [[ "$live" == *" ${name#*-} "* ]]; then
+        out keep "a live train"
+        return
+      elif loop_branch "${name#*-}"; then
+        out helper "gate ref outside a live train"
+        return
+      fi
+      ;;
+    esac
+  fi
   [[ "$live" == *" $name "* ]] && { out keep "in a live train"; return; }
   if [ "$scope" = local ]; then
     worktree=$(awk -F'\t' -v b="$name" '$1 == b {print $2; exit}' "$work/worktrees")
@@ -106,34 +132,41 @@ classify() {
       return
     fi
   fi
-  if grep -qxF -- "$ref" "$work/contained"; then out merged "the base contains it"; return; fi
   if grep -qxF -- "$name $tip" "$work/ledger"; then out merged "in the merge ledger"; return; fi
   while IFS=$'\t' read -r _ oid state number; do
     case "$state" in
-      OPEN) out keep "open PR #$number"; return ;;
+      OPEN) open="#$number" ;;
       MERGED)
-        if [ "$oid" = "$tip" ] || same_changes "$tip" "$oid"; then out merged "merged PR #$number"; return; fi
-        pr_state="merged PR #$number, but the branch moved on since"
+        if [ "$oid" = "$tip" ] || same_changes "$tip" "$oid"; then merged="#$number"; else moved="merged PR #$number"; fi
         ;;
-      CLOSED) [ -n "$pr_state" ] || pr_state="closed PR #$number" ;;
+      CLOSED) if [ "$oid" = "$tip" ]; then closed="#$number"; else moved=${moved:-"closed PR #$number"}; fi ;;
     esac
   done < <(awk -F'\t' -v b="$name" '$1 == b' "$work/prs")
-  case "$pr_state" in
-    "merged PR"*) out keep "$pr_state"; return ;;
-    "closed PR"*) out closed "$pr_state, not merged"; return ;;
-  esac
+  [ -n "$open" ] && { out keep "open PR $open"; return; }
+  [ -n "$merged" ] && { out merged "merged PR $merged"; return; }
+  [ -n "$closed" ] && { out closed "closed PR $closed, not merged"; return; }
+  [ -n "$moved" ] && { out keep "$moved, but the branch moved on since"; return; }
+  if grep -qxF -- "$ref" "$work/contained"; then
+    if [ "$scope" = local ] && loop_branch "$name"; then out merged "the base contains it"; else
+      out keep "the base contains it, no PR"
+    fi
+    return
+  fi
   if [[ "$name" =~ ^[a-z]+/([0-9]+)[-_] ]]; then
     number=${BASH_REMATCH[1]}
     line=$(awk -F'\t' -v n="$number" '$1 == n' "$work/issues")
     case "$line" in
       *$'\tOPEN\t'*) out keep "issue #$number is open"; return ;;
-      *$'\tCLOSED\t'*) out closed "issue #$number closed ($(cut -f3 <<<"$line" | tr 'A-Z_' 'a-z ')), no merged PR"; return ;;
+      *$'\tCLOSED\tNOT_PLANNED') out closed "issue #$number closed as not planned, no PR"; return ;;
     esac
   fi
-  if [ $(((now - date) / 86400)) -ge "$stale_days" ]; then
-    out stale "no PR, no open issue, last commit $(((now - date) / 86400)) days ago"
-  else
-    out keep "recent ($(((now - date) / 86400)) days), no PR yet"
+  if [ "$scope" = remote ] && ! loop_branch "$name"; then
+    out keep "not a loop branch (no PR or ledger record)"
+    return
+  fi
+  days=$(((now - date) / 86400))
+  if [ "$days" -ge "$stale_days" ]; then out stale "no PR, no open issue, last commit $days days ago"; else
+    out keep "recent ($days days), no PR yet"
   fi
 }
 
@@ -158,66 +191,111 @@ else
   awk -F'\t' '$1 == "closed" || $1 == "stale" {printf "%-7s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report" | head -n 40
 fi
 
-# --- Notes of merged PRs --------------------------------------------------------------------------------
+# notes_to_archive: notes files of merged PRs (none open) whose branch is gone, locally and remotely.
 notes_to_archive() {
-  local file branch
+  local file key name state
   for file in "$(dl_notes_dir)"/pr-*.md; do
     [ -f "$file" ] || continue
-    branch=$(basename "$file" .md)
-    branch=${branch#pr-}
-    awk -F'\t' -v k="$branch" '{n = $1; gsub("/", "_", n)} n == k {s[$3] = 1} END {exit !(s["MERGED"] && !s["OPEN"])}' \
-      "$work/prs" && printf '%s\n' "$file"
+    key=$(basename "$file" .md)
+    key=${key#pr-}
+    local found="" open=""
+    while IFS=$'\t' read -r name _ state _; do
+      [ "${name//\//_}" = "$key" ] || continue
+      case "$state" in OPEN) open=yes ;; MERGED) found=$name ;; esac
+      git rev-parse -q --verify "refs/heads/$name" >/dev/null && open=yes
+      git rev-parse -q --verify "refs/remotes/$DL_REMOTE/$name" >/dev/null && open=yes
+    done <"$work/prs"
+    [ -n "$found" ] && [ -z "$open" ] && printf '%s\n' "$file"
   done
 }
 
 if [ -z "$apply" ]; then
-  echo "dry run: $(notes_to_archive | wc -l | tr -d ' ') notes files of merged PRs would move to notes/merged/"
-  echo "cleanup: dry run ($factory factory); --apply deletes merged and helper$( [ "$factory" = dark ] && echo ", closed and stale" || echo "; closed and stale need --include")"
+  if [ "$factory" = dark ]; then what="merged, helper, closed and stale"; else
+    what="merged and helper; closed and stale need --include"
+  fi
+  echo "cleanup: dry run ($factory factory); --apply deletes $what"
   exit 0
 fi
 
 # --- Apply ------------------------------------------------------------------------------------------------
+failed=0
 awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
 if [ -s "$work/delete" ]; then
-  archive=$DL_STATE/archive/branches-$(date +%Y%m%d-%H%M%S).bundle
-  mkdir -p "$(dirname "$archive")"
-  {
-    awk -F'\t' -v r="$DL_REMOTE" '{print ($2 == "local" ? "refs/heads/" : "refs/remotes/" r "/") $3}' "$work/delete"
-    echo "^$base"
-  } | git bundle create "$archive" --stdin >/dev/null 2>"$work/bundle.err"
-  if [ -s "$archive" ]; then
-    echo "archived the deleted tips to $archive"
-  elif grep -q "empty bundle" "$work/bundle.err"; then
-    echo "nothing to archive: the base contains every deleted tip"
-  else
-    cat "$work/bundle.err" >&2
-    dl_die "could not write the archive bundle; nothing deleted"
+  # Archive every tip the base does not contain, and check the bundle has each one before deleting.
+  awk -F'\t' -v r="$DL_REMOTE" '{print ($2 == "local" ? "refs/heads/" : "refs/remotes/" r "/") $3}' "$work/delete" |
+    grep -vxF -f "$work/contained" >"$work/archive-refs"
+  if [ -s "$work/archive-refs" ]; then
+    archive=$DL_STATE/archive/branches-$(date +%Y%m%d-%H%M%S).bundle
+    mkdir -p "$(dirname "$archive")"
+    { cat "$work/archive-refs"; echo "^$base"; } | git bundle create "$archive" --stdin >/dev/null 2>"$work/bundle.err" ||
+      { cat "$work/bundle.err" >&2; dl_die "could not write the archive bundle; nothing deleted"; }
+    git bundle list-heads "$archive" | awk '{print $2}' >"$work/bundled"
+    missing=$(grep -vxF -f "$work/bundled" "$work/archive-refs")
+    [ -z "$missing" ] || dl_die "the archive bundle lacks $(echo "$missing" | wc -l | tr -d ' ') tips; nothing deleted"
+    echo "archived $(wc -l <"$work/archive-refs" | tr -d ' ') tips to $archive"
   fi
-  awk -F'\t' '$2 == "local" {print $3}' "$work/delete" >"$work/delete-local"
-  awk -F'\t' '$2 == "remote" {print $3}' "$work/delete" >"$work/delete-remote"
-  [ ! -s "$work/delete-local" ] || xargs -n 100 git branch -q -D <"$work/delete-local" >/dev/null 2>&1
-  [ ! -s "$work/delete-remote" ] ||
-    xargs -n 50 "$scripts_dir/as-role.sh" gate git push -q "$DL_REMOTE" --delete <"$work/delete-remote" >/dev/null 2>&1
-  git fetch -q --prune "$DL_REMOTE"
-  echo "deleted $(awk -F'\t' '$2 == "local"' "$work/delete" | wc -l | tr -d ' ') local and $(awk -F'\t' '$2 == "remote"' "$work/delete" | wc -l | tr -d ' ') remote branches"
+
+  # Local: delete only at the classified tip, and never a branch a worktree has checked out meanwhile.
+  deleted_local=0
+  while IFS=$'\t' read -r _ scope name tip _; do
+    [ "$scope" = local ] || continue
+    if [ -n "$(dl_worktree_of "$name")" ] || ! git update-ref -d "refs/heads/$name" "$tip" 2>/dev/null; then
+      echo "not deleted: local $name (checked out or moved since the classification)"
+      failed=$((failed + 1))
+    else
+      deleted_local=$((deleted_local + 1))
+    fi
+  done <"$work/delete"
+
+  # Remote: in batches, each ref with a lease on the classified tip; success is read back from the remote.
+  awk -F'\t' '$2 == "remote" {print $3 "\t" $4}' "$work/delete" >"$work/delete-remote"
+  deleted_remote=0
+  if [ -s "$work/delete-remote" ]; then
+    args=()
+    flush() {
+      [ ${#args[@]} -gt 0 ] || return 0
+      "$scripts_dir/as-role.sh" gate git push -q "$DL_REMOTE" "${args[@]}" >/dev/null 2>&1
+      args=()
+    }
+    while IFS=$'\t' read -r name tip; do
+      args+=("--force-with-lease=refs/heads/$name:$tip" ":refs/heads/$name")
+      [ ${#args[@]} -lt 100 ] || flush
+    done <"$work/delete-remote"
+    flush
+    git fetch -q --prune "$DL_REMOTE"
+    while IFS=$'\t' read -r name _; do
+      if git rev-parse -q --verify "refs/remotes/$DL_REMOTE/$name" >/dev/null; then
+        echo "not deleted: remote $name (rejected, or moved since the classification)"
+        failed=$((failed + 1))
+      else
+        deleted_remote=$((deleted_remote + 1))
+      fi
+    done <"$work/delete-remote"
+  fi
+  echo "deleted $deleted_local local and $deleted_remote remote branches"
 fi
 
 moved=0
 while read -r file; do
-  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$file" "$(dl_notes_merged_dir)/" && moved=$((moved + 1))
+  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$file" "$(dl_notes_merged_dir)/" &&
+    touch "$(dl_notes_merged_dir)/$(basename "$file")" && moved=$((moved + 1))
 done < <(notes_to_archive)
 echo "moved $moved notes files of merged PRs to $(dl_notes_merged_dir)"
-find "$(dl_notes_merged_dir)" -maxdepth 1 -type f -name 'pr-*.md' -mtime +"$keep_days" -delete 2>/dev/null
+find "$(dl_notes_merged_dir)" -maxdepth 1 -type f -name 'pr-*.md' -mtime +"$keep_days" -exec rm -f {} + 2>/dev/null
 
-# Gate logs: the current stages' logs are always the latest train's; others go after keep_days.
+# Gate logs and cleanup reports only: the current stages' logs (the latest train) are always kept.
 current=" train-setup.log train-changed-files.txt "
 [ -n "$(cfg affected "")" ] && current+="train-affected.log "
 for ((i = 0; i < $(cfg_len checks); i++)); do
-  name=$(cfg "checks.$i.name" "check-$((i + 1))")
-  case "$(cfg "checks.$i" "")" in "{"*) ;; *) name="check-$((i + 1))" ;; esac
+  case "$(cfg "checks.$i" "")" in "{"*) name=$(cfg "checks.$i.name" "check-$((i + 1))") ;; *) name="check-$((i + 1))" ;; esac
   current+="train-${name//[^A-Za-z0-9_.-]/_}.log "
 done
-find "$(dl_logs_dir)" -maxdepth 1 -type f -mtime +"$keep_days" | while read -r file; do
-  [[ "$current" == *" $(basename "$file") "* ]] || rm -f "$file"
-done
+find "$(dl_logs_dir)" -maxdepth 1 -type f \( -name 'train-*.log' -o -name 'cleanup-*.tsv' \) -mtime +"$keep_days" |
+  while read -r file; do
+    [[ "$current" == *" $(basename "$file") "* ]] || rm -f "$file"
+  done
+if [ "$failed" -gt 0 ]; then
+  echo "cleanup: done, $failed deletions failed (listed above)"
+  exit 1
+fi
 echo "cleanup: done"

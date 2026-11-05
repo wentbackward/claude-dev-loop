@@ -126,7 +126,7 @@ record, never by `git branch --merged`.
 | Thing | Removed |
 |---|---|
 | remote feature branch | by `merge-train.sh` after the merge (`merge.delete_branch`) |
-| local feature branch and its worktree | by `merge-train.sh` after the merge, when the local tip is the merged head and the worktree is clean; otherwise it says what it kept and why (`merge.delete_local`) |
+| local feature branch and its worktree | by `merge-train.sh` after the merge, when the local tip is the merged head and the worktree is clean (its ignored files, such as `node_modules`, go with it; a worktree holding a `.env` file is kept); otherwise it says what it kept and why (`merge.delete_local`) |
 | `train-<branch>` | by `merge-train.sh` once the whole train merged; by the next `gate-train.sh` for red trains and branches no longer in a train |
 | `replay-<branch>` | by `merge-train.sh` right after use |
 | notes file | moved to `notes/merged/` on merge; removed by `cleanup.sh` after `cleanup.keep_days` |
@@ -139,15 +139,21 @@ then the issue its name points at (`<type>/<n>-...`):
 
 | Class | What | `--apply` |
 |---|---|---|
-| merged | in the ledger, a merged PR, or contained in the base | deleted |
-| helper | `train-*`/`replay-*` outside a live train, agent worktree branches without own commits | deleted |
-| closed | PR closed unmerged, or its issue closed | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
-| stale | no PR, no open issue, idle for `cleanup.stale_days` | with `--include stale`; automatic with `"factory": "dark"` |
-| keep | open PR or issue, checked out in a worktree, a live train, recent, or moved on after its merge | never |
+| merged | in the ledger or a merged PR at this tip (or a replayed copy with the same changes); a local loop branch the base contains | deleted |
+| helper | local `train-*`/`replay-*` refs of loop branches outside a live train, local agent worktree branches without own commits | deleted |
+| closed | PR closed unmerged at this tip, or its issue closed as not planned | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
+| stale | no PR, no open issue, idle for `cleanup.stale_days` (remote: loop branches only) | with `--include stale`; automatic with `"factory": "dark"` |
+| keep | open PR or issue, checked out in a worktree, a live train, recent, moved on after its PR, or a remote branch outside the loop (`develop`, `release-*`) | never |
 
-It is a dry run without `--apply`, writes the full classification (with the reason for every kept
+Loop branches are the ones matching `github.feature_patterns` (default `feat/* fix/* chore/* docs/*`).
+Every deletion is conditional on the tip that was classified (`update-ref` with the old value, a push
+lease on the remote), and the count printed is read back from the result. Needs git 2.9 or later.
+
+It is a dry run without `--apply` (it still fetches with `--prune`), writes the full classification (with the reason for every kept
 branch) to the logs directory, and saves every deleted tip to a bundle in `~/.dev-loop/<repo>/archive/`
-first: `git fetch <bundle> refs/heads/<branch>:refs/heads/<branch>` restores one. `doctor.sh` notes
+first and checks the bundle holds each one: `git fetch <bundle> refs/heads/<branch>:refs/heads/<branch>`
+restores one (a remote-only branch: `refs/remotes/<remote>/<branch>`). Old gate logs and cleanup reports
+go after `cleanup.keep_days`; other files in the logs directory are never touched. `doctor.sh` notes
 leftovers it can count without GitHub.
 
 ## Configuration: `.dev-loop.json`
