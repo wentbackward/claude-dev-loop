@@ -372,6 +372,48 @@ right ones. It reads evidence, not impressions:
   to feature work, ahead of it only for a red signal. **`doctor.sh`** prints the merges since the
   architect last ran and the signals over their thresholds, and notes `architect due`.
 
+## Holdout scenarios (optional)
+
+The gate proves that the tests pass, not that the software does what its users need. Holdout scenarios are
+end-to-end user scenarios kept outside the codebase, where the coding agents never see them. This part is
+the **scenario store**: where the scenarios live and what a valid one is. Nothing runs them yet.
+
+```json
+"scenarios": {
+  "dir": "~/.dev-loop/<repo>/scenarios",
+  "run": "make scenario-env",
+  "pass": 0.8,
+  "min_satisfaction": 0.9,
+  "sealed": 0.2
+}
+```
+
+- **Opt-in:** without a `scenarios` key nothing changes; `"scenarios": {}` turns the store on with the
+  defaults.
+- **`scenarios.dir`** is the store, default `~/.dev-loop/<repo>/scenarios` (the state directory, outside
+  every worktree); `~` and `<repo>` are expanded, a relative path is taken from the repository root.
+  `paths.sh scenarios` prints the resolved directory. `run`, `pass`, `min_satisfaction` and `sealed` are
+  settings for a scenario judge that is not built yet (the command that starts the system, the share a required scenario
+  must reach, the mean the train must reach, the share of scenarios never reported in detail).
+- **One Markdown file per scenario** (`*.md` at any depth of the store, not under `.git`), with front
+  matter between two `---` lines: `id` (unique in the store), `title`, `spec` (the spec sections it
+  covers), `tags`, `required: true|false` (required scenarios must pass, the rest are scored). The body
+  describes the user and their goal, the preconditions and fixtures, the steps, and what "satisfied"
+  looks like in user terms. Write scenarios from the spec, never from the code. Example:
+  [`templates/scenario.md`](templates/scenario.md).
+- **The front matter** is a small YAML subset: `key: value` lines, lists as `[a, b]`, values optionally
+  in quotes, ` # comments` after an unquoted value. Nested keys and multi-line values are not read.
+- **Invalid:** no front matter, front matter that is not closed, a missing `id` or `title`, a duplicate
+  `id` (reported on every file after the first, in path order), `required` other than `true` or `false`
+  (also when missing), an empty body.
+- **`doctor.sh`** prints the store, the settings, the number of scenarios and of required ones, and reports
+  each invalid file as `MISSING scenario <file>: <reason>` and a `pass`, `min_satisfaction` or `sealed`
+  that is not a number from 0 to 1. It notes a store that does not exist yet, or one inside the
+  repository (the coding agents can read it there).
+- The functions (`scripts/lib/scenarios.sh`): `dl_scenarios_on`, `dl_scenarios_dir`,
+  `dl_scenarios_files`, `dl_scenario_field`, `dl_scenario_list`, `dl_scenario_problems`,
+  `dl_scenarios_validate`, `dl_scenarios_count`, `dl_scenarios_required_count`.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -421,6 +463,9 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `architecture.budget` | none | the default `max_lines` per component (a card may override it) |
 | `architecture.cadence` | `20` | run the `architect` every this many merges; also `arch-evidence.sh`'s window without an architect run |
 | `architecture.scatter`, `growth`, `co_change`, `co_change_min`, `hotspot`, `cycle`, `fan_out`, `review_rounds` | `3`, `500`, `75`, `3`, `5`, `3`, `5`, `3` | the evidence thresholds (see Merge evidence and the architect) |
+| `scenarios.dir` | `~/.dev-loop/<repo>/scenarios` | the holdout scenario store; the `scenarios` key turns it on (see Holdout scenarios) |
+| `scenarios.run` | none | the command that starts the system for the scenario judge |
+| `scenarios.pass`, `scenarios.min_satisfaction`, `scenarios.sealed` | `0.8`, `0.9`, `0` | the share each required scenario must reach, the mean the train must reach, the share never reported in detail |
 
 ### Models per agent
 

@@ -48,6 +48,10 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note architect due` | run the architecture review (the `dev-loop` skill's section 7b), then record the run as the note says |
 | `MISSING architecture.<threshold>: ...` | a whole number (`cadence` at least 1); the defaults are in the README |
 | `MISSING architect marker ...` | write one UTC time to it: `date -u +%Y-%m-%dT%H:%M:%SZ >"$(paths.sh architect)"` |
+| `MISSING scenario <file>: <reason>` | fix the scenario's front matter or body (see `templates/scenario.md`); a duplicate id gets a new id |
+| `MISSING scenarios.<key>: ... is not a number from 0 to 1` | set `pass`, `min_satisfaction` or `sealed` to a share such as `0.8` |
+| `note scenario store ... does not exist yet` | create the folder (`paths.sh scenarios`) and add scenarios written from the spec |
+| `note the scenario store ... is inside the repository` | move it outside every worktree (the default `~/.dev-loop/<repo>/scenarios`) |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
