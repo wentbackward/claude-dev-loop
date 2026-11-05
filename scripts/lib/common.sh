@@ -106,30 +106,40 @@ dl_load_train_config() {
     if [ -n "$ref" ]; then
       remote=$(git -C "$DL_ROOT" show "$ref:.dev-loop.json" | json_get remote)
       if [ -n "$remote" ] && [ "$remote" != origin ]; then
-        ref=$(dl_branch_config_ref "$branch" "$remote") || ref=""
+        ref=$(dl_branch_config_ref "$branch" "$remote" remote-only) ||
+          dl_die "the config of $(dl_ref_name "$ref") names remote $remote, but $remote/$branch is missing (push the branch to $remote)"
       fi
-    fi
-    if [ -n "$ref" ]; then
       copy=$DL_STATE/branch-config.json
       { mkdir -p "$DL_STATE" && git -C "$DL_ROOT" show "$ref:.dev-loop.json" >"$copy"; } || dl_die "cannot write $copy"
       export DEV_LOOP_CONFIG=$copy
-      echo "dev-loop: config read from ${ref#refs/*/}:.dev-loop.json ($DL_ROOT has none yet)"
+      echo "dev-loop: config read from $(dl_ref_name "$ref"):.dev-loop.json ($DL_ROOT has none yet)"
     fi
   fi
   dl_load_config required
 }
 
-# dl_branch_config_ref BRANCH REMOTE: the full ref of REMOTE/BRANCH, else of the local BRANCH, the first
-# that has a .dev-loop.json.
+# dl_branch_config_ref BRANCH REMOTE [remote-only]: fetches BRANCH from REMOTE (a failed fetch is ignored),
+# then prints the full ref of REMOTE/BRANCH, else (unless remote-only) of the local BRANCH, the first that
+# has a .dev-loop.json.
 dl_branch_config_ref() {
-  local ref
-  for ref in "refs/remotes/$2/$1" "refs/heads/$1"; do
+  local ref refs="refs/remotes/$2/$1"
+  [ "${3:-}" = remote-only ] || refs="$refs refs/heads/$1"
+  git -C "$DL_ROOT" fetch -q "$2" "+refs/heads/$1:refs/remotes/$2/$1" >/dev/null 2>&1
+  for ref in $refs; do
     if git -C "$DL_ROOT" cat-file -e "$ref:.dev-loop.json" 2>/dev/null; then
       printf '%s\n' "$ref"
       return 0
     fi
   done
   return 1
+}
+
+# dl_ref_name REF: a remote-tracking ref as <remote>/<branch>, any other ref in full (refs/heads/<branch>).
+dl_ref_name() {
+  case "$1" in
+    refs/remotes/*) printf '%s\n' "${1#refs/remotes/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
 }
 
 # cfg PATH [DEFAULT]: a value from the project config, or DEFAULT.
