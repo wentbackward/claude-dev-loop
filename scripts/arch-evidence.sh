@@ -4,7 +4,7 @@
 #
 # Usage: arch-evidence.sh [--since <n> | --since <time>]
 #   --since <n>     the last n merges of the ledger
-#   --since <time>  the merges after a UTC time or date (2026-01-31T12:00:00Z, 2026-01-31)
+#   --since <time>  the merges after a UTC time (2026-01-31T12:00:00Z), or from a date (2026-01-31) on
 #   default         the merges since the architect last ran (paths.sh architect), else the last
 #                   architecture.cadence merges (default 20)
 #
@@ -73,7 +73,6 @@ else
   echo "arch-evidence: 0 merges, ${components:-0} components"
 fi
 findings=$(printf '%s\n' "$results" | dl_arch_tagged F)
-
 printf '%-10s %-9s %s\n' signal findings threshold
 while IFS='|' read -r signal rule; do
   printf '%-10s %-9s %s\n' "$signal" "$(printf '%s\n' "$findings" | awk -F'\t' -v s="$signal" '$1 == s' | grep -c .)" "$rule"
