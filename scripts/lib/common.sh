@@ -303,11 +303,35 @@ dl_archive_note() {
   [ ! -f "$note" ] || dl_archive_note_file "$note"
 }
 
+# dl_secret_name NAME: succeeds when NAME looks like a secret or data file (.env, keys, databases).
+dl_secret_name() {
+  case $1 in
+    .env | .env.* | *.env | *.pem | *.key | *.p12 | *.sqlite | *.sqlite3 | *.db) return 0 ;;
+  esac
+  return 1
+}
+
+# dl_rebuildable_entry KEEP ENTRY: succeeds when the ignored ENTRY is build output by name: its last
+# component is in KEEP (" a b ... "), or a directory above it is and ENTRY is not a secret or data file
+# (a self-ignoring cache such as .ruff_cache lists its files one by one).
+dl_rebuildable_entry() {
+  local keep=$1 path=${2%/} name dir
+  name=${path##*/}
+  [[ "$keep" == *" $name "* ]] && return 0
+  ! dl_secret_name "$name" || return 1
+  while [ "$path" != "${path%/*}" ]; do
+    path=${path%/*}
+    dir=${path##*/}
+    [[ "$keep" == *" $dir "* ]] && return 0
+  done
+  return 1
+}
+
 # dl_unrebuildable_ignored WORKTREE: the first ignored file or directory of WORKTREE that is not build
 # output (merge.rebuildable, default node_modules dist build target .venv and the usual caches).
 dl_unrebuildable_ignored() {
   local keep=" node_modules dist build target out coverage htmlcov .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache .coverage "
-  local count i entry part found
+  local count i entry found
   count=$(cfg_len merge.rebuildable)
   if [ "$count" -gt 0 ]; then
     keep=" "
@@ -318,9 +342,7 @@ dl_unrebuildable_ignored() {
     awk '{ if (index(prev, $0) != 1 || substr($0, length($0)) != "/") print; prev = $0 }' | while read -r entry; do
     # The entry itself must be build output (build/local.env is not), and a build directory must not hold
     # secrets or data (a false match only keeps the worktree).
-    part=${entry%/}
-    part=${part##*/}
-    [[ "$keep" == *" $part "* ]] || { printf '%s\n' "$entry"; break; }
+    dl_rebuildable_entry "$keep" "$entry" || { printf '%s\n' "$entry"; break; }
     if [ -d "$1/$entry" ]; then
       found=$(find "$1/$entry" \( -name '.env' -o -name '.env.*' -o -name '*.env' -o -name '*.pem' -o -name '*.key' \
         -o -name '*.p12' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \) -print 2>/dev/null | head -n 1)
