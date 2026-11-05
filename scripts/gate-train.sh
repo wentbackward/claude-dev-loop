@@ -110,10 +110,15 @@ done
 # check_rules: a branch that changes its .dev-loop.json in any key but "architecture" (compared as normalized
 # JSON with the train ref below it, or the base) needs a reason under "## Config" in its notes: the gate reads
 # the main checkout's config, so the change would apply unchecked once merged. A red branch is named with its
-# keys and the train ends before the docs stage and the checks.
+# keys and the train ends before the docs stage and the checks. A branch that adds the first .dev-loop.json
+# (the setup branch) is not judged, and the gate says so.
 check_rules() {
   local branch from="$DL_REMOTE/$DL_BASE" keys red=""
   for branch in "$@"; do
+    if ! git cat-file -e "$from:.dev-loop.json" 2>/dev/null &&
+      git cat-file -e "train-$branch:.dev-loop.json" 2>/dev/null; then
+      echo "first .dev-loop.json on $DL_BASE, not judged: the user reviews it ($branch)"
+    fi
     keys=$(dl_gate_rules_changed "$from" "train-$branch" | paste -sd, - | sed 's/,/, /g')
     if [ -n "$keys" ] && ! dl_notes_reason "$(dl_note_file "$branch")" config; then
       echo "config-check red for $branch: it changes .dev-loop.json ($keys) without a reason under \"## Config\" in its notes"

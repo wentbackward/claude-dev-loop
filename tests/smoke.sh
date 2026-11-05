@@ -1454,6 +1454,64 @@ grep -qF "\`## Config\`" "$plugin/README.md" && grep -qF "see above" "$plugin/RE
   fail "README or reviewer lack ## Config or the filter's limits"
 git checkout -q -f main && git clean -qfd
 
+# 14c. Config-check edges (#25): the first config is announced, not silently skipped; every key is named
+# (also "" and keys with a newline, as JSON strings); two different invalid files differ; jq and python3
+# agree that trailing garbage and concatenated documents are not JSON.
+git init -q "$work/cfgedge"
+cfg_commit() { # cfg_commit TEXT: in cfgedge, a commit whose tree holds only .dev-loop.json with TEXT ("-": none)
+  local blob tree
+  if [ "$1" = - ]; then
+    tree=$(git -C "$work/cfgedge" mktree </dev/null)
+  else
+    blob=$(printf '%s' "$1" | git -C "$work/cfgedge" hash-object -w --stdin)
+    tree=$(printf '100644 blob %s\t.dev-loop.json\n' "$blob" | git -C "$work/cfgedge" mktree)
+  fi
+  git -C "$work/cfgedge" commit-tree -m config "$tree"
+}
+rules_changed() { # rules_changed BEFORE AFTER: the names dl_gate_rules_changed gives, comma-joined, as "jq|python3"
+  local from to nojq
+  from=$(cfg_commit "$1")
+  to=$(cfg_commit "$2")
+  for nojq in "" 1; do
+    printf '%s\n' "$(cd "$work/cfgedge" && DEV_LOOP_NO_JQ=$nojq bash -c '. "$1/scripts/lib/common.sh"
+      . "$1/scripts/lib/reasons.sh"; dl_gate_rules_changed "$2" "$3"' _ "$plugin" "$from" "$to" | paste -sd, -)"
+  done | paste -sd'|' -
+}
+expect "a key named \"\" is compared and named as \"\", with jq and with python3" '""|""' \
+  "$(rules_changed '{"": 1, "checks": []}' '{"": 2, "checks": []}')"
+expect "a key with a newline is named as one JSON string, with jq and with python3" '"a\nb"|"a\nb"' \
+  "$(rules_changed '{"a": 1, "a\nb": 1}' '{"a": 1, "a\nb": 2}')"
+expect "an unchanged key with a newline is not named" "|" "$(rules_changed '{"a\nb": 1}' '{ "a\nb" : 1 }')"
+expect "two different invalid files are named as the file, with jq and with python3" ".dev-loop.json|.dev-loop.json" \
+  "$(rules_changed '{bad' '{worse')"
+expect "the same invalid file is no change" "|" "$(rules_changed '{bad' '{bad')"
+expect "trailing garbage makes the file unparseable, with jq and with python3" "checks|checks" \
+  "$(rules_changed '{"checks": 1}' '{"checks": 1} x')"
+expect "concatenated documents are unparseable, with jq and with python3" "checks|checks" \
+  "$(rules_changed '{"checks": 1}' '{"checks": 1}{"deploy": "x"}')"
+expect "a NaN or Infinity in the file never hides a change, with jq and with python3" "yes yes|" \
+  "$(rules_changed '{"a": NaN, "checks": 1}' '{"a": Infinity, "checks": 2}' | awk -F'|' '{print ($1 != "") ? "yes" : "no", ($2 != "") ? "yes" : "no"}')|$(rules_changed '{"a": NaN}' '{"a": NaN}' | tr -d '|')"
+expect "a change to architecture alone is still not named" "|" \
+  "$(rules_changed '{"architecture": {"budget": 1}}' '{"architecture": {"budget": 2}}')"
+expect "a first config is not judged by the key comparison" "|" "$(rules_changed - '{"deploy": "x"}')"
+expect "trailing garbage and concatenated documents normalize to nothing, with jq and with python3" "" \
+  "$(normalized '{"block": 1} x'; normalized '{"block": 1}{"block": 2}')"
+setup_project setup-first origin
+setup_branch setup-first origin
+cd "$work/setup-first" || exit 1
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+rc=$?
+expect "the gate says that the first config goes unjudged, and stays green" "0 yes" \
+  "$rc $(echo "$out" | grep -qF "first .dev-loop.json on main, not judged: the user reviews it" && echo yes || echo no)"
+cd "$work/project" || exit 1
+rules_gate feat/146-plain >/dev/null
+grep -qF "first .dev-loop.json" "$work/rules-out.txt" && fail "a branch on a base with a config got the notice" ||
+  pass "a branch on a base that has a config gets no first-config notice"
+grep -qF "first \`.dev-loop.json\`" "$reviewer" && grep -qF "line by line" "$reviewer" &&
+  pass "the reviewer brief reads a first config with deploy or format commands line by line" ||
+  fail "the reviewer brief lacks the first-config rule"
+git checkout -q -f main && git clean -qfd
+
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
 # line (all only with "docs" configured), and the doc-auditor's brief and model.
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd

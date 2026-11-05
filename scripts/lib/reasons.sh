@@ -62,18 +62,39 @@ dl_notes_reason() {
     END { exit !found }' "$1"
 }
 
-# dl_json_normalized PATH < json: the value at PATH as compact JSON with sorted keys (nothing when missing),
-# so two blocks that differ only in key order or whitespace print the same.
+# _DL_JSON_PY: the python3 fallback's strict reader, as jq -s reads: load() is the one JSON document on
+# stdin, or exits quietly when there is none, more than one or trailing garbage. It also exits on NaN and
+# Infinity, which jq (1.7 and later) reads as null and a large number: the file is then unparseable and
+# compared as raw text, so a change is still flagged, never missed. name(key) is a key as one JSON string,
+# as jq's @json writes it.
+_DL_JSON_PY='
+import json, sys
+def load():
+    def reject(constant):
+        raise ValueError(constant)
+    try:
+        return json.loads(sys.stdin.read(), parse_constant=reject)
+    except ValueError:
+        sys.exit(0)
+def name(key):
+    return json.dumps(key, ensure_ascii=False).replace("\x7f", "\\u007f")
+'
+
+# _DL_JQ_ONE: the jq prefix that keeps a slurped input only when it is exactly one document.
+_DL_JQ_ONE='if length == 1 then .[0] else empty end'
+
+# dl_json_normalized PATH < json: the value at PATH as compact JSON with sorted keys (nothing when missing or
+# when the input is not exactly one JSON document), so two blocks that differ only in key order or whitespace
+# print the same.
 dl_json_normalized() {
   if dl_have_jq; then
-    jq -cS --arg p "$1" '
-      ($p | if . == "" then [] else split(".") | map(tonumber? // .) end) as $k
-      | (try getpath($k) catch null) | if . == null then empty else . end' 2>/dev/null
+    jq -s -cS --arg p "$1" "$_DL_JQ_ONE"' as $doc
+      | ($p | if . == "" then [] else split(".") | map(tonumber? // .) end) as $k
+      | ($doc | try getpath($k) catch null) | if . == null then empty else . end' 2>/dev/null
   else
-    python3 -I -c '
-import json, sys
+    python3 -I -c "$_DL_JSON_PY"'
+value = load()
 try:
-    value = json.load(sys.stdin)
     for key in [p for p in sys.argv[1].split(".") if p]:
         value = value[int(key)] if isinstance(value, list) else value[key]
 except (KeyError, IndexError, ValueError, TypeError):
@@ -84,37 +105,32 @@ if value is not None:
   fi
 }
 
-# dl_json_keys < json: the top-level keys of a JSON object, sorted, one per line (nothing for another value).
+# dl_json_keys < json: the top-level keys of a JSON object, each as one JSON string (so "" and a key with a
+# newline are one line too), sorted, one per line; nothing for another value or an unparseable input.
 dl_json_keys() {
   if dl_have_jq; then
-    jq -r 'if type == "object" then keys[] else empty end' 2>/dev/null
+    jq -s -r "$_DL_JQ_ONE"' | if type == "object" then keys[] | @json else empty end' 2>/dev/null
   else
-    python3 -I -c '
-import json, sys
-try:
-    value = json.load(sys.stdin)
-except ValueError:
-    sys.exit(0)
+    python3 -I -c "$_DL_JSON_PY"'
+value = load()
 if isinstance(value, dict):
-    print("\n".join(sorted(value)))
+    for key in sorted(value):
+        print(name(key))
 ' 2>/dev/null
   fi
 }
 
-# dl_json_top KEY < json: the value of the top-level KEY (taken literally, dots included) as compact JSON with
-# sorted keys; nothing when the document is not an object or has no such key.
+# dl_json_top KEY < json: the value of the top-level key KEY (a JSON string, as dl_json_keys prints it) as
+# compact JSON with sorted keys; nothing when the input is not one JSON object or has no such key.
 dl_json_top() {
   if dl_have_jq; then
-    jq -cS --arg k "$1" 'if type == "object" and has($k) then .[$k] else empty end' 2>/dev/null
+    jq -s -cS --argjson k "$1" "$_DL_JQ_ONE"' | if type == "object" and has($k) then .[$k] else empty end' \
+      2>/dev/null
   else
-    python3 -I -c '
-import json, sys
-try:
-    value = json.load(sys.stdin)
-except ValueError:
-    sys.exit(0)
-if isinstance(value, dict) and sys.argv[1] in value:
-    print(json.dumps(value[sys.argv[1]], sort_keys=True, separators=(",", ":")))
+    python3 -I -c "$_DL_JSON_PY"'
+value, key = load(), json.loads(sys.argv[1])
+if isinstance(value, dict) and key in value:
+    print(json.dumps(value[key], sort_keys=True, separators=(",", ":")))
 ' "$1" 2>/dev/null
   fi
 }
@@ -125,21 +141,34 @@ dl_json_object() {
   return 1
 }
 
+# dl_json_key_name KEY: KEY (a JSON string) as a name for a message: bare when that is unambiguous, else the
+# JSON string itself ("" and keys with a quote, a backslash or a control character).
+dl_json_key_name() {
+  case $1 in
+    '""' | *\\*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "${1:1:${#1}-2}" ;;
+  esac
+}
+
 # dl_gate_rules_changed FROM TO: every top-level key of .dev-loop.json but "architecture" (#17 judges it)
-# whose value differs between commit FROM and commit TO (normalized JSON), one per line, or ".dev-loop.json"
-# when the file changed but no key can be named (it is not a JSON object on one side). Nothing when FROM has no .dev-loop.json: the
-# setup branch adds the first rules, and the user reviews the setup.
+# whose value differs between commit FROM and commit TO (normalized JSON), one name per line (see
+# dl_json_key_name), or ".dev-loop.json" when the file changed but no key can be named (it is not one JSON
+# object on one side; two unparseable sides compare as raw text). Nothing when FROM has no .dev-loop.json:
+# the setup branch adds the first rules, and the user reviews the setup (the gate says so).
 dl_gate_rules_changed() {
-  local before after key named=""
+  local before after key named="" norm_before norm_after
   before=$(git show "$1:.dev-loop.json" 2>/dev/null) || return 0
   after=$(git show "$2:.dev-loop.json" 2>/dev/null)
   while IFS= read -r key; do
-    [ -n "$key" ] && [ "$key" != architecture ] || continue
+    [ "$key" != '"architecture"' ] || continue
     [ "$(printf '%s' "$before" | dl_json_top "$key")" = "$(printf '%s' "$after" | dl_json_top "$key")" ] ||
-      { printf '%s\n' "$key"; named=yes; }
+      { dl_json_key_name "$key"; named=yes; }
   done < <({ printf '%s' "$before" | dl_json_keys; printf '%s' "$after" | dl_json_keys; } | LC_ALL=C sort -u)
   [ -z "$named" ] || return 0
   dl_json_object "$before" && dl_json_object "$after" && return 0
-  [ "$(printf '%s' "$before" | dl_json_normalized "")" = "$(printf '%s' "$after" | dl_json_normalized "")" ] ||
+  norm_before=$(printf '%s' "$before" | dl_json_normalized "")
+  norm_after=$(printf '%s' "$after" | dl_json_normalized "")
+  if [ "$norm_before" != "$norm_after" ] || { [ -z "$norm_before" ] && [ "$before" != "$after" ]; }; then
     echo .dev-loop.json
+  fi
 }
