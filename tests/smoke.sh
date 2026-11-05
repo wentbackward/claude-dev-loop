@@ -1242,7 +1242,7 @@ print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"
     "$plugin/templates/dev-loop.json" 2>/dev/null)"
 auditor="$plugin/agents/doc-auditor.md"
 grep -q "^name: doc-auditor$" "$auditor" 2>/dev/null && pass "the doc-auditor agent exists" || fail "no agents/doc-auditor.md"
-grep "^tools:" "$auditor" 2>/dev/null | grep -qv "Write\|Edit" && pass "the doc-auditor is read-only (no Write or Edit)" ||
+grep "^tools:" "$auditor" 2>/dev/null | grep -qv "Write\|Edit" && pass "the doc-auditor's tools list has no Write or Edit" ||
   fail "the doc-auditor's tools are not read-only"
 skill="$plugin/skills/dev-loop/SKILL.md"
 [ "$(grep -c "doc-auditor" "$skill")" -ge 3 ] && grep -qF "Components:" "$skill" && grep -qF "docs.prd" "$skill" &&

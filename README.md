@@ -209,7 +209,8 @@ every merge:
   Features change for a feature, and names its `Docs:` and `Components:` in its body. As it merges, its
   planned entry moves to Features in the same branch; a PRD section whose work has all merged is marked
   done or archived.
-- **The `doc-auditor`** (read-only) compares each current-state doc and component card with the code and,
+- **The `doc-auditor`** (read-only by its brief; its tools include Bash, which can write, and the role
+  guard covers only GitHub writes) compares each current-state doc and component card with the code and,
   where it is safe, the running system (CLI help, endpoints, config keys, jobs), and opens one ticket per
   drift with the evidence. It runs every `audit_every` merges (default 10), when the user asks, and before
   a release; before a release the orchestrator also checks the planned list and Features against the

@@ -54,10 +54,8 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    `.dev-loop.json`), update every doc the change makes untrue (the ticket names the sections): describe
    only what is now built, in the doc that owns the fact, and link instead of repeating. The ticket's
    `Docs:` and `Components:` lines say what the branch may change. For a feature, your first commit
-   (`docs: ...`, before the tests) changes Features to the intended new state: it is the ticket's spec,
-   and the reviewer checks the code against it. Move the ticket's entry from the planned list
-   (`docs.planned`) to Features in the same branch, so it is built when it merges. Check with
-   `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
+   changes Features to the intended state, and the planned entry moves to Features (the dev-loop skill's
+   section 1a). Check with `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
    doc change and for broken relative links in changed Markdown files.
 5b. **Component cards stay true.** When the project configures `architecture` in `.dev-loop.json`, keep
    the component cards (`architecture.cards`, default `docs/architecture/`) true in the same branch: a new

@@ -22,8 +22,8 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`, `doc-auditor`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these agents, pass that
-   value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
+   `verifier`, `doc-auditor`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
 5. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
@@ -102,8 +102,8 @@ Implement ticket #<n>: <title>.
   First line: a plain title, NO leading "#", e.g. "feat(<scope>): <what> (#<n>)". Then a blank line,
   ## Summary, "Closes #<n>", ## Decisions, ## Docs (the doc changes, or "none: <reason>"),
   ## Test evidence (commands and pass counts).
-- Docs: <the ticket's Docs: line>; update them in this branch; describe only what is built. <Feature: your
-  first commit changes Features to the intended new state; move the ticket's planned entry to Features.>
+- Docs: <the ticket's Docs: line>; update them in this branch; describe only what is built.
+  <Feature: the first commit changes Features; the planned entry moves to Features (the slicing rules).>
 - Components: <the ticket's Components: line>; keep their cards true; a new dependency must be allowed
   by the cards (arch-check.sh HEAD), or say why under ## Architecture in the notes.
 - Dependencies: <none | #m merged | stacked on <branch>>. Files other agents are editing now: <list>; avoid them.
@@ -190,9 +190,9 @@ means the replay dismissed the approval: have a fresh code-reviewer confirm with
 approve again, then re-run merge-train with the remaining branches.
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
-line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it notes
-`doc audit due`, run the doc audit (section 7a); when the planned list runs low, slice (section 1a). A ticket closed without a merge (dropped,
-superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
+line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
+notes `doc audit due`, run the doc audit (section 7a); when the planned list runs low, slice (section 1a).
+A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
 user's OK.
 
 Stacked branches: after the lower branch merges, rebase the upper one with
