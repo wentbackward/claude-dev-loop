@@ -1157,9 +1157,11 @@ expect "the template's empty architecture block keeps the check off" "2 0" \
 # Ratchet integrity (#17): a card edit that hides a violation needs a reason, a fixed baseline entry is
 # removed by the branch that fixes it, a placeholder is not a reason, and two cards may not share a glob.
 git checkout -q -B main origin/main
-echo "app/store/s.py app/ui/u.py" >>edges.txt
-printf 'undeclared store -> ui\nupward store -> ui\n' >docs/architecture/baseline.txt
-git commit -q -am "chore: a known violation" && git push -q origin main
+echo "app/store/s.py app/ui/u.py" >>edges.txt && git commit -q -am "feat: store uses ui"
+arch_check --baseline >/dev/null
+expect "the known violations of the base" "cycle core store ui|undeclared store -> ui|upward store -> ui" \
+  "$(paste -sd'|' - <docs/architecture/baseline.txt)"
+git commit -q -am "chore: known violations" && git push -q origin main
 loosen() { # loosen BRANCH: commit the working tree's edits on BRANCH, run arch-check.sh --loosened from main
   git checkout -q -B "$1"
   git add -A docs app edges.txt && git commit -q -m "feat: $1"
@@ -1183,7 +1185,7 @@ echo "app/core/util/u.py app/ui/u.py" >>edges.txt
 card ui.md "component: ui" "layer: 2" "paths: app/ui/other/*"
 loosen feat/113-paths
 expect "narrowed paths that hide violations are a loosening edit" \
-  "1 undeclared store -> ui|upward store -> ui|upward util -> ui" "$rc $hidden"
+  "1 cycle core store ui|undeclared store -> ui|upward store -> ui|upward util -> ui" "$rc $hidden"
 echo "app/core/c.py app/core/util/u.py" >>edges.txt
 card core.md "component: core" "layer: 1" "kind: composition-root" "paths: app/core/* app/core.py" "depends_on: store" \
   "max_lines: 2"

@@ -236,8 +236,9 @@ check_arch() {
         printf '%s\n' "$fresh" | sed 's/^/  /'
         seen+="$fresh"$'\n'
       fi
-      kept=$(arch_entries "$branch_out" fixed | grep -xF -f <(printf '%s\n' "$stale") | grep -vxF -f <(printf '%s\n' "$named"))
-      if [ -n "$kept" ] && [ -n "$stale" ]; then
+      kept=$(arch_entries "$branch_out" fixed | grep -xF -f <(printf '%s\n' "$stale") |
+        grep -vxF -f <(printf '%s\n' "$named"))
+      if [ -n "$kept" ]; then
         echo "arch-check red for $branch: it fixes baseline entries but keeps them; remove them from the baseline:"
         printf '%s\n' "$kept" | sed 's/^/  /'
         named+="$kept"$'\n'

@@ -35,7 +35,9 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$scripts_dir/lib/arch.sh"
 
 # usage: print the usage and exit 2.
-usage() { dl_die "usage: arch-check.sh <ref> | arch-check.sh --baseline [<ref>] | arch-check.sh --loosened <from> <ref>"; }
+usage() {
+  dl_die "usage: arch-check.sh <ref> | arch-check.sh --baseline [<ref>] | arch-check.sh --loosened <from> <ref>"
+}
 mode=check
 if [ "${1:-}" = --baseline ]; then
   mode=baseline
