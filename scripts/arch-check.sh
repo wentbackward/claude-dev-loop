@@ -29,6 +29,7 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/arch.sh
 . "$scripts_dir/lib/arch.sh"
 
+# usage: print the usage and exit 2.
 usage() { dl_die "usage: arch-check.sh <ref> | arch-check.sh --baseline [<ref>]"; }
 mode=check
 if [ "${1:-}" = --baseline ]; then
@@ -86,6 +87,7 @@ fixed=$(printf '%s\n' "$compared" | dl_arch_tagged fixed)
 [ -z "$known" ] || printf '%s\n' "$known" | sed 's/^/arch-check: known /'
 [ -z "$fixed" ] || printf '%s\n' "$fixed" | sed 's/^/arch-check: fixed /; s/$/ (remove it from the baseline)/'
 printf '%s\n' "$results" | dl_arch_tagged N | LC_ALL=C sort -u | sed 's/^/arch-check: note: no component: /'
+# count LINES: the number of lines of LINES (0 when empty).
 count() { if [ -n "$1" ]; then printf '%s\n' "$1" | wc -l | tr -d ' '; else echo 0; fi; }
 if [ -n "$errors" ] || [ -n "$new" ]; then
   echo "arch-check: $(count "$new") new violation(s), $(count "$errors") error(s) at $ref"

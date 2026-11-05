@@ -1031,6 +1031,15 @@ echo "$out" | grep -q "arch-check red for feat/92-innocent" && fail "the innocen
   pass "a branch without a new violation is not named"
 [ ! -e "$work/arch-checks-ran" ] && ! echo "$out" | grep -q "^unit " &&
   pass "the architecture failure stops the train before the checks" || fail "the checks ran after an architecture failure"
+git checkout -q -B feat/97-after feat/93-upward && echo after >>src.txt && git commit -q -am "feat: after" &&
+  git push -q -u origin feat/97-after
+git checkout -q main
+gate_arch "$work/arch.json" feat/92-innocent feat/93-upward feat/97-after
+echo "$out" | grep -q "arch-check red for feat/93-upward" && ! echo "$out" | grep -q "arch-check red for feat/97-after" &&
+  pass "a violation below the train's top names the branch that brought it, not the ones above" ||
+  fail "wrong branch named: $out"
+expect "the gate leaves its worktree on the base after an architecture failure" "$(git rev-parse origin/main)" \
+  "$(git -C "$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" gate)" rev-parse HEAD 2>/dev/null)"
 gate_arch "$work/nodocs.json" feat/92-innocent feat/93-upward
 expect "without architecture in the config the gate does not check it" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
 echo "$out" | grep -q "arch-check" && fail "the gate ran arch-check without architecture" ||

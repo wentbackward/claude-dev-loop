@@ -171,8 +171,9 @@ check_arch() {
       if [ "$branch" = "$top" ]; then
         branch_out=$out
       else
-        git checkout -q "train-$branch"
-        branch_out=$("$scripts_dir/arch-check.sh" HEAD 2>&1)
+        # In place (where gate_setup ran) when the checkout works, else in a temporary worktree.
+        git checkout -q "train-$branch" 2>/dev/null
+        branch_out=$("$scripts_dir/arch-check.sh" "train-$branch" 2>&1)
       fi
       fresh=$(arch_lines "$branch_out" | grep -vxF -f <(printf '%s\n' "$seen"))
       if [ -n "$fresh" ]; then
