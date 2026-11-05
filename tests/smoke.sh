@@ -1642,6 +1642,28 @@ expect "jq and python3 encode file lists alike" \
 expect "a JSON string escapes control characters and keeps other text" '"a\tb\nc\"d\\e\u0001f é"' \
   "$(common_fn dl_json_string $'a\tb\nc"d\\e\001f é')"
 expect "a JSON string replaces a byte that is not UTF-8" '"x'$'\xef\xbf\xbd''y"' "$(common_fn dl_json_string $'x\xffy')"
+# A jq that cuts its standard input at the first NUL (as jq 1.6's raw slurp may) makes the encoder use
+# python3, and a merge still records every path; the real jq is used when it reads NULs whole.
+expect "the encoder uses jq when it reads NUL-separated input whole" jq "$(common_fn dl_json_z_tool)"
+mkdir -p "$work/nul-jq"
+cat >"$work/nul-jq/jq" <<EOF
+#!/usr/bin/env bash
+python3 -I -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().split(b"\0")[0])' | "$(command -v jq)" "\$@"
+EOF
+chmod +x "$work/nul-jq/jq"
+expect "a jq that cuts input at a NUL makes the encoder use python3" "python3 [\"a\",\"b\"]" \
+  "$(PATH="$work/nul-jq:$PATH" common_fn dl_json_z_tool) $(printf 'a\0b\0' | PATH="$work/nul-jq:$PATH" common_fn dl_json_list_z)"
+git checkout -q -b feat/134-nul-jq
+echo 1 >app/store/one.py && echo 1 >app/store/two.py && git add app && git commit -q -m "feat: two (Refs #134)" &&
+  git push -q -u origin feat/134-nul-jq
+git checkout -q main
+printf 'feat: two (#134)\n\nCloses #134\n' >"$(DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/paths.sh" notes feat/134-nul-jq)"
+DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/gate-train.sh" feat/134-nul-jq >/dev/null 2>&1
+PATH="$work/nul-jq:$PATH" DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/merge-train.sh" feat/134-nul-jq >/dev/null 2>&1
+expect "with a jq that cuts input at a NUL the ledger still holds every path" '["app/store/one.py","app/store/two.py"]' \
+  "$(ledger_of feat/134-nul-jq .files)"
+expect "without jq or python3 able to read NULs, names are kept except those with a tab or line break" \
+  '["a\"b\\c","d.py"]' "$(printf 'a"b\\c\0t\tb\0d.py\0n\nl\0' | DEV_LOOP_JSON_Z=bash common_fn dl_json_list_z)"
 printf '{"branch":"feat/132-raw","source_head":"r\377w","head":"raw2"}\n{"branch":"feat/133-after","head":"after"}\n' \
   >>"$DEV_LOOP_HOME/project/merged.jsonl"
 DEV_LOOP_NO_JQ=1 common_fn dl_ledger_heads 2>/dev/null | grep -qxF "feat/133-after after" &&
