@@ -2616,6 +2616,35 @@ fgate dark-judge
 expect "a dark factory with a valid required scenario judges it and is green" "0 TRAIN GREEN browse login" \
   "$rc $(printf '%s\n' "$out" | tail -n 1) $(LC_ALL=C sort "$work/factory-judge.log" 2>/dev/null | paste -sd' ' -)"
 
+# The role guard decides "scenarios on" by the same rule: for each config, it refuses the implementer a
+# read of the store exactly when dl_scenarios_on is true.
+git init -q "$work/darkproj"
+# dguard JSON: the guard's exit status for an implementer's Read of the default store of darkproj, whose
+# .dev-loop.json is JSON (read from the project, so the hook's quick no-op check is covered too).
+dguard() {
+  printf '%s\n' "$1" >"$work/darkproj/.dev-loop.json"
+  printf '{"tool_name": "Read", "cwd": "%s", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "%s"}}' \
+    "$work/darkproj" "$DEV_LOOP_HOME/darkproj/scenarios/a.md" |
+    CLAUDE_PROJECT_DIR="$work/darkproj" "$plugin/hooks/guard-role.sh" 2>/dev/null
+  echo $?
+}
+expect "guard: a dark factory without a scenarios key hides the default store from the implementer" 2 \
+  "$(dguard '{"factory": "dark"}')"
+expect "guard: a dark factory with scenarios false lets the implementer read it" 0 \
+  "$(dguard '{"factory": "dark", "scenarios": false}')"
+expect "guard: scenarios null and a collaborative factory leave the guard off" "0 0" \
+  "$(dguard '{"factory": "dark", "scenarios": null}') $(dguard '{"factory": "collaborative"}')"
+same=0
+for name in none collab dark night dark-off dark-null dark-on plain-off plain-null plain-on; do
+  lib=$(factory_lib "$name" 'dl_scenarios_on && echo 2 || echo 0' | cut -d'|' -f1 | tr -d '\n')
+  at=$(DEV_LOOP_CONFIG="$work/factory-$name.json" python3 -I "$plugin/hooks/guard-role.py" --scenarios-dir "$work/project")
+  hook=$(printf '{"tool_name": "Read", "cwd": "%s", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "%s/a.md"}}' \
+    "$work/project" "$at" | DEV_LOOP_CONFIG="$work/factory-$name.json" CLAUDE_PROJECT_DIR="$work/project" \
+    "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)
+  [ "$lib" = "$hook" ] && same=$((same + 1)) || echo "  config $name: dl_scenarios_on says $lib, the guard $hook"
+done
+expect "guard: the hook and dl_scenarios_on agree on every factory and scenarios config" 10 "$same"
+
 # One list of stop conditions for both modes; the skills and the README describe the preset.
 skill="$plugin/skills/dev-loop/SKILL.md"
 expect "the dev-loop skill has exactly one stop-conditions list" 1 "$(grep -c 'Stop and ask the user only for' "$skill")"
