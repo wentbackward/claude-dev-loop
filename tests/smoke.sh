@@ -411,7 +411,6 @@ out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" feat/82-next 2>&1)
 rc=$?
 expect "a leftover branch-config.json is ignored once the main checkout has its own config" "0 no" \
   "$rc $(echo "$out" | grep -q "config read from\|branch-config.json" && echo yes || echo no)"
-expect "DEV_LOOP_CONFIG exported by the fallback does not reach the caller" unset "${DEV_LOOP_CONFIG-unset}"
 setup_project setup-noconfig origin
 cd "$work/setup-noconfig" || exit 1
 mkdir -p "$DEV_LOOP_HOME/setup-noconfig"
@@ -442,7 +441,6 @@ git checkout -q -b chore/80-setup &&
   git push -q -u origin chore/80-setup && git checkout -q main
 out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
 rc=$?
-echo "$out"
 expect "a config naming another remote without the branch there says so" "2 yes no" \
   "$rc $(echo "$out" | grep -q "names remote upstream, but upstream/chore/80-setup is missing" && echo yes || echo no) $(echo "$out" | grep -q "no config at" && echo yes || echo no)"
 # A branch that exists only locally: the source line names it as refs/heads/<branch>.
@@ -454,6 +452,14 @@ git checkout -q -b chore/80-setup &&
 out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
 echo "$out" | grep -q "config read from refs/heads/chore/80-setup:.dev-loop.json" &&
   pass "the source line names a local branch as refs/heads/<branch>" || fail "local branch source line: $out"
+echo "$out" | grep -q "could not fetch origin/chore/80-setup; reading the config from" &&
+  pass "a failed fetch of the branch is a warning, not silent" || fail "fetch warning: $out"
+# The fallback exports DEV_LOOP_CONFIG inside the script that loads it, never into the shell that ran it.
+seen=$( (unset DEV_LOOP_CONFIG; . "$plugin/scripts/lib/common.sh"; dl_load_train_config chore/80-setup >/dev/null 2>&1
+  echo "${DEV_LOOP_CONFIG:-unset}") )
+# shellcheck disable=SC2031  # the subshell's export must not reach this shell: that is the check
+expect "the fallback exports DEV_LOOP_CONFIG where it runs, not in the caller's shell" \
+  "$DEV_LOOP_HOME/setup-local/branch-config.json unset" "$seen ${DEV_LOOP_CONFIG-unset}"
 cd "$work/project" || exit 1
 
 # 12. Branch lifecycle: gate and merge clean up after themselves, cleanup.sh classifies the rest.

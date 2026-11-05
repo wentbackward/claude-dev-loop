@@ -118,13 +118,14 @@ dl_load_train_config() {
   dl_load_config required
 }
 
-# dl_branch_config_ref BRANCH REMOTE [remote-only]: fetches BRANCH from REMOTE (a failed fetch is ignored),
-# then prints the full ref of REMOTE/BRANCH, else (unless remote-only) of the local BRANCH, the first that
-# has a .dev-loop.json.
+# dl_branch_config_ref BRANCH REMOTE [remote-only]: fetches BRANCH from REMOTE (a failed fetch only warns:
+# gate-train.sh and merge-train.sh fetch again right after, and stop if that fails), then prints the full ref
+# of REMOTE/BRANCH, else (unless remote-only) of the local BRANCH, the first that has a .dev-loop.json.
 dl_branch_config_ref() {
   local ref refs="refs/remotes/$2/$1"
   [ "${3:-}" = remote-only ] || refs="$refs refs/heads/$1"
-  git -C "$DL_ROOT" fetch -q "$2" "+refs/heads/$1:refs/remotes/$2/$1" >/dev/null 2>&1
+  git -C "$DL_ROOT" fetch -q "$2" "+refs/heads/$1:refs/remotes/$2/$1" >/dev/null 2>&1 ||
+    dl_warn "could not fetch $2/$1; reading the config from the last fetched ref or the local branch"
   for ref in $refs; do
     if git -C "$DL_ROOT" cat-file -e "$ref:.dev-loop.json" 2>/dev/null; then
       printf '%s\n' "$ref"
