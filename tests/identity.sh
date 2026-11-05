@@ -114,6 +114,8 @@ expect "guard: tester may open an issue as tester" 0 "$(guard dev-loop:test-engi
 expect "guard: tester may not push" 2 "$(guard dev-loop:verifier "$AS tester git push")"
 expect "guard: the doc-auditor may open an issue as tester" 0 "$(guard dev-loop:doc-auditor "$AS tester gh issue create -t x -b y")"
 expect "guard: the doc-auditor may not push" 2 "$(guard dev-loop:doc-auditor "$AS tester git push")"
+expect "guard: the architect may open an issue as tester" 0 "$(guard dev-loop:architect "$AS tester gh issue create -t x -b y")"
+expect "guard: the architect may not push" 2 "$(guard dev-loop:architect "$AS tester git push")"
 expect "guard: nobody uses the gate identity directly" 2 "$(guard "" "$AS gate gh pr merge 3 --squash")"
 expect "guard: a raw merge is refused" 2 "$(guard "" 'gh pr merge 3 --squash')"
 expect "guard: the main session may run the merge train" 0 "$(guard "" "$plugin/scripts/merge-train.sh feat/1-x")"

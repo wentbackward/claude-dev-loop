@@ -1550,5 +1550,193 @@ skill="$plugin/skills/dev-loop/SKILL.md"
   fail "the dev-loop skill lacks the slice loop"
 git checkout -q -f main && git clean -qfd
 
+# 16. Merge evidence and the architect (#19): the ledger's new fields, arch-evidence.sh on a seeded ledger
+# and fake cards, doctor's architect line and the architect's brief (all but the ledger fields only with
+# "architecture" configured). The edge list comes from the fake command tools/edges.sh.
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+ledger_of() { # ledger_of BRANCH FILTER: the jq FILTER of BRANCH's last entry in the smoke ledger
+  jq -c --arg b "$1" "select(.branch == \$b) | $2" "$DEV_LOOP_HOME/project/merged.jsonl" | tail -n 1
+}
+expect "merge-train records the files, lines, ticket and review rounds of a merge" \
+  '[["src.txt"],{"added":1,"deleted":0},1,1]' "$(ledger_of feat/1-first '[.files, .lines, .ticket, .review_rounds]')"
+expect "without architecture a merge records no components" '[]' "$(ledger_of feat/1-first .components)"
+expect "the ledger keeps its old fields" '["feat/2-second","2"]' "$(ledger_of feat/2-second '[.branch, .pr]')"
+common_fn() { # common_fn FUNCTION ARGS...: run a helper of scripts/lib/common.sh
+  bash -c '. "$1/scripts/lib/common.sh"; f=$2; shift 2; "$f" "$@"' _ "$plugin" "$@"
+}
+printf 'feat: x (#7)\n\nCloses #7\n\n## Review fixes\n- a\n\n## Review fixes (round 3)\n- b\n' >"$work/rounds.md"
+expect "the review rounds are one plus a Review fixes section per round" 3 \
+  "$(common_fn dl_notes_review_rounds "$work/rounds.md")"
+printf 'feat: x\n\nReview rounds: 4\n\n## Review fixes\n- a\n' >"$work/rounds-recorded.md"
+expect "a Review rounds line the orchestrator records wins" 4 "$(common_fn dl_notes_review_rounds "$work/rounds-recorded.md")"
+expect "without a notes file the review rounds are unknown (0)" 0 "$(common_fn dl_notes_review_rounds "$work/none.md")"
+expect "the ticket is the notes' Closes #n, else the branch's number, else none" "7|31|" \
+  "$(common_fn dl_notes_ticket "$work/rounds.md" feat/9-x)|$(common_fn dl_notes_ticket "$work/none.md" fix/31-y)|$(
+    common_fn dl_notes_ticket "$work/none.md" topic)"
+
+# Fake cards: a cycle core -> store -> ui -> core, store using the top layer, core with a fan-out of 3, a
+# composition root with a fan-out of 4, two run-time components (a service and a job) connected in code.
+rm -rf docs/architecture app edges.txt
+mkdir -p docs/architecture app/store app/core app/api app/worker app/ui app/cli tools
+card store.md "component: store" "layer: 0" "paths: app/store/*"
+card core.md "component: core" "layer: 1" "paths: app/core/*" "max_lines: 2"
+card api.md "component: api" "layer: 2" "kind: service" "paths: app/api/*"
+card worker.md "component: worker" "layer: 2" "kind: job" "paths: app/worker/*"
+card ui.md "component: ui" "layer: 3" "paths: app/ui/*"
+card cli.md "component: cli" "layer: 3" "kind: composition-root" "paths: app/cli/*"
+printf '1\n2\n3\n4\n' >app/core/c.py
+for file in app/store/s.py app/api/a.py app/worker/w.py app/ui/u.py app/cli/main.py; do echo 1 >"$file"; done
+printf '#!/usr/bin/env bash\ncat edges.txt\n' >tools/edges.sh && chmod +x tools/edges.sh
+printf '%s\n' "core store" "core api" "core worker" "store ui" "ui core" "api worker" "cli ui" "cli core" "cli store" \
+  "cli api" >edges.txt
+cat >"$work/evidence.json" <<'EOF'
+{
+  "base_branch": "main",
+  "checks": [{"name": "unit", "command": "./check.sh", "heavy": false}],
+  "architecture": {"check": "./tools/edges.sh", "cadence": 20, "scatter": 3, "growth": 2, "co_change": 75,
+                   "co_change_min": 3, "hotspot": 2, "cycle": 2, "fan_out": 2, "review_rounds": 3},
+  "models": {"architect": "opus"}
+}
+EOF
+git add -A docs app tools edges.txt && git commit -q -m "feat: evidence components"
+DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/arch-check.sh" --baseline >/dev/null 2>&1
+git add docs && git commit -q -m "chore: evidence baseline" && git push -q origin main
+
+# With architecture, merge-train records the components of the merged files through the cards.
+git checkout -q -b feat/130-fields
+printf '2\n3\n' >>app/store/s.py && echo 1 >app/api/new.py && git add app && git commit -q -m "feat: fields (Refs #130)" &&
+  git push -q -u origin feat/130-fields
+git checkout -q main
+printf 'feat: fields (#130)\n\nCloses #130\n\n## Review fixes\n- a\n\n## Review fixes\n- b\n' \
+  >"$(DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/paths.sh" notes feat/130-fields)"
+out=$(DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/gate-train.sh" feat/130-fields 2>&1)
+expect "the evidence branch is gated green" "TRAIN GREEN" "$(echo "$out" | tail -n 1)"
+out=$(DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/merge-train.sh" feat/130-fields 2>&1)
+expect "the evidence branch merges" 0 "$?"
+expect "with architecture a merge records its files, components, lines, ticket and review rounds" \
+  '[["app/api/new.py","app/store/s.py"],["api","store"],{"added":3,"deleted":0},130,3]' \
+  "$(ledger_of feat/130-fields '[.files, .components, .lines, .ticket, .review_rounds]')"
+git fetch -q origin && git reset -q --hard origin/main
+
+# A seeded ledger: an old line without the new fields (its files come from git), a line that is not
+# JSON, a merge across four components with five review rounds, and a ticket merged twice.
+printf '2\n3\n4\n' >>app/ui/u.py && git commit -q -am "feat: ui grows"
+c1=$(git rev-parse HEAD)
+git commit -q --allow-empty -m "feat: wide" && c2=$(git rev-parse HEAD)
+git commit -q --allow-empty -m "feat: pair" && c3=$(git rev-parse HEAD)
+git commit -q --allow-empty -m "fix: pair again" && c4=$(git rev-parse HEAD)
+evidence_home="$work/home-evidence"
+mkdir -p "$evidence_home/project"
+{
+  printf '{"branch":"feat/140-old","source_head":"x","head":"x","gated":"x","gated_tree":"x","pr":"1","merge_commit":"%s","merged_at":"2026-02-01T10:00:00Z"}\n' "$c1"
+  echo 'not json'
+  printf '{"branch":"feat/141-wide","merge_commit":"%s","merged_at":"2026-02-02T10:00:00Z","files":["app/core/c.py","app/store/s.py","app/api/a.py","app/worker/w.py"],"components":[],"lines":{"added":4,"deleted":0},"review_rounds":5,"ticket":141}\n' "$c2"
+  printf '{"branch":"feat/142-pair","merge_commit":"%s","merged_at":"2026-02-03T10:00:00Z","files":["app/core/c.py","app/store/s.py"],"components":["core","store"],"lines":{"added":2,"deleted":1},"review_rounds":1,"ticket":142}\n' "$c3"
+  printf '{"branch":"fix/142-again","merge_commit":"%s","merged_at":"2026-02-04T10:00:00Z","files":["app/core/c.py","app/store/s.py"],"components":["core","store"],"lines":{"added":1,"deleted":1},"review_rounds":1,"ticket":142}\n' "$c4"
+} >"$evidence_home/project/merged.jsonl"
+evidence() { # evidence CONFIG ARGS...: run arch-evidence.sh with the seeded ledger; sets out and rc
+  local config=$1
+  shift
+  out=$(DEV_LOOP_HOME="$evidence_home" DEV_LOOP_CONFIG="$config" "$plugin/scripts/arch-evidence.sh" "$@" 2>&1)
+  rc=$?
+  echo "$out"
+}
+findings() { echo "$out" | sed '1,/^runtime /d' | paste -sd'|' -; }
+before_status=$(git status --porcelain) before_ledger=$(cksum <"$evidence_home/project/merged.jsonl")
+before_state=$(ls -a "$evidence_home/project") before_worktrees=$(git worktree list | wc -l)
+evidence "$work/evidence.json"
+expect "arch-evidence exits 1 when a signal is over its threshold" 1 "$rc"
+expect "arch-evidence names the window first" \
+  "arch-evidence: 4 merges from 2026-02-01T10:00:00Z to 2026-02-04T10:00:00Z, 6 components" "$(echo "$out" | head -n 1)"
+expect "a summary table of every signal comes before the findings" \
+  "signal|size|scatter|co-change|hotspot|cycle|misplaced|fan-out|friction|runtime" \
+  "$(echo "$out" | sed -n '2,11p' | awk '{print $1}' | paste -sd'|' -)"
+expect "the table counts the findings per signal" "2 1 1 2 1 1 1 2 1" \
+  "$(echo "$out" | sed -n '3,11p' | awk '{print $2}' | paste -sd' ' -)"
+expect "arch-evidence prints each signal as a stable line" \
+  "size budget core 4/2|size growth ui +3 lines|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|hotspot app/core/c.py 3 merges|hotspot app/store/s.py 3 merges|cycle 3 components: core store ui|misplaced store -> ui (ui is in the top layer, 3)|fan-out core 3 components: api store worker|friction rounds feat/141-wide 5 rounds|friction reopened #142 2 merges: feat/142-pair fix/142-again|runtime api -> worker (separate at run time, connected in code)" \
+  "$(findings)"
+echo "$out" | grep -q "fan-out cli" && fail "a composition root's fan-out is a signal" ||
+  pass "a composition root's fan-out is not a signal"
+first=$out
+evidence "$work/evidence.json" >/dev/null
+expect "arch-evidence is deterministic" "$first" "$out"
+DEV_LOOP_NO_JQ=1 evidence "$work/evidence.json" >/dev/null
+expect "arch-evidence prints the same without jq" "$first" "$out"
+expect "arch-evidence changes nothing (tree, ledger, state, worktrees)" \
+  "$before_status|$before_ledger|$before_state|$before_worktrees" \
+  "$(git status --porcelain)|$(cksum <"$evidence_home/project/merged.jsonl")|$(ls -a "$evidence_home/project")|$(git worktree list | wc -l)"
+evidence "$work/evidence.json" --since 2
+expect "--since <n> keeps the last n merges" \
+  "size budget core 4/2|cycle 3 components: core store ui|misplaced store -> ui (ui is in the top layer, 3)|fan-out core 3 components: api store worker|friction reopened #142 2 merges: feat/142-pair fix/142-again|runtime api -> worker (separate at run time, connected in code)" \
+  "$(findings)"
+evidence "$work/evidence.json" --since 2026-02-02
+expect "--since <date> keeps the merges from that date" \
+  "arch-evidence: 3 merges from 2026-02-02T10:00:00Z to 2026-02-04T10:00:00Z, 6 components" "$(echo "$out" | head -n 1)"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}], "architecture": {"check": "./tools/edges.sh"}}\n' \
+  >"$work/evidence-default.json"
+evidence "$work/evidence-default.json"
+expect "the default thresholds (scatter 3, growth 500, co-change 75% of 3, hotspot 5, cycle 3, fan-out 5, rounds 3)" \
+  "size budget core 4/2|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|misplaced store -> ui (ui is in the top layer, 3)|friction rounds feat/141-wide 5 rounds|friction reopened #142 2 merges: feat/142-pair fix/142-again|runtime api -> worker (separate at run time, connected in code)" \
+  "$(findings)"
+sed 's/"hotspot": 2/"hotspot": "often"/' "$work/evidence.json" >"$work/evidence-bad.json"
+evidence "$work/evidence-bad.json" >/dev/null
+expect "a threshold that is not a number is a config error" 2 "$rc"
+echo "$out" | grep -qF "architecture.hotspot" && pass "the error names the threshold" || fail "threshold error: $out"
+evidence "$work/evidence.json" --since soon >/dev/null
+expect "a --since that is neither a count nor a date is a usage error" 2 "$rc"
+evidence "$work/nodocs.json" >/dev/null
+expect "arch-evidence without architecture is a config error" 2 "$rc"
+mkdir -p docs/clean && card ../clean/store.md "component: store" "layer: 0" "paths: app/*"
+sed -e 's#"./tools/edges.sh"#"true", "cards": "docs/clean"#' "$work/evidence.json" >"$work/evidence-clean.json"
+evidence "$work/evidence-clean.json" --since 2099-01-01
+expect "no signal over its threshold exits 0" "0 arch-evidence: 0 merges, 1 components" "$rc $(echo "$out" | head -n 1)"
+
+# doctor: the merges since the architect last ran, the signals over their thresholds, models.architect.
+architect_doctor() { # architect_doctor CONFIG: doctor's output with the seeded ledger
+  DEV_LOOP_HOME="$evidence_home" DEV_LOOP_CONFIG="$1" "$plugin/scripts/doctor.sh" 2>&1
+}
+out=$(architect_doctor "$work/evidence.json")
+echo "$out" | grep -E "arch architect +4 merges since the architect last ran" | grep -qF "none recorded; every 20" &&
+  pass "doctor prints the merges since the architect last ran, with the cadence" || fail "no architect line: $out"
+echo "$out" | grep -E "arch signals +" | grep -qF "size 2, scatter 1, co-change 1, hotspot 2, cycle 1, misplaced 1, fan-out 1, friction 2, runtime 1" &&
+  pass "doctor prints the signals over their thresholds" || fail "no signals line: $out"
+echo "$out" | grep -E "^note .*architect due" | grep -qF "arch-evidence.sh" && pass "doctor notes that the architect is due" ||
+  fail "no architect due note: $out"
+echo "$out" | grep -qF "architect=opus" && pass "doctor prints the architect's model" || fail "no architect model: $out"
+marker=$(DEV_LOOP_HOME="$evidence_home" DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/paths.sh" architect)
+expect "paths.sh architect names the architect marker in the state directory" "$evidence_home/project/architect.txt" "$marker"
+echo 2026-02-03T12:00:00Z >"$marker"
+architect_doctor "$work/evidence.json" | grep -E "arch architect +1 merges since the architect last ran" |
+  grep -qF "2026-02-03T12:00:00Z" && pass "only merges after the architect marker count" || fail "no count of 1"
+echo 2026-02-05T12:00:00Z >"$marker"
+architect_doctor "$work/evidence-clean.json" | grep -qE "^note .*architect due" && fail "the architect is due without a reason" ||
+  pass "the architect is not due below the cadence without a signal since its last run"
+echo soon >"$marker"
+architect_doctor "$work/evidence.json" | grep -E "^MISSING .*architect.txt" >/dev/null &&
+  pass "doctor reports an architect marker that is not a UTC time" || fail "no MISSING for a bad architect marker"
+rm -f "$marker"
+sed -e 's/"opus"/"gpt"/' -e 's/"cadence": 20/"cadence": "often"/' "$work/evidence.json" >"$work/evidence-bad.json"
+out=$(architect_doctor "$work/evidence-bad.json")
+echo "$out" | grep -qE '^MISSING models.architect: "gpt"' && pass "doctor reports an unknown architect model" ||
+  fail "no MISSING for models.architect"
+echo "$out" | grep -qE '^MISSING architecture.cadence: "often"' && pass "doctor reports a bad architecture threshold" ||
+  fail "no MISSING for architecture.cadence"
+expect "doctor without architecture prints no architect lines" 0 \
+  "$(architect_doctor "$work/nodocs.json" | grep -c "architect \|arch signals")"
+expect "the template lists the architect's cadence, scatter and model" "20 3 opus" \
+  "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
+print(c["architecture"].get("cadence"), c["architecture"].get("scatter"), c["models"].get("architect"))' \
+    "$plugin/templates/dev-loop.json" 2>/dev/null)"
+architect="$plugin/agents/architect.md"
+grep -q "^name: architect$" "$architect" 2>/dev/null && pass "the architect agent exists" || fail "no agents/architect.md"
+grep "^tools:" "$architect" 2>/dev/null | grep -qv "Write\|Edit" && pass "the architect's tools list has no Write or Edit" ||
+  fail "the architect's tools are not read-only"
+grep -qi "extraction ladder" "$architect" && grep -qF "user's go" "$architect" &&
+  pass "the architect's brief keeps the extraction ladder's last step for the user's go" || fail "no ladder in the brief"
+grep -qF "arch-evidence.sh" "$skill" && grep -qF "architecture.cadence" "$skill" && grep -qF "models.architect" "$skill" &&
+  pass "the dev-loop skill starts the architect on cadence or signals" || fail "the dev-loop skill lacks the architect"
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
