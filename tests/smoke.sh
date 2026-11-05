@@ -679,7 +679,7 @@ expect "a Markdown file deleted in the range is not link-checked" 0 "$rc"
 
 # Paths with non-ASCII names, angle-bracket and %20 links, and a from that is not an ancestor of to.
 git checkout -q -B feat/70-docs "$c0"
-printf '# Caf\303\251\n[gone](missing-too.md)\n' >"docs/caf\303\251.md"
+printf '# Caf\303\251\n[gone](missing-too.md)\n' >"$(printf 'docs/caf\303\251.md')"
 git add docs && git commit -q -m "docs: non-ascii name"
 docs_check "$c0" HEAD
 expect "a changed Markdown file with a non-ASCII name is link-checked" 1 "$rc"
