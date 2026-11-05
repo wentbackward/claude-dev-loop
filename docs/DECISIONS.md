@@ -39,7 +39,7 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 ## 2026-11-05 — The branch-config fallback fetches the branch first (#9)
 
 - **Decision:** before reading a branch's `.dev-loop.json`, `dl_load_train_config` fetches that one branch
-  (`+refs/heads/<branch>:refs/remotes/<remote>/<branch>`, a failed fetch ignored) and then prefers
+  (`+refs/heads/<branch>:refs/remotes/<remote>/<branch>`, a failed fetch only warns, and the scripts' own fetch then stops the run) and then prefers
   `<remote>/<branch>`, else the local branch. When the config names another remote, only
   `<remote>/<branch>` counts (after its own fetch); when it is missing the scripts stop with a message
   naming it, even if a local branch exists, since the gate stacks `<remote>/<branch>`.
