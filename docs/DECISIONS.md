@@ -218,7 +218,8 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   U+FFFD so every line stays valid UTF-8 JSON; `arch-evidence.sh` reads a tab or a line break in a name
   as a space), encoded by jq only when a probe shows it reads NUL-separated input whole (jq 1.6's
   raw slurp may stop at the first NUL), else by python3; with neither, by bash, which drops names that hold
-  a tab, a line break or another control character and keeps other bytes as they are. The line counts of
+  a tab, a line break or another control character and keeps other bytes as they are (the bash line form
+  that `arch-evidence.sh` and the `components` field read drops the same names, #27). The line counts of
   `dl_arch_line_counts` and of the growth signal still split a path with a tab or a line break, so such a
   file may be miscounted there: a heuristic for the evidence only, never what the ledger stores, `components` through the cards
   of the replayed head (empty without `architecture.check`), `ticket` from the notes' first `Closes`,
@@ -246,3 +247,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** per-file line counts in the ledger (a bigger ledger for one signal); the recorded
   `components` (stale after a card change); a window of calendar time (merges per day vary); the architect
   editing cards on its own branch (an agent that writes, against the read-only brief).
+
+## 2026-11-05 — The NUL tool pick runs once per process tree; one rule for both bash fallbacks (#27)
+
+- **Decision:** `scripts/lib/common.sh` picks the tool for NUL-separated names (jq, python3 or bash) when it
+  loads, not on first use, so pipelines and command substitutions inherit the pick instead of probing jq
+  again each time. It exports the pick (`DL_JSON_Z_TOOL`) with the inputs it depends on (`DL_JSON_Z_FOR`:
+  `DEV_LOOP_NO_JQ`, `DEV_LOOP_JSON_Z` and `PATH`), so a child script that sources the library reuses it and
+  picks again only when one of those differs. The bash fallbacks of `dl_json_list_z` and `dl_z_lines`
+  both drop a name that holds a control character (one helper, `_dl_z_plain`), so the line form lists
+  exactly the names the JSON form stores.
+- **Reason:** the simplest cache that survives subshells, with no state file; the overrides keep working.
+  One rule makes the components of a merge match its recorded files on a machine without jq or python3.
+- **Alternatives:** callers picking before each pipeline (every new caller must remember); a cache file in
+  the state directory (state to clean up and to invalidate); rewording the comment only (the probe still
+  runs per call); keeping such names in the bash line form (then it lists names the ledger lacks). Cost:
+  one jq run each time a script that sources the library starts in a fresh environment, also when it
+  never reads NUL-separated names.
