@@ -85,6 +85,7 @@ dl_arch_line_counts() {
 }
 
 # The analysis of dl_arch_analyse: part 1 the cards, part 2 the line counts, part 3 the edges.
+# shellcheck disable=SC2016  # an awk program: $1 and friends are awk fields
 _dl_arch_analyse_awk='
 # glob_re GLOB: an anchored regular expression for a shell glob where * also matches / (? is one character).
 function glob_re(glob,   i, c, re) {
@@ -220,6 +221,7 @@ dl_arch_tagged() {
 }
 
 # The comparison of dl_arch_compare: part 1 the baseline, part 2 the current violations.
+# shellcheck disable=SC2016  # an awk program
 _dl_arch_compare_awk='
 function key(line,   words) {
   if (line !~ /^budget /) return line
