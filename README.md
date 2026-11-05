@@ -79,6 +79,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
+| script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
 | hook | role guard | identity mode only: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
@@ -116,6 +117,39 @@ or the kernel kills processes. The plugin makes "one heavy job at a time, per sl
 - **The Stop hook runs only `fast_check`**, which takes seconds. Running the full suite on every stop
   would delay every reply.
 
+## Branch lifecycle
+
+Branches are short-lived: a branch exists from its first push until its ticket is resolved, then it goes,
+locally and on the remote. Squash merges leave no ancestry, so "merged" is decided by the plugin's own
+record, never by `git branch --merged`.
+
+| Thing | Removed |
+|---|---|
+| remote feature branch | by `merge-train.sh` after the merge (`merge.delete_branch`) |
+| local feature branch and its worktree | by `merge-train.sh` after the merge, when the local tip is the merged head and the worktree is clean; otherwise it says what it kept and why (`merge.delete_local`) |
+| `train-<branch>` | by `merge-train.sh` once the whole train merged; by the next `gate-train.sh` for red trains and branches no longer in a train |
+| `replay-<branch>` | by `merge-train.sh` right after use |
+| notes file | moved to `notes/merged/` on merge; removed by `cleanup.sh` after `cleanup.keep_days` |
+| gate logs | the latest train's are kept; older ones by `cleanup.sh` after `cleanup.keep_days` |
+
+`merge-train.sh` appends every merge to a ledger, `~/.dev-loop/<repo>/merged.jsonl` (branch, source and
+pushed head, gated head and tree, PR, merge commit, time). `scripts/cleanup.sh` classifies every local and
+remote branch from the ledger, then the PR list (a replayed copy counts when it brings the same changes),
+then the issue its name points at (`<type>/<n>-...`):
+
+| Class | What | `--apply` |
+|---|---|---|
+| merged | in the ledger, a merged PR, or contained in the base | deleted |
+| helper | `train-*`/`replay-*` outside a live train, agent worktree branches without own commits | deleted |
+| closed | PR closed unmerged, or its issue closed | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
+| stale | no PR, no open issue, idle for `cleanup.stale_days` | with `--include stale`; automatic with `"factory": "dark"` |
+| keep | open PR or issue, checked out in a worktree, a live train, recent, or moved on after its merge | never |
+
+It is a dry run without `--apply`, writes the full classification (with the reason for every kept
+branch) to the logs directory, and saves every deleted tip to a bundle in `~/.dev-loop/<repo>/archive/`
+first: `git fetch <bundle> refs/heads/<branch>:refs/heads/<branch>` restores one. `doctor.sh` notes
+leftovers it can count without GitHub.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -141,7 +175,9 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `heavy.clean_temp`, `heavy.clean_temp_minutes` | `[]`, `120` | stale temp globs (`$USER` is expanded) and their age |
 | `heavy.poll_seconds` | `10` | how often a waiting command retries |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
-| `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges |
+| `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
+| `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
+| `cleanup.stale_days`, `cleanup.keep_days` | `14`, `30` | `cleanup.sh`: when a branch without PR or open issue is stale; how long merged notes and old gate logs are kept |
 | `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |

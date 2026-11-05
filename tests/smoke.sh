@@ -139,6 +139,12 @@ expect "PR title has no leading '#'" "feat: second line (#1)" "$(cat "$FAKE_GH_D
 grep -q "Closes #1" "$FAKE_GH_DIR/feat_1-first.body" && pass "PR body is the rest of the notes file" || fail "PR body"
 git ls-remote --exit-code origin feat/1-first >/dev/null 2>&1 && fail "merged branch not deleted" ||
   pass "merged branches are deleted on origin"
+expect "merged branches are deleted locally" "" "$(git branch --list feat/1-first feat/2-second)"
+expect "the train refs go once the whole train merged" "" "$(git branch --list 'train-feat/*')"
+expect "the notes files move to notes/merged" "pr-feat_1-first.md pr-feat_2-second.md" \
+  "$(for f in "$notes"/merged/pr-*.md; do basename "$f"; done | paste -sd' ')"
+expect "the ledger records both merges with their PR numbers" "feat/1-first 1|feat/2-second 2" \
+  "$(jq -r '"\(.branch) \(.pr)"' "$DEV_LOOP_HOME/project/merged.jsonl" | paste -sd'|')"
 
 # 6. A red train is reported red and cannot be merged.
 git checkout -q -B feat/3-broken origin/main
@@ -346,6 +352,94 @@ expect "doctor flags a check named affected" yes \
 printf '{"checks": ["true"], "parallel": true, "fail_fast": true, "affected": "make test-affected"}\n' >"$work/doctor.json"
 expect "doctor prints the gate options" "gate options  affected on, parallel true, fail_fast true" \
   "$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -o 'gate options.*')"
+
+# 12. Branch lifecycle: gate and merge clean up after themselves, cleanup.sh classifies the rest.
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+expect "the next gate removed the red train's refs" "" "$(git branch --list train-feat/3-broken)"
+branch_on() { # branch_on NAME FILE: a branch from origin/main with one commit adding FILE, pushed
+  git checkout -q -B "$1" origin/main && echo "$1" >"$2" && git add "$2" && git commit -q -m "feat: $2" &&
+    git push -q -u origin "$1" && git checkout -q main
+}
+note_for() { printf 'feat: %s\n\nbody\n' "$1" >"$("$plugin/scripts/paths.sh" notes "$1")"; }
+
+# A waiting green train keeps its refs through the next gate; a worktree with changes keeps its branch.
+branch_on feat/21-waiting w21.txt
+"$plugin/scripts/gate-train.sh" feat/21-waiting >/dev/null 2>&1
+branch_on feat/22-dirty w22.txt
+note_for feat/22-dirty
+git worktree add -q "$work/wt22" feat/22-dirty && echo change >>"$work/wt22/w22.txt"
+"$plugin/scripts/gate-train.sh" feat/22-dirty >/dev/null 2>&1
+[ -n "$(git branch --list train-feat/21-waiting)" ] && pass "the refs of a waiting green train survive the next gate" ||
+  fail "the refs of a waiting green train were deleted"
+out=$("$plugin/scripts/merge-train.sh" feat/22-dirty 2>&1)
+echo "$out" | grep -q "kept local feat/22-dirty: its worktree $work/wt22 has changes" &&
+  pass "merge-train keeps a branch whose worktree has changes, and says so" || fail "dirty worktree: $out"
+[ -d "$work/wt22" ] && [ -n "$(git branch --list feat/22-dirty)" ] && pass "the dirty worktree and its branch stay" ||
+  fail "the dirty worktree or its branch went"
+git worktree remove --force "$work/wt22"
+
+# Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
+gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
+branch_on feat/23-merged w23.txt && gh_pr feat/23-merged && gh pr merge feat/23-merged --squash >/dev/null
+note_for feat/23-merged
+git fetch -q origin
+git checkout -q -B feat/24-replayed origin/main~1 && echo r >w24.txt && git add w24.txt && git commit -q -m "feat: w24"
+git checkout -q -B replayed-copy origin/main && git cherry-pick feat/24-replayed >/dev/null &&
+  git push -q -f origin replayed-copy:feat/24-replayed && git checkout -q main && git branch -q -D replayed-copy
+git fetch -q origin && gh_pr feat/24-replayed && gh pr merge feat/24-replayed --squash >/dev/null
+git push -q origin --delete feat/24-replayed
+branch_on feat/25-moved w25.txt && gh_pr feat/25-moved && gh pr merge feat/25-moved --squash >/dev/null
+git checkout -q feat/25-moved && echo more >>w25.txt && git commit -q -am "feat: more" && git checkout -q main
+branch_on feat/26-closed w26.txt && gh_pr feat/26-closed && echo CLOSED >"$FAKE_GH_DIR/feat_26-closed.state"
+branch_on fix/27-dropped w27.txt
+branch_on feat/28-open w28.txt
+git checkout -q -B spike-old origin/main && echo old >old.txt && git add old.txt &&
+  GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" git commit -q -m "spike" && git checkout -q main
+printf '27\tCLOSED\tNOT_PLANNED\n28\tOPEN\t\n' >"$FAKE_GH_DIR/issues.tsv"
+git fetch -q origin
+
+class_of() { awk -F'\t' -v s="$2" -v b="$3" '$2 == s && $3 == b {print $1}' "$1"; }
+out=$("$plugin/scripts/cleanup.sh" 2>&1)
+report=$(echo "$out" | sed -n 's/^report: //p')
+for row in "merged local feat/23-merged" "merged local feat/24-replayed" "keep local feat/25-moved" \
+  "closed local feat/26-closed" "closed remote feat/26-closed" "closed local fix/27-dropped" \
+  "keep local feat/28-open" "stale local spike-old" "keep local main" "helper local train-feat/21-waiting"; do
+  read -r want scope name <<<"$row"
+  expect "cleanup classifies $scope $name as $want" "$want" "$(class_of "$report" "$scope" "$name")"
+done
+grep -q "feat/25-moved.*moved on since" "$report" && pass "a kept branch is reported with its reason" ||
+  fail "no reason for feat/25-moved"
+[ -n "$(git branch --list feat/23-merged)" ] && pass "a dry run deletes nothing" || fail "the dry run deleted a branch"
+
+out=$("$plugin/scripts/cleanup.sh" --apply 2>&1)
+echo "$out"
+expect "--apply deletes the merged and helper branches" "" \
+  "$(git branch --list feat/23-merged feat/24-replayed train-feat/21-waiting)"
+expect "--apply keeps closed, stale and kept branches without --include" \
+  "feat/25-moved feat/26-closed feat/28-open fix/27-dropped spike-old" \
+  "$(git branch --list --format='%(refname:short)' feat/25-moved feat/26-closed fix/27-dropped feat/28-open spike-old | paste -sd' ')"
+[ -f "$notes/merged/pr-feat_23-merged.md" ] && pass "cleanup moves the notes of a merged PR" || fail "notes not moved"
+bundle=$(echo "$out" | sed -n 's/^archived the deleted tips to //p')
+git fetch -q "$bundle" refs/heads/feat/24-replayed:refs/heads/restored 2>/dev/null &&
+  expect "the bundle restores a deleted squash-merged branch" "feat: w24" "$(git log -1 --format=%s restored)" ||
+  fail "the bundle does not restore feat/24-replayed"
+git branch -q -D restored 2>/dev/null
+
+"$plugin/scripts/cleanup.sh" --apply --include stale >/dev/null 2>&1
+expect "--include stale deletes the stale branch" "" "$(git branch --list spike-old)"
+jq '. + {factory: "dark"}' .dev-loop.json >"$work/dark.json"
+DEV_LOOP_CONFIG="$work/dark.json" "$plugin/scripts/cleanup.sh" --apply >/dev/null 2>&1
+expect "a dark factory deletes closed branches without --include" "" \
+  "$(git branch --list feat/26-closed fix/27-dropped)"
+git ls-remote --exit-code origin feat/26-closed >/dev/null 2>&1 && fail "closed remote branch kept in dark mode" ||
+  pass "a dark factory deletes the closed remote branch too"
+expect "kept branches survive every run" "feat/25-moved feat/28-open" \
+  "$(git branch --list --format='%(refname:short)' feat/25-moved feat/28-open | paste -sd' ')"
+
+git branch -q train-feat/99-left origin/main
+expect "doctor counts the leftover train refs" "1 train/replay refs outside a live train, 0 merged branches still local (cleanup.sh)" \
+  "$("$plugin/scripts/doctor.sh" 2>&1 | sed -n 's/^note    \(.*train\/replay refs.*\)$/\1/p')"
+git branch -q -D train-feat/99-left
 
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

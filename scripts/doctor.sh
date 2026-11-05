@@ -94,6 +94,18 @@ else
         optional "project $event hooks in .claude/settings.json run besides the plugin's: check they are not a copy"
     done
   fi
+  # Branch leftovers, counted without GitHub (cleanup.sh classifies every branch).
+  live=" $(awk '{printf "%s ", $1}' "$(dl_train_file)" 2>/dev/null)$(cut -d' ' -f2- "$(dl_running_file)" 2>/dev/null) "
+  locals=$(git -C "$DL_ROOT" for-each-ref --format='%(refname:strip=2) %(objectname)' refs/heads)
+  helpers=$(printf '%s\n' "$locals" | while read -r ref _; do
+    [[ "$ref" == train-* || "$ref" == replay-* ]] && [[ "$live" != *" ${ref#*-} "* ]] && echo "$ref"
+  done | wc -l)
+  merged_local=$(printf '%s\n' "$locals" | grep -cxF -f <(dl_ledger_heads) 2>/dev/null)
+  if [ "$helpers" -gt 0 ] || [ "${merged_local:-0}" -gt 0 ]; then
+    optional "$helpers train/replay refs outside a live train, ${merged_local:-0} merged branches still local (cleanup.sh)"
+  fi
+  [ "$(printf '%s\n' "$locals" | wc -l)" -gt 200 ] &&
+    optional "$(printf '%s\n' "$locals" | wc -l | tr -d ' ') local branches: cleanup.sh classifies them (dry run)"
   stale=$(find "$DL_ROOT/.claude/worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   [ "$stale" -gt 0 ] && optional "$stale agent worktrees in .claude/worktrees (remove the merged ones)"
 fi

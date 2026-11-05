@@ -12,14 +12,18 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/merge-train.sh <branch-1> <branch-2> ...    # same
 For each branch it replays the branch's own commits onto the current base, checks that the tree is exactly
 the tree the gate tested, pushes it (with a lease on the gated head), opens the PR if there is none (title =
 first line of the notes file, without a leading `#`; body = the rest), squash-merges exactly that head,
-confirms the PR is MERGED and deletes the branch. The notes files live in
-`${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
+confirms the PR is MERGED and deletes the branch. Then it records the merge in the ledger, deletes the
+local branch (removing its worktree first when that is clean), moves the notes file to `notes/merged/`, and
+once the whole train merged it deletes the train's `train-<branch>` refs. A "kept local ..." line names a
+branch it left, and why: a worktree with changes, a locked worktree, or local commits that were not
+merged. Deal with those (finish or save the work), then let `cleanup.sh` remove them. The notes files live
+in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 
 ## Exit codes
 
 | exit | meaning | what to do |
 |------|---------|------------|
-| 0 | all merged | remove the merged worktrees, comment on the issues, start the next tickets |
+| 0 | all merged | read any "kept local" lines, comment on the issues, start the next tickets |
 | 3 | replay conflict | the base changed under the train: rebase the branch, review the change, re-gate |
 | 4 | tree differs from the gated one | the base moved since the gate: re-gate the remaining branches |
 | 5 | notes file missing | write it (ask the implementer), then re-run |

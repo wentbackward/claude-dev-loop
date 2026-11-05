@@ -154,3 +154,103 @@ dl_ensure_gate_worktree() {
   fi
   printf '%s\n' "$gate"
 }
+
+# dl_running_file: where gate-train.sh records the train it is building ("<pid> <branch>..."), removed
+# when it ends, so cleanup.sh never touches the refs of a train in progress.
+dl_running_file() {
+  printf '%s/train-running.txt\n' "$DL_STATE"
+}
+
+# dl_ledger_file: one JSON line per branch merge-train.sh merged (the record cleanup.sh trusts first).
+dl_ledger_file() {
+  printf '%s/merged.jsonl\n' "$DL_STATE"
+}
+
+# dl_json_string VALUE: VALUE as a JSON string (git refs and hashes need only \ and " escaped).
+dl_json_string() {
+  local value=${1//\\/\\\\}
+  printf '"%s"' "${value//\"/\\\"}"
+}
+
+# dl_ledger_append BRANCH SOURCE_HEAD PUSHED_HEAD GATED_HEAD GATED_TREE PR MERGE_COMMIT
+dl_ledger_append() {
+  mkdir -p "$DL_STATE" &&
+    printf '{"branch":%s,"source_head":%s,"head":%s,"gated":%s,"gated_tree":%s,"pr":%s,"merge_commit":%s,"merged_at":%s}\n' \
+      "$(dl_json_string "$1")" "$(dl_json_string "$2")" "$(dl_json_string "$3")" "$(dl_json_string "$4")" \
+      "$(dl_json_string "$5")" "$(dl_json_string "$6")" "$(dl_json_string "$7")" \
+      "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >>"$(dl_ledger_file)"
+}
+
+# dl_ledger_heads: "<branch> <head>" lines, one per head the ledger accepts as merged (source and pushed).
+dl_ledger_heads() {
+  local ledger
+  ledger=$(dl_ledger_file)
+  [ -s "$ledger" ] || return 0
+  if dl_have_jq; then
+    jq -r '.branch as $b | [.source_head, .head] | unique[] | select(. != "") | "\($b) \(.)"' "$ledger" 2>/dev/null
+  else
+    python3 -I -c '
+import json, sys
+for line in open(sys.argv[1]):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    for head in sorted({entry.get("source_head", ""), entry.get("head", "")} - {""}):
+        print(entry["branch"], head)
+' "$ledger" 2>/dev/null
+  fi
+}
+
+# dl_worktree_of BRANCH: the path of the worktree that has BRANCH checked out (nothing if none);
+# with a second line "locked" when that worktree is locked.
+dl_worktree_of() {
+  git -C "$DL_ROOT" worktree list --porcelain | awk -v ref="refs/heads/$1" '
+    function done() { if (match_ && !printed) { printed = 1; print path; if (locked) print "locked"; exit } }
+    /^worktree / {done(); path = substr($0, 10); locked = 0; match_ = 0}
+    /^locked/ {locked = 1}
+    $0 == "branch " ref {match_ = 1}
+    END {done()}'
+}
+
+# dl_notes_merged_dir: where the notes files of merged branches go.
+dl_notes_merged_dir() {
+  printf '%s/merged\n' "$(dl_notes_dir)"
+}
+
+# dl_archive_note BRANCH: move the branch's notes file to the merged notes directory (if it exists).
+dl_archive_note() {
+  local note
+  note=$(dl_note_file "$1")
+  [ -f "$note" ] || return 0
+  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$note" "$(dl_notes_merged_dir)/"
+}
+
+# dl_remove_merged_local BRANCH HEAD...: after BRANCH merged, delete its local branch when its tip is one
+# of the merged HEADs, removing a clean worktree that has it checked out first. Prints what it kept, and why.
+dl_remove_merged_local() {
+  local branch=$1 tip head accepted="" worktree
+  shift
+  tip=$(git -C "$DL_ROOT" rev-parse -q --verify "refs/heads/$branch") || return 0
+  for head in "$@"; do [ "$tip" = "$head" ] && accepted=yes; done
+  if [ -z "$accepted" ]; then
+    echo "kept local $branch: it has commits that were not merged"
+    return 0
+  fi
+  worktree=$(dl_worktree_of "$branch")
+  if [ -n "$worktree" ]; then
+    local path
+    path=$(printf '%s\n' "$worktree" | head -n 1)
+    if [ "$path" = "$DL_ROOT" ]; then
+      echo "kept local $branch: the main checkout has it checked out"
+      return 0
+    elif [ "$(printf '%s\n' "$worktree" | sed -n 2p)" = locked ]; then
+      echo "kept local $branch: its worktree $path is locked"
+      return 0
+    elif ! git -C "$DL_ROOT" worktree remove "$path" >/dev/null 2>&1; then
+      echo "kept local $branch: its worktree $path has changes"
+      return 0
+    fi
+  fi
+  git -C "$DL_ROOT" branch -q -D "$branch" >/dev/null 2>&1 || echo "kept local $branch: git branch -D failed"
+}

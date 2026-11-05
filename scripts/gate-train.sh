@@ -22,6 +22,10 @@
 #                       with their rc when they had ended with 0. A SIGTERM, SIGINT or SIGHUP to this
 #                       script in parallel mode stops the running checks the same way (TRAIN RED).
 #
+# Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
+# longer in a train); it keeps those of this train and of a green train still waiting to merge. While it
+# runs, the train is recorded in train-running.txt, so cleanup.sh leaves its refs alone.
+#
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
 # (the output names the branch: drop it from the train, rebase it after the others merge).
 set -u
@@ -37,12 +41,22 @@ gate=$(dl_ensure_gate_worktree) || exit 2
 logs=$(dl_logs_dir)
 mkdir -p "$logs" "$DL_STATE" || dl_die "cannot create $logs"
 train_file=$(dl_train_file)
+running_file=$(dl_running_file)
+printf '%s %s\n' "$$" "$*" >"$running_file"
+trap 'rm -f "$running_file"' EXIT
+
+# Stale train refs: everything but this train and the unmerged branches of a waiting green train.
+keep_train=" $* "
+[ -f "$train_file" ] && keep_train+=$(awk '$4 != "merged" {printf "%s ", $1}' "$train_file")
 rm -f "$train_file"
 cd "$gate" || exit 2
 
 git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
 git rebase --abort >/dev/null 2>&1
 git checkout -q --detach "$DL_REMOTE/$DL_BASE" || dl_die "cannot check out $DL_REMOTE/$DL_BASE"
+git for-each-ref --format='%(refname:strip=2)' refs/heads | while read -r ref; do # (a ref glob stops at "/")
+  [[ "$ref" == train-* && "$keep_train" != *" ${ref#train-} "* ]] && git branch -q -D "$ref" >/dev/null 2>&1
+done
 
 base_ref="$DL_REMOTE/$DL_BASE"
 previous=""

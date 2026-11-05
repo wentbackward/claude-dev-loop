@@ -93,6 +93,9 @@ The plugin replaces the copies; the project-specific knowledge in them stays.
    - Worktrees: only when no agent is running. Save the uncommitted changes of each one (`git diff HEAD`
      and the untracked files) to the archive, keep every branch, then `git worktree remove --force --force`
      (locked ones included) and `git worktree prune`.
+   - Branches: run `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run), show the user the counts and
+     the closed and stale lists, then `--apply` (with `--include closed` / `--include stale` as they
+     agree). It saves every deleted tip to a bundle first.
 4. Record the migration in `docs/DECISIONS.md`: what was retired, where the project specifics went.
 
 ## 4. Check and commit

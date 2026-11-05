@@ -2,6 +2,23 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Branch lifecycle: branches are short-lived and the plugin removes what it made.
+  - `merge-train.sh` records every merge in a ledger (`~/.dev-loop/<repo>/merged.jsonl`), deletes the
+    local branch after the merge (removing its worktree first when that is clean; `merge.delete_local`),
+    moves the notes file to `notes/merged/`, and deletes the train's `train-*` refs once the whole train
+    merged. It names any branch it kept, and why.
+  - `gate-train.sh` deletes the `train-*` refs of earlier trains (red ones, and branches no longer in a
+    train), keeping a green train still waiting to merge, and records the train it is building.
+  - `cleanup.sh`: classifies every local and remote branch (merged, helper, closed, stale, keep) from the
+    ledger, the PR list (a replayed copy with the same changes counts as merged) and the issues; a dry run
+    unless `--apply`; saves the deleted tips to a bundle first; closed and stale branches need
+    `--include` unless `"factory": "dark"`; removes merged notes and old gate logs after
+    `cleanup.keep_days`.
+  - `doctor.sh` notes leftover train/replay refs, merged branches still local, and more than 200 local
+    branches.
+
 ## 0.4.0 — 2026-11-05
 
 - Gate options, all off by default (the gate behaves exactly as before without them):

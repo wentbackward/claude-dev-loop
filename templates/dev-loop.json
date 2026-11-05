@@ -26,7 +26,8 @@
     "clean_temp_minutes": 120
   },
   "stop_gate": { "require_clean_tree": true, "max_blocks": 5 },
-  "merge": { "method": "squash", "delete_branch": true },
+  "merge": { "method": "squash", "delete_branch": true, "delete_local": true },
+  "cleanup": { "stale_days": 14, "keep_days": 30 },
   "models": {
     "implementer": "inherit",
     "code-reviewer": "sonnet",

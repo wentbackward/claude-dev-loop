@@ -10,6 +10,11 @@
 # notes file: first line title, a leading "#" is stripped, the rest is the body), squash-merge exactly that
 # head (--match-head-commit), confirm the PR is MERGED and delete the remote branch.
 #
+# After each merge: append the merge to the ledger (~/.dev-loop/<repo>/merged.jsonl, read by cleanup.sh),
+# delete the local branch when its tip is the merged head (removing its worktree first when that is clean;
+# otherwise it says what it kept and why), and move the notes file to notes/merged/. When the whole train
+# has merged, delete its train-<branch> refs. merge.delete_local: false keeps the local branches.
+#
 # Identity mode (.dev-loop.json "identities"): pushes, the commit status and the merge run as the gate
 # identity, a missing PR is opened as the implementer, and the PR must carry an approval (reviewer
 # identity) on the pushed head. The gate posts the required status (github.status_context, default
@@ -32,6 +37,7 @@ gate=$(dl_gate_dir)
 [ -d "$gate" ] || dl_die "no gate worktree at $gate (run gate-train.sh first)"
 train_file=$(dl_train_file)
 delete_branch=$(cfg merge.delete_branch true)
+delete_local=$(cfg merge.delete_local true)
 merge_method=$(cfg merge.method squash)
 status_context=$(cfg github.status_context "dev-loop/gate")
 identity_mode=""
@@ -129,8 +135,13 @@ for branch in "$@"; do
     exit 7
   fi
   record "$branch" 4 merged
+  dl_ledger_append "$branch" "$source_head" "$head" "$gated" "$(git -C "$gate" rev-parse "$gated^{tree}")" \
+    "$(as_role gate gh pr view "$branch" --json number --jq .number 2>/dev/null)" \
+    "$(as_role gate gh pr view "$branch" --json mergeCommit --jq .mergeCommit.oid 2>/dev/null)"
   [ "$delete_branch" = false ] || as_role gate git push -q "$DL_REMOTE" --delete "$branch" >/dev/null 2>&1
   git fetch -q --prune "$DL_REMOTE"
+  [ "$delete_local" = false ] || dl_remove_merged_local "$branch" "$source_head" "$head"
+  dl_archive_note "$branch"
   # Fast-forward the main checkout only when it is on the base branch and clean.
   if [ "$(git rev-parse --abbrev-ref HEAD)" = "$DL_BASE" ] && [ -z "$(git status --porcelain)" ]; then
     git merge -q --ff-only "$DL_REMOTE/$DL_BASE" >/dev/null 2>&1
@@ -138,5 +149,9 @@ for branch in "$@"; do
   echo "merged $branch -> $(git log --oneline -1 "$DL_REMOTE/$DL_BASE")"
   previous=$branch
 done
+# The train refs are needed until the whole train has merged (each replay starts at the previous one).
+while read -r branch _; do
+  git -C "$DL_ROOT" branch -q -D "train-$branch" >/dev/null 2>&1
+done <"$train_file"
 rm -f "$train_file"
-echo "notes kept in $(dl_notes_dir)"
+echo "notes of the merged branches moved to $(dl_notes_merged_dir)"

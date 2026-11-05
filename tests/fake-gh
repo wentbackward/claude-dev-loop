@@ -2,7 +2,9 @@
 # A stand-in for the GitHub CLI, for the smoke tests: PRs live in $FAKE_GH_DIR, a squash merge is a real
 # squash commit pushed to the local bare origin. Every call is logged with the identity (GH_TOKEN) it ran
 # as. Like GitHub, a PR author cannot approve its own PR, and a merge needs an approval when
-# FAKE_GH_REQUIRE_APPROVAL=1. Supports only what the plugin's scripts call.
+# FAKE_GH_REQUIRE_APPROVAL=1. PRs get numbers in creation order; issues come from $FAKE_GH_DIR/issues.tsv
+# ("<number>\t<state>\t<reason>"). `pr list` and `issue list` print the rows the scripts' --jq asks for.
+# Supports only what the plugin's scripts call.
 set -u
 dir=${FAKE_GH_DIR:?FAKE_GH_DIR not set}
 mkdir -p "$dir"
@@ -16,6 +18,8 @@ case "${1:-} ${2:-}" in
     case "${5:-}" in
       state) cat "$dir/$(key "$branch").state" ;;
       reviewDecision) if [ -f "$dir/$(key "$branch").approved" ]; then echo APPROVED; else echo REVIEW_REQUIRED; fi ;;
+      number) cat "$dir/$(key "$branch").number" ;;
+      mergeCommit) cat "$dir/$(key "$branch").merge" 2>/dev/null ;;
     esac
     ;;
   "pr create")
@@ -33,6 +37,21 @@ case "${1:-} ${2:-}" in
     cp "$body_file" "$dir/$(key "$head").body"
     echo "$who" >"$dir/$(key "$head").author"
     echo OPEN >"$dir/$(key "$head").state"
+    count=$(($(cat "$dir/count" 2>/dev/null || echo 0) + 1))
+    echo "$count" >"$dir/count"
+    echo "$count" >"$dir/$(key "$head").number"
+    echo "$head" >"$dir/$(key "$head").name"
+    git rev-parse "origin/$head" >"$dir/$(key "$head").head" 2>/dev/null || true
+    ;;
+  "pr list")
+    for name_file in "$dir"/*.name; do
+      [ -f "$name_file" ] || continue
+      pr=${name_file%.name}
+      printf '%s\t%s\t%s\t%s\n' "$(cat "$name_file")" "$(cat "$pr.head")" "$(cat "$pr.state")" "$(cat "$pr.number")"
+    done
+    ;;
+  "issue list")
+    [ ! -f "$dir/issues.tsv" ] || cat "$dir/issues.tsv"
     ;;
   "pr review")
     branch=$3
@@ -57,6 +76,8 @@ case "${1:-} ${2:-}" in
       git merge -q --squash "origin/$branch" >/dev/null
       git commit -q -m "$(cat "$dir/$(key "$branch").title")"
       git push -q origin HEAD:main
+      git rev-parse HEAD >"$dir/$(key "$branch").merge"
+      git rev-parse "origin/$branch" >"$dir/$(key "$branch").head"
     ) || { rm -rf "$work"; exit 1; }
     rm -rf "$work"
     echo MERGED >"$dir/$(key "$branch").state"

@@ -28,6 +28,10 @@ absolute paths into their prompts.
    Agent lifetimes are in section 3a.
 5. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
    written, agents to resume) before starting new work.
+6. `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run): when it reports merged or helper branches, run
+   it with `--apply`. Show the user the "closed" and "stale" lists and delete those (`--apply --include
+   closed`, `--include stale`) only on their OK, unless `factory` is `dark`. It never touches kept
+   branches.
 
 ## 1. Tickets
 
@@ -145,8 +149,10 @@ In identity mode it posts the required `dev-loop/gate` status and merges as the 
 means the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and
 approve again, then re-run merge-train with the remaining branches.
 
-After merging: remove the merged worktrees (`git worktree remove <path>`), comment on the issues, start
-the next tickets.
+After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
+line it printed, comment on the issues, start the next tickets. A ticket closed without a merge (dropped,
+superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
+user's OK.
 
 Stacked branches: after the lower branch merges, rebase the upper one with
 `git rebase --onto <remote>/<base> <old lower head> <upper>` so it never carries foreign commits.

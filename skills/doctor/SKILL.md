@@ -29,6 +29,8 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING .claude/agents/<agent>.md shadows ...` | the `setup` skill's "Migrate a hand-built loop" step |
 | `note project <event> hooks` | compare them with the plugin's hooks; remove copies (same step) |
 | `note <n> agent worktrees` | remove the merged ones (same step; ask first, save uncommitted work) |
+| `note ... train/replay refs ..., ... merged branches still local` | `cleanup.sh` (dry run), then `--apply` |
+| `note <n> local branches` | `cleanup.sh` (dry run): it classifies them; delete closed/stale only on the user's OK |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
