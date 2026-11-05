@@ -10,7 +10,10 @@
 # notes file: first line title, a leading "#" is stripped, the rest is the body), squash-merge exactly that
 # head (--match-head-commit), confirm the PR is MERGED and delete the remote branch.
 #
-# After each merge: append the merge to the ledger (~/.dev-loop/<repo>/merged.jsonl, read by cleanup.sh),
+# After each merge: append the merge to the ledger (~/.dev-loop/<repo>/merged.jsonl, read by cleanup.sh and
+# arch-evidence.sh: the heads, the PR, the merge commit, and the evidence: the files the merge changed,
+# their components through the cards (with "architecture"), the lines added and deleted, the review rounds
+# and the ticket from the notes file),
 # delete the local branch when its tip is the merged head (removing its worktree first when that is clean;
 # otherwise it says what it kept and why), and move the notes file to notes/merged/. When the whole train
 # has merged, delete its train-<branch> refs. merge.delete_local: false keeps the local branches.
@@ -29,6 +32,8 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$scripts_dir/lib/common.sh"
 # shellcheck source=lib/identity.sh
 . "$scripts_dir/lib/identity.sh"
+# shellcheck source=lib/arch.sh
+. "$scripts_dir/lib/arch.sh"
 
 [ $# -gt 0 ] || dl_die "usage: merge-train.sh <branch> [<branch> ...]"
 dl_load_train_config --recorded "$1"
@@ -96,6 +101,10 @@ for branch in "$@"; do
     exit 4
   fi
   head=$(git rev-parse HEAD)
+  changed=$(git -c core.quotePath=false diff --name-only "$DL_REMOTE/$DL_BASE" HEAD)
+  read -r added deleted <<<"$(dl_diff_lines "$DL_REMOTE/$DL_BASE" HEAD)"
+  components=""
+  dl_arch_on && components=$(printf '%s\n' "$changed" | dl_arch_components_at HEAD)
   if [ "$head" != "$source_head" ]; then
     if ! as_role gate git push -q --force-with-lease="$branch:$source_head" "$DL_REMOTE" "replay-$branch:$branch"; then
       git checkout -q --detach "$DL_REMOTE/$DL_BASE"
@@ -135,9 +144,11 @@ for branch in "$@"; do
     exit 7
   fi
   record "$branch" 4 merged
+  note=$(dl_note_file "$branch")
   dl_ledger_append "$branch" "$source_head" "$head" "$gated" "$(git -C "$gate" rev-parse "$gated^{tree}")" \
     "$(as_role gate gh pr view "$branch" --json number --jq .number 2>/dev/null)" \
-    "$(as_role gate gh pr view "$branch" --json mergeCommit --jq .mergeCommit.oid 2>/dev/null)"
+    "$(as_role gate gh pr view "$branch" --json mergeCommit --jq .mergeCommit.oid 2>/dev/null)" \
+    "$(dl_notes_ticket "$note" "$branch")" "$(dl_notes_review_rounds "$note")" "$added" "$deleted" "$changed" "$components"
   [ "$delete_branch" = false ] || as_role gate git push -q "$DL_REMOTE" --delete "$branch" >/dev/null 2>&1
   git fetch -q --prune "$DL_REMOTE"
   [ "$delete_local" = false ] || dl_remove_merged_local "$branch" "$source_head" "$head"

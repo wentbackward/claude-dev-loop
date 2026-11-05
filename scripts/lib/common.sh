@@ -240,13 +240,31 @@ dl_json_string() {
   printf '"%s"' "${value//\"/\\\"}"
 }
 
-# dl_ledger_append BRANCH SOURCE_HEAD PUSHED_HEAD GATED_HEAD GATED_TREE PR MERGE_COMMIT
+# dl_json_list < LINES: the non-empty lines as a JSON array of strings.
+dl_json_list() {
+  local line out=""
+  while IFS= read -r line; do
+    [ -n "$line" ] && out="${out:+$out,}$(dl_json_string "$line")"
+  done
+  printf '[%s]' "$out"
+}
+
+# dl_json_number VALUE: VALUE when it is a whole number, else null.
+dl_json_number() {
+  case $1 in "" | *[!0-9]*) printf 'null' ;; *) printf '%s' "$((10#$1))" ;; esac
+}
+
+# dl_ledger_append BRANCH SOURCE_HEAD PUSHED_HEAD GATED_HEAD GATED_TREE PR MERGE_COMMIT [TICKET REVIEW_ROUNDS
+# ADDED DELETED FILES COMPONENTS]: FILES one path per line, COMPONENTS separated by spaces; missing evidence
+# is written as none (null ticket, 0 rounds and lines, empty lists).
 dl_ledger_append() {
   mkdir -p "$DL_STATE" &&
-    printf '{"branch":%s,"source_head":%s,"head":%s,"gated":%s,"gated_tree":%s,"pr":%s,"merge_commit":%s,"merged_at":%s}\n' \
+    printf '{"branch":%s,"source_head":%s,"head":%s,"gated":%s,"gated_tree":%s,"pr":%s,"merge_commit":%s,"merged_at":%s,"files":%s,"components":%s,"lines":{"added":%s,"deleted":%s},"review_rounds":%s,"ticket":%s}\n' \
       "$(dl_json_string "$1")" "$(dl_json_string "$2")" "$(dl_json_string "$3")" "$(dl_json_string "$4")" \
       "$(dl_json_string "$5")" "$(dl_json_string "$6")" "$(dl_json_string "$7")" \
-      "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >>"$(dl_ledger_file)"
+      "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" "$(printf '%s\n' "${12:-}" | dl_json_list)" \
+      "$(printf '%s\n' "${13:-}" | tr ' ' '\n' | dl_json_list)" "$(dl_json_number "${10:-0}")" "$(dl_json_number "${11:-0}")" \
+      "$(dl_json_number "${9:-0}")" "$(dl_json_number "${8:-}")" >>"$(dl_ledger_file)"
 }
 
 # dl_ledger_heads: "<branch> <head>" lines, one per head the ledger accepts as merged (source and pushed).
@@ -297,6 +315,76 @@ print(count)
 # dl_doc_audit_file: the marker the orchestrator writes after each doc audit (one line: its UTC time).
 dl_doc_audit_file() {
   printf '%s/doc-audit.txt\n' "$DL_STATE"
+}
+
+# dl_architect_file: the marker the orchestrator writes after each architect run (one line: its UTC time).
+dl_architect_file() {
+  printf '%s/architect.txt\n' "$DL_STATE"
+}
+
+# dl_ledger_rows: the valid ledger entries in ledger order, as "M<TAB>n<TAB>branch<TAB>ticket<TAB>merged_at
+# <TAB>review_rounds<TAB>merge_commit<TAB>has_files" (has_files: 1 when the entry lists its files; n counts
+# from 1), each followed by one "F<TAB>n<TAB>path" line per file. Lines that are not JSON objects are skipped.
+dl_ledger_rows() {
+  local ledger
+  ledger=$(dl_ledger_file)
+  [ -s "$ledger" ] || return 0
+  if dl_have_jq; then
+    jq -n -R -r '
+      def clean: tostring | gsub("[\t\n\r]"; " ");
+      [inputs | fromjson? | select(type == "object")] | to_entries[] | (.key + 1) as $n | .value
+      | (["M", $n, .branch // "", .ticket // "", .merged_at // "", .review_rounds // "", .merge_commit // "",
+          (if (.files | type) == "array" then 1 else 0 end)] | map(clean) | join("\t")),
+        ((if (.files | type) == "array" then .files[] else empty end) | "F\t\($n)\t\(clean)")' "$ledger" 2>/dev/null
+  else
+    python3 -I -c '
+import json, sys
+def clean(value):
+    value = "" if value is None else value
+    if isinstance(value, bool):
+        value = "true" if value else "false"
+    return str(value).replace("\t", " ").replace("\n", " ").replace("\r", " ")
+n = 0
+for line in open(sys.argv[1]):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(entry, dict):
+        continue
+    n += 1
+    files = entry.get("files")
+    fields = ["M", n] + [entry.get(k) for k in ("branch", "ticket", "merged_at", "review_rounds", "merge_commit")]
+    print("\t".join(clean(f) for f in fields + [1 if isinstance(files, list) else 0]))
+    for path in files if isinstance(files, list) else []:
+        print("F\t%d\t%s" % (n, clean(path)))
+' "$ledger" 2>/dev/null
+  fi
+}
+
+# dl_notes_ticket NOTES BRANCH: the issue a branch closes: the first "Closes #n" (or Fixes, Resolves) in its
+# notes file, else the number in the branch name (feat/<n>-slug), else nothing.
+dl_notes_ticket() {
+  local ticket=""
+  [ -f "$1" ] && ticket=$(grep -ioE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' "$1" | head -n 1 | sed 's/.*#//')
+  [ -n "$ticket" ] || ticket=$(printf '%s\n' "$2" | sed -n 's:^[^/]*/\([0-9][0-9]*\)-.*:\1:p')
+  printf '%s\n' "$ticket"
+}
+
+# dl_notes_review_rounds NOTES: the code-reviewer rounds of a branch: a "Review rounds: <n>" line the
+# orchestrator records, else one plus a "Review fixes" heading per round of fixes; 0 without a notes file.
+dl_notes_review_rounds() {
+  local rounds
+  [ -f "$1" ] || { echo 0; return 0; }
+  rounds=$(sed -n 's/^[[:space:]]*[Rr]eview rounds:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" | head -n 1)
+  [ -n "$rounds" ] || rounds=$(($(grep -ciE '^#+[[:space:]]+review fixes' "$1") + 1))
+  echo "$rounds"
+}
+
+# dl_diff_lines FROM TO: "<added> <deleted>", the lines the change from FROM to TO adds and deletes (binary
+# files count 0).
+dl_diff_lines() {
+  git diff --numstat "$1" "$2" | awk '{ if ($1 != "-") a += $1; if ($2 != "-") d += $2 } END { print a + 0, d + 0 }'
 }
 
 # dl_worktree_of BRANCH: the path of the worktree that has BRANCH checked out (nothing if none);
