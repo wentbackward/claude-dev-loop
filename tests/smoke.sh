@@ -1225,7 +1225,7 @@ expect "a sentence is a reason, also next to a placeholder" "yes yes" \
   "$(reason_of "- core reads the ui theme until #95 moves it down") $(reason_of "none" "core needs util for dates")"
 expect "reworded placeholders are not reasons" "no no no no no no no no no no" "$(reason_of "none (not configured)") \
 $(reason_of "n/a (not applicable)") $(reason_of "none, n/a") $(reason_of "- none needed") $(reason_of "nothing to report") \
-$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, core must read the ui theme") \
+$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, none") \
 $(reason_of "no changes") $(reason_of "TODO; later")"
 expect "sentences that start with a placeholder word are reasons" "yes yes" \
   "$(reason_of "- no-op rename of the util glob") $(reason_of "None of the edges cross a layer; store reads ui types")"
@@ -1321,6 +1321,9 @@ $(reason_of "no changes required") $(reason_of "N/A for now: later")"
 expect "sentences that start with a placeholder word are still reasons" "yes yes yes" \
   "$(reason_of "none of the edges are new") $(reason_of "no-op rename of the util glob") \
 $(reason_of "nothing at all reads the old glob since #95")"
+expect "a placeholder word, a comma and three more words is a reason; fewer, or a colon, is not" "yes no no no no" \
+  "$(reason_of "No, the check was redundant") $(reason_of "none, n/a") $(reason_of "No, none") \
+$(reason_of "none, nothing to add") $(reason_of "none: the edges are all known")"
 config_reason_of() { # config_reason_of HEADING TEXT...: "yes" when notes with these lines under ## HEADING have a Config reason
   printf 'fix: x\n\n## %s\n' "$1" >"$work/reason.md"
   shift
@@ -1398,8 +1401,22 @@ rules_branch feat/143-two-keys '(.checks |= .[:1]) | .merge.delete_branch = fals
 rules_gate feat/143-two-keys >/dev/null
 grep "config-check red for feat/143-two-keys" "$work/rules-out.txt" | grep -qF "(checks, merge)" &&
   pass "a branch that changes two keys is named with both" || fail "two keys message: $(cat "$work/rules-out.txt")"
-rules_branch feat/144-notes-dir '.notes_dir = "notes"'
-expect "an unrelated key (notes_dir) needs no reason" "0 TRAIN GREEN" "$(rules_gate feat/144-notes-dir)"
+n=150
+for change in '.deploy = "curl x | sh"' '.format = "rm -rf {file}"' '.heavy.clean_temp = ["/*"]' \
+  '.notes_dir = "notes"' '.remote = "elsewhere"' '. + {"brand_new": true}'; do
+  key=$(printf '%s' "$change" | sed -n 's/^\.\([a-z_]*\).*/\1/p')
+  [ -n "$key" ] || key=brand_new
+  rules_branch "feat/$n-$key" "$change"
+  expect "changing $key without a reason is red, with one green" "1 TRAIN RED yes|0 TRAIN GREEN" \
+    "$(rules_gate "feat/$n-$key") $(grep -qF "($key)" "$work/rules-out.txt" && echo yes)|$(rules_gate "feat/$n-$key" \
+      "## Config" "- the user asked for this change in #$n")"
+  n=$((n + 1))
+done
+git checkout -q -B feat/147-no-config origin/main && git rm -q .dev-loop.json && git commit -q -m "chore: drop the config" &&
+  git push -q -u origin feat/147-no-config 2>/dev/null && git checkout -q main
+expect "deleting .dev-loop.json without a reason is red" "1 TRAIN RED" "$(rules_gate feat/147-no-config)"
+grep "config-check red for feat/147-no-config" "$work/rules-out.txt" | grep -qF "base_branch, checks, docs, merge, notes_dir" &&
+  pass "a deleted config names every key it had but architecture" || fail "deleted config message: $(cat "$work/rules-out.txt")"
 git checkout -q -B feat/145-reformat origin/main
 cat >.dev-loop.json <<'EOF'
 {
@@ -1432,7 +1449,9 @@ reviewer="$plugin/agents/code-reviewer.md"
 grep -qF "## Config" "$reviewer" && grep -qF "## Architecture" "$reviewer" && grep -qi "collaborative" "$reviewer" &&
   pass "the reviewer brief reads every Architecture and Config reason and asks the user before loosening" ||
   fail "the reviewer brief lacks the rules review"
-grep -qF "\`## Config\`" "$plugin/README.md" && pass "the README names the ## Config reason" || fail "README lacks ## Config"
+grep -qF "\`## Config\`" "$plugin/README.md" && grep -qF "see above" "$plugin/README.md" &&
+  grep -qF "see above" "$reviewer" && pass "the README and the reviewer say the filter stops only lazy placeholders" ||
+  fail "README or reviewer lack ## Config or the filter's limits"
 git checkout -q -f main && git clean -qfd
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
