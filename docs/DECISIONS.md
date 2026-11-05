@@ -216,7 +216,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   and `lines` from `git diff <remote>/<base> <replayed head>` (exactly what the squash commit changes;
   names read NUL-separated and stored as real paths, JSON-escaped, a byte that is not UTF-8 replaced by
   U+FFFD so every line stays valid UTF-8 JSON; `arch-evidence.sh` reads a tab or a line break in a name
-  as a space), `components` through the cards
+  as a space), encoded by jq only when a probe shows it reads NUL-separated input whole (jq 1.6's
+  raw slurp may stop at the first NUL), else by python3; with neither, by bash, which drops names that hold
+  a tab, a line break or another control character and keeps other bytes as they are. The line counts of
+  `dl_arch_line_counts` and of the growth signal still split a path with a tab or a line break, so such a
+  file may be miscounted there: a heuristic for the evidence only, never what the ledger stores, `components` through the cards
   of the replayed head (empty without `architecture.check`), `ticket` from the notes' first `Closes`,
   `Fixes` or `Resolves #n`, else the branch's `<type>/<n>-` number, else `null`, and `review_rounds` from a
   `Review rounds: <n>` line in the notes, else one plus each `Review fixes` heading, `0` without a notes

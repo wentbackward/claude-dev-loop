@@ -235,46 +235,100 @@ dl_ledger_file() {
 }
 
 # dl_json_string VALUE: VALUE as a JSON string. Printable ASCII needs only \ and " escaped; other text goes
-# through dl_json_list_z, which escapes control characters and replaces bytes that are not UTF-8.
+# through dl_json_list_z, which escapes control characters and replaces bytes that are not UTF-8 (without
+# jq or python3 able to: control characters are dropped, other bytes kept).
 dl_json_string() {
   local LC_ALL=C value list
   if [[ $1 == *[^\ -~]* ]]; then
+    _dl_json_z_pick
+    if [ "$DL_JSON_Z_TOOL" = bash ]; then
+      _dl_json_ascii "$(printf '%s' "$1" | tr -d '\000-\037\177')"
+      return
+    fi
     list=$(printf '%s\0' "$1" | dl_json_list_z)
     list=${list#[}
     printf '%s' "${list%]}"
     return
   fi
-  value=${1//\\/\\\\}
+  _dl_json_ascii "$1"
+}
+
+# _dl_json_ascii VALUE: VALUE as a JSON string with only \ and " escaped.
+_dl_json_ascii() {
+  local value=${1//\\/\\\\}
   printf '"%s"' "${value//\"/\\\"}"
 }
 
-# dl_json_list_z < NAMES: the NUL-separated names as a compact JSON array of strings, control characters
-# escaped and bytes that are not UTF-8 replaced by U+FFFD.
-dl_json_list_z() {
-  if dl_have_jq; then
-    jq -R -s -c 'split("\u0000") | map(select(. != ""))'
+# _dl_json_z_pick: set DL_JSON_Z_TOOL (once per shell) to the tool that encodes NUL-separated names: jq when
+# it reads NULs whole (jq 1.6's raw slurp may cut its input at the first NUL), else python3, else bash.
+# DEV_LOOP_JSON_Z=bash forces the bash fallback (for tests).
+_dl_json_z_pick() {
+  [ -z "${DL_JSON_Z_TOOL:-}" ] || return 0
+  if [ "${DEV_LOOP_JSON_Z:-}" = bash ]; then
+    DL_JSON_Z_TOOL=bash
+  elif dl_have_jq && [ "$(printf 'a\0b\0' | jq -R -s -c 'split("\u0000")' 2>/dev/null)" = '["a","b",""]' ]; then
+    DL_JSON_Z_TOOL=jq
+  elif command -v python3 >/dev/null 2>&1; then
+    DL_JSON_Z_TOOL=python3
   else
-    python3 -I -c '
+    DL_JSON_Z_TOOL=bash
+  fi
+}
+
+# dl_json_z_tool: the tool dl_json_list_z and dl_z_lines use (jq, python3 or bash).
+dl_json_z_tool() {
+  _dl_json_z_pick
+  printf '%s\n' "$DL_JSON_Z_TOOL"
+}
+
+# dl_json_list_z < NAMES: the NUL-separated names as a compact JSON array of strings, control characters
+# escaped and bytes that are not UTF-8 replaced by U+FFFD. The bash fallback (neither jq nor python3 can)
+# drops names with a control character (a tab, a line break) and keeps other bytes as they are.
+dl_json_list_z() {
+  local name out=""
+  _dl_json_z_pick
+  case $DL_JSON_Z_TOOL in
+    jq) jq -R -s -c 'split("\u0000") | map(select(. != ""))' ;;
+    python3)
+      python3 -I -c '
 import json, sys
 names = [n for n in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0") if n]
 sys.stdout.buffer.write((json.dumps(names, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
 '
-  fi
+      ;;
+    *)
+      while IFS= read -r -d '' name; do
+        [ -n "$name" ] && [ "$(printf '%s' "$name" | tr -d '\000-\037\177')" = "$name" ] &&
+          out="${out:+$out,}$(_dl_json_ascii "$name")"
+      done
+      printf '[%s]\n' "$out"
+      ;;
+  esac
 }
 
 # dl_z_lines < NAMES: the NUL-separated names one per line, as dl_json_list_z stores them (bytes that are
 # not UTF-8 replaced by U+FFFD), with tabs and line breaks as spaces (the form dl_ledger_rows prints).
 dl_z_lines() {
-  if dl_have_jq; then
-    jq -R -s -r 'split("\u0000")[] | select(. != "") | gsub("[\t\n\r]"; " ")'
-  else
-    python3 -I -c '
+  local name
+  _dl_json_z_pick
+  case $DL_JSON_Z_TOOL in
+    jq) jq -R -s -r 'split("\u0000")[] | select(. != "") | gsub("[\t\n\r]"; " ")' ;;
+    python3)
+      python3 -I -c '
 import sys
 for name in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0"):
     if name:
         sys.stdout.buffer.write((" ".join(name.replace("\r", "\n").replace("\t", "\n").split("\n")) + "\n").encode("utf-8"))
 '
-  fi
+      ;;
+    *)
+      while IFS= read -r -d '' name; do
+        [ -n "$name" ] || continue
+        printf '%s' "$name" | tr '\t\r\n' '   '
+        echo
+      done
+      ;;
+  esac
 }
 
 # dl_json_list < LINES: the non-empty lines as a JSON array of strings.
