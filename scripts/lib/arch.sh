@@ -138,7 +138,12 @@ part == 1 {
   card[n] = $2; name[n] = $3; layer[n] = $4 + 0; kind[n] = $5; listed[n] = $7; deps[n] = $8; max[n] = $9
   index_of[$3] = n
   patterns[n] = split($6, list, " ")
-  for (k = 1; k <= patterns[n]; k++) { pattern[n, k] = list[k]; regex[n, k] = glob_re(list[k]) }
+  for (k = 1; k <= patterns[n]; k++) {
+    pattern[n, k] = list[k]; regex[n, k] = glob_re(list[k])
+    if (list[k] in glob_card && glob_card[list[k]] != $2)
+      print "E\t" $2 ": paths glob \"" list[k] "\" is also in " glob_card[list[k]] " (one card per glob)"
+    else glob_card[list[k]] = $2
+  }
   dependencies = split($8, list, " ")
   for (k = 1; k <= dependencies; k++) allowed[n, list[k]] = 1
   next
@@ -199,19 +204,67 @@ END {
 # dl_arch_analyse DIR: run architecture.check in the checkout DIR, map its edges and files to the cards,
 # and print the tagged results (errors, violations, files in no component, component sizes).
 dl_arch_analyse() {
-  local dir=$1 tmp rc budget
-  budget=$(dl_arch_budget) || budget=0
+  local tmp
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-arch.XXXXXX") || return 2
-  dl_arch_cards "$dir" >"$tmp/cards"
+  _dl_arch_gather "$1" "$tmp"
+  _dl_arch_evaluate "$1" "$tmp"
+  rm -rf "$tmp"
+}
+
+# _dl_arch_gather DIR TMP: the edges of architecture.check (TMP/edges, a failure as an error in TMP/errors)
+# and the line counts (TMP/counts) of the checkout DIR.
+_dl_arch_gather() {
+  local dir=$1 tmp=$2 rc
+  : >"$tmp/errors"
   (cd "$dir" && bash -c "$(cfg architecture.check)") >"$tmp/edges" 2>"$tmp/stderr" </dev/null
   rc=$?
   if [ "$rc" -ne 0 ]; then
-    printf 'E\tarchitecture.check failed (rc %s): %s\n' "$rc" "$(tail -n 1 "$tmp/stderr")"
+    printf 'E\tarchitecture.check failed (rc %s): %s\n' "$rc" "$(tail -n 1 "$tmp/stderr")" >"$tmp/errors"
     : >"$tmp/edges"
   fi
   dl_arch_line_counts "$dir" >"$tmp/counts"
-  awk -F'\t' '$1 == "E"' "$tmp/cards"
-  LC_ALL=C awk -F'\t' -v budget="$budget" "$_dl_arch_analyse_awk" part=1 "$tmp/cards" part=2 "$tmp/counts" part=3 "$tmp/edges"
+}
+
+# _dl_arch_evaluate ROOT TMP: the tagged results of the facts in TMP judged by the cards under ROOT.
+_dl_arch_evaluate() {
+  local budget
+  budget=$(dl_arch_budget) || budget=0
+  dl_arch_cards "$1" >"$2/cards"
+  awk -F'\t' '$1 == "E"' "$2/cards"
+  cat "$2/errors"
+  LC_ALL=C awk -F'\t' -v budget="$budget" "$_dl_arch_analyse_awk" part=1 "$2/cards" part=2 "$2/counts" part=3 "$2/edges"
+}
+
+# dl_arch_extract_cards REF DEST: the cards folder of commit REF, under DEST at its repository path
+# (nothing when REF has no cards folder).
+dl_arch_extract_cards() {
+  local folder
+  folder=$(dl_arch_cards_dir)
+  mkdir -p "$2" || return 1
+  git cat-file -e "$1:$folder" 2>/dev/null || return 0
+  git archive "$1" "$folder" | tar -xf - -C "$2"
+}
+
+# dl_arch_headers_changed FROM TO: the card headers (what the checks read) of commit TO differ from FROM's.
+dl_arch_headers_changed() {
+  local tmp rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-arch-cards.XXXXXX") || return 0
+  dl_arch_extract_cards "$1" "$tmp/from" && dl_arch_extract_cards "$2" "$tmp/to"
+  [ "$(dl_arch_cards "$tmp/from")" != "$(dl_arch_cards "$tmp/to")" ]
+  rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+# dl_arch_loosened DIR ROOT: the violations of the checkout DIR under the cards below ROOT (another commit's)
+# that DIR's own cards no longer report, one per line: what DIR's card edits hide.
+dl_arch_loosened() {
+  local tmp
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-arch.XXXXXX") || return 2
+  _dl_arch_gather "$1" "$tmp"
+  _dl_arch_evaluate "$2" "$tmp" | dl_arch_tagged V | LC_ALL=C sort -u >"$tmp/old"
+  _dl_arch_evaluate "$1" "$tmp" | dl_arch_tagged V | LC_ALL=C sort -u >"$tmp/new"
+  dl_arch_compare "$tmp/old" "$tmp/new" | dl_arch_tagged fixed
   rm -rf "$tmp"
 }
 
@@ -252,13 +305,23 @@ dl_arch_compare() {
   LC_ALL=C awk "$_dl_arch_compare_awk" part=1 "$1" part=2 "$2" | LC_ALL=C sort
 }
 
-# dl_arch_notes_reason FILE: the notes file's "## Architecture" section has a line of text (the reason).
+# dl_arch_notes_reason FILE: the notes file's "## Architecture" section has a reason: a line of text that is
+# not a placeholder ("none", "n/a", "TODO", "-" and the like, in any case, also as "none: ...").
 dl_arch_notes_reason() {
   [ -n "$1" ] && [ -f "$1" ] || return 1
   awk '
+    function placeholder(text,   word) {
+      text = tolower(text)
+      gsub(/[`*_"]/, "", text)
+      sub(/^[ \t]*([-+*>]|[0-9]+[.)])?[ \t]*/, "", text)
+      sub(/[ \t.!?]+$/, "", text)
+      word = text
+      sub(/[ \t]*[:=-].*$/, "", word)
+      return word ~ /^(none|nothing|n\/a|na|n\.a|todo|tbd|tba|fixme|xxx|nil|null|no|empty|later)$/
+    }
     /^#+[ \t]/ { heading = tolower($0); sub(/^#+[ \t]+/, "", heading); sub(/[ \t]+$/, "", heading)
                  in_section = ($0 ~ /^##[ \t]/ && heading == "architecture"); next }
-    in_section && $0 ~ /[A-Za-z0-9]/ { found = 1; exit }
+    in_section && $0 ~ /[A-Za-z0-9]/ && $0 !~ /^[ \t]*<!--/ && !placeholder($0) { found = 1; exit }
     END { exit !found }' "$1"
 }
 

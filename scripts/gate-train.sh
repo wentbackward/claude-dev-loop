@@ -25,9 +25,10 @@
 #                       commits (from the train ref below it, or the base) with its notes file; a red branch
 #                       is named and the train ends TRAIN RED before gate_setup and the checks.
 #   "architecture": {"check", "cards", "baseline", "budget"}  after gate_setup and before the checks: a
-#                       branch whose commits add baseline entries needs a reason under "## Architecture" in
-#                       its notes; then arch-check.sh on the train's top. With a new violation, each branch's
-#                       train ref is checked in order and named for the new lines it brings; TRAIN RED.
+#                       branch whose commits add baseline entries, or change card headers so that violations
+#                       disappear, needs a reason under "## Architecture" in its notes; then arch-check.sh
+#                       on the train's top. With a new violation, or a baseline entry the train fixed but
+#                       kept, each branch's train ref is checked in order and named; TRAIN RED.
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
 # longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
@@ -149,11 +150,56 @@ arch_lines() {
   printf '%s\n' "$1" | grep -E '^arch-check: (new|error:) '
 }
 
-# check_arch: with "architecture" configured, a branch may add baseline entries only with a reason in its
-# notes' "## Architecture" section; then arch-check.sh on the train's top (HEAD). When the top is red,
-# each branch's train ref is checked in order and named for the new lines it brings first.
+# arch_entries OUTPUT TAG...: the entries an arch-check.sh output prints with these tags (new, known, fixed).
+arch_entries() {
+  local output=$1 tag
+  shift
+  for tag in "$@"; do
+    printf '%s\n' "$output" | sed -n "s/^arch-check: $tag //p" | sed 's/ (remove it from the baseline)$//'
+  done
+}
+
+# arch_loosened FROM BRANCH: a branch without a reason in its notes may not change card headers so that
+# violations disappear (checked only when a header changed); red prints why and returns 1.
+arch_loosened() {
+  local hidden rc
+  dl_arch_notes_reason "$(dl_note_file "$2")" && return 0
+  dl_arch_headers_changed "$1" "train-$2" || return 0
+  git checkout -q "train-$2" 2>/dev/null
+  hidden=$("$scripts_dir/arch-check.sh" --loosened "$1" "train-$2" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  if [ "$rc" -ne 1 ]; then
+    echo "arch-check error for $2 (--loosened):"
+    printf '%s\n' "$hidden" | sed 's/^/  /'
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    exit 2
+  fi
+  echo "arch-check red for $2: its card header edits hide violations, without a reason under \"## Architecture\" in its notes:"
+  printf '%s\n' "$hidden" | sed -n 's/^arch-check: hidden by a card edit: /  /p'
+  return 1
+}
+
+# arch_stale TOP_OUTPUT TOP: the baseline entries the top reports as fixed that occurred at the base: the train
+# fixed them, so it must remove them (checks out the base in place, then the train's top again).
+arch_stale() {
+  local fixed base_out gone
+  fixed=$(arch_entries "$1" fixed)
+  [ -n "$fixed" ] || return 0
+  git checkout -q --detach "$DL_REMOTE/$DL_BASE" 2>/dev/null
+  base_out=$("$scripts_dir/arch-check.sh" "$DL_REMOTE/$DL_BASE" 2>&1)
+  git checkout -q "train-$2"
+  gone=$(dl_arch_compare <(printf '%s\n' "$fixed") <(arch_entries "$base_out" new known) | dl_arch_tagged fixed)
+  printf '%s\n' "$fixed" | grep -vxF -f <(printf '%s\n' "$gone")
+}
+
+# check_arch: with "architecture" configured, a branch may add baseline entries, or change card headers so
+# that violations disappear, only with a reason in its notes' "## Architecture" section; then arch-check.sh
+# on the train's top (HEAD). When the top is red, or reports as fixed baseline entries that occurred at the
+# base (the branch that fixes an entry removes it), each branch's train ref is checked in order and named
+# for the new lines it brings, or the kept fixed entries, first.
 check_arch() {
-  local branch from="$DL_REMOTE/$DL_BASE" added out rc red="" top seen="" branch_out fresh
+  local branch from="$DL_REMOTE/$DL_BASE" added out rc red="" top seen="" branch_out fresh stale kept named=""
   for branch in "$@"; do
     added=$(dl_arch_baseline_growth "$from" "train-$branch")
     if [ -n "$added" ] && ! dl_arch_notes_reason "$(dl_note_file "$branch")"; then
@@ -161,12 +207,21 @@ check_arch() {
       printf '%s\n' "$added" | sed 's/^/  /'
       red=yes
     fi
+    arch_loosened "$from" "$branch" || red=yes
     from="train-$branch"
     top=$branch
   done
+  git checkout -q "train-$top"
   out=$("$scripts_dir/arch-check.sh" HEAD 2>&1)
   rc=$?
-  if [ "$rc" -eq 1 ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+    echo "arch-check error on the train's top ($top):"
+    printf '%s\n' "$out" | sed 's/^/  /'
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    exit 2
+  fi
+  stale=$(arch_stale "$out" "$top")
+  if [ "$rc" -eq 1 ] || [ -n "$stale" ]; then
     for branch in "$@"; do
       if [ "$branch" = "$top" ]; then
         branch_out=$out
@@ -181,18 +236,20 @@ check_arch() {
         printf '%s\n' "$fresh" | sed 's/^/  /'
         seen+="$fresh"$'\n'
       fi
+      kept=$(arch_entries "$branch_out" fixed | grep -xF -f <(printf '%s\n' "$stale") | grep -vxF -f <(printf '%s\n' "$named"))
+      if [ -n "$kept" ] && [ -n "$stale" ]; then
+        echo "arch-check red for $branch: it fixes baseline entries but keeps them; remove them from the baseline:"
+        printf '%s\n' "$kept" | sed 's/^/  /'
+        named+="$kept"$'\n'
+      fi
     done
     git checkout -q "train-$top"
-    if [ -z "$seen" ]; then
+    if [ -z "$seen$named" ]; then
       echo "arch-check red on the train's top ($top):"
       printf '%s\n' "$out" | sed 's/^/  /'
+      [ -z "$stale" ] || printf '  fixed at the top but kept in the baseline: %s\n' "$stale"
     fi
     red=yes
-  elif [ "$rc" -ne 0 ]; then
-    echo "arch-check error on the train's top ($top):"
-    printf '%s\n' "$out" | sed 's/^/  /'
-    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
-    exit 2
   else
     printf '%s\n' "$out" | grep -E '^arch-check: (fixed|note:) ' | sed 's/^/  /'
   fi

@@ -5,6 +5,10 @@
 # Usage: arch-check.sh <ref>                 check <ref> against its baseline
 #        arch-check.sh --baseline [<ref>]    write the violations of <ref> (default HEAD) to the baseline
 #                                            file of this worktree, sorted, to be committed
+#        arch-check.sh --loosened <from> <ref>
+#                                            the violations of <ref> that its card header edits since
+#                                            <from> hide: <ref>'s code judged by <from>'s cards reports
+#                                            them, by its own cards not
 #
 # Deterministic: it reads the cards (architecture.cards, default docs/architecture/: each Markdown file
 # whose first line is ---) at <ref>, runs architecture.check in a checkout of <ref> and maps each edge it
@@ -21,7 +25,8 @@
 # entry that no longer occurs as fixed; a budget entry stays known while the component does not grow.
 #
 # Exit: 0 every violation is in the baseline, 1 a new violation or an error at <ref> (a broken card, a
-# failing architecture.check), 2 usage or config error.
+# failing architecture.check), 2 usage or config error. With --loosened: 0 nothing hidden (also when no
+# card header changed: then the check command does not run), 1 hidden violations, 2 usage or config error.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -30,13 +35,17 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$scripts_dir/lib/arch.sh"
 
 # usage: print the usage and exit 2.
-usage() { dl_die "usage: arch-check.sh <ref> | arch-check.sh --baseline [<ref>]"; }
+usage() { dl_die "usage: arch-check.sh <ref> | arch-check.sh --baseline [<ref>] | arch-check.sh --loosened <from> <ref>"; }
 mode=check
 if [ "${1:-}" = --baseline ]; then
   mode=baseline
   shift
   [ $# -le 1 ] || usage
   ref=${1:-HEAD}
+elif [ "${1:-}" = --loosened ]; then
+  mode=loosened
+  [ $# -eq 3 ] || usage
+  from=$2 ref=$3
 else
   [ $# -eq 1 ] || usage
   ref=$1
@@ -45,21 +54,39 @@ dl_load_config required
 dl_arch_on || dl_die "no \"architecture.check\" in $DL_CONFIG: nothing to check"
 dl_arch_budget >/dev/null || dl_die "architecture.budget: \"$(cfg architecture.budget "")\" is not a number"
 commit=$(git rev-parse -q --verify "$ref^{commit}") || dl_die "$ref is not a commit"
+if [ "$mode" = loosened ]; then
+  from_commit=$(git rev-parse -q --verify "$from^{commit}") || dl_die "$from is not a commit"
+  if ! dl_arch_headers_changed "$from_commit" "$commit"; then
+    echo "arch-check: ok: no card header changed between $from and $ref"
+    exit 0
+  fi
+fi
 top=$(git rev-parse --show-toplevel) || dl_die "not inside a git worktree"
 cards=$(dl_arch_cards_dir)
 baseline=$(dl_arch_baseline_path)
 
 # A checkout of the commit: this worktree when it is at the commit with no tracked file modified.
-temporary=""
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-arch-tree.XXXXXX") || dl_die "cannot create a temporary directory"
+trap 'git worktree remove --force "$temporary/tree" >/dev/null 2>&1; rm -rf "$temporary"' EXIT
 if [ "$(git rev-parse HEAD)" = "$commit" ] && [ -z "$(git status --porcelain --untracked-files=no)" ]; then
   checkout=$top
 else
-  temporary=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-arch-tree.XXXXXX") || dl_die "cannot create a temporary directory"
-  trap 'git worktree remove --force "$temporary/tree" >/dev/null 2>&1; rm -rf "$temporary"' EXIT
   git worktree add -q --detach "$temporary/tree" "$commit" >/dev/null 2>&1 || dl_die "cannot check out $ref"
   checkout=$temporary/tree
 fi
 [ -d "$checkout/$cards" ] || dl_die "no component cards: $cards does not exist at $ref"
+
+if [ "$mode" = loosened ]; then
+  dl_arch_extract_cards "$from_commit" "$temporary/from" || dl_die "cannot read the cards of $from"
+  hidden=$(dl_arch_loosened "$checkout" "$temporary/from")
+  if [ -z "$hidden" ]; then
+    echo "arch-check: ok: the card header edits between $from and $ref hide no violation"
+    exit 0
+  fi
+  printf '%s\n' "$hidden" | sed 's/^/arch-check: hidden by a card edit: /'
+  echo "arch-check: $(printf '%s\n' "$hidden" | wc -l | tr -d ' ') violation(s) hidden by card header edits between $from and $ref"
+  exit 1
+fi
 
 results=$(dl_arch_analyse "$checkout")
 [ -n "$(printf '%s\n' "$results" | dl_arch_tagged S)$(printf '%s\n' "$results" | dl_arch_tagged E)" ] ||
