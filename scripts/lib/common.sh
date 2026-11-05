@@ -303,49 +303,72 @@ dl_archive_note() {
   [ ! -f "$note" ] || dl_archive_note_file "$note"
 }
 
-# dl_secret_name NAME: succeeds when NAME looks like a secret or data file (.env, keys, databases).
+# Lowercase name patterns of secret and data files, matched without regard to case: never build output.
+DL_SECRET_PATTERNS=(.env '.env.*' '*.env' '*.pem' '*.key' '*.p12' '*.pfx' 'id_rsa*' 'id_ed25519*' 'id_ecdsa*'
+  'id_dsa*' 'credentials*' 'secrets*' '*.sqlite' '*.sqlite3' '*.sqlite-*' '*.db')
+
+# dl_secret_name NAME: succeeds when NAME looks like a secret or data file (DL_SECRET_PATTERNS, any case).
 dl_secret_name() {
-  case $1 in
-    .env | .env.* | *.env | *.pem | *.key | *.p12 | *.sqlite | *.sqlite3 | *.db) return 0 ;;
-  esac
+  local name pattern
+  name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  for pattern in "${DL_SECRET_PATTERNS[@]}"; do
+    # shellcheck disable=SC2053 # the pattern is a glob on purpose
+    [[ "$name" == $pattern ]] && return 0
+  done
   return 1
 }
 
-# dl_rebuildable_entry KEEP ENTRY: succeeds when the ignored ENTRY is build output by name: its last
-# component is in KEEP (" a b ... "), or a directory above it is and ENTRY is not a secret or data file
-# (a self-ignoring cache such as .ruff_cache lists its files one by one).
+# dl_secret_in DIR: the first file or directory under DIR whose name is a secret or data name.
+dl_secret_in() {
+  local expr=() pattern
+  for pattern in "${DL_SECRET_PATTERNS[@]}"; do
+    [ ${#expr[@]} -eq 0 ] || expr+=(-o)
+    expr+=(-iname "$pattern")
+  done
+  find "$1" \( "${expr[@]}" \) -print 2>/dev/null | head -n 1
+}
+
+# dl_rebuildable_entry KEEP CACHES ENTRY: succeeds when the ignored ENTRY is build output by name: its
+# last component is in KEEP (" a b ... "), or a directory above it is in both KEEP and CACHES and ENTRY is
+# not a secret or data file (a self-ignoring cache such as .ruff_cache lists its files one by one).
 dl_rebuildable_entry() {
-  local keep=$1 path=${2%/} name dir
+  local keep=$1 caches=$2 path=${3%/} name dir
   name=${path##*/}
   [[ "$keep" == *" $name "* ]] && return 0
   ! dl_secret_name "$name" || return 1
   while [ "$path" != "${path%/*}" ]; do
     path=${path%/*}
     dir=${path##*/}
-    [[ "$keep" == *" $dir "* ]] && return 0
+    [[ "$keep" == *" $dir "* && "$caches" == *" $dir "* ]] && return 0
   done
   return 1
 }
 
+# dl_cfg_words PATH DEFAULT: the array at PATH in the project config as " a b ... ", or DEFAULT.
+dl_cfg_words() {
+  local count i words=" "
+  count=$(cfg_len "$1")
+  [ "$count" -gt 0 ] || { printf '%s\n' "$2"; return 0; }
+  for ((i = 0; i < count; i++)); do words+="$(cfg "$1.$i") "; done
+  printf '%s\n' "$words"
+}
+
 # dl_unrebuildable_ignored WORKTREE: the first ignored file or directory of WORKTREE that is not build
-# output (merge.rebuildable, default node_modules dist build target .venv and the usual caches).
+# output (merge.rebuildable, default node_modules dist build target .venv and the usual caches; files
+# inside are judged one by one only under merge.rebuildable_caches, default the caches and dependencies).
 dl_unrebuildable_ignored() {
-  local keep=" node_modules dist build target out coverage htmlcov .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache .coverage "
-  local count i entry found
-  count=$(cfg_len merge.rebuildable)
-  if [ "$count" -gt 0 ]; then
-    keep=" "
-    for ((i = 0; i < count; i++)); do keep+="$(cfg "merge.rebuildable.$i") "; done
-  fi
+  local caches=" node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache "
+  local keep entry found
+  keep=$(dl_cfg_words merge.rebuildable " dist build target out coverage htmlcov .coverage$caches")
+  caches=$(dl_cfg_words merge.rebuildable_caches "$caches")
   # A directory listed only because it holds other listed entries (web/ for web/node_modules/) is skipped.
   git -C "$1" ls-files --others --ignored --exclude-standard --directory 2>/dev/null | LC_ALL=C sort -r |
     awk '{ if (index(prev, $0) != 1 || substr($0, length($0)) != "/") print; prev = $0 }' | while read -r entry; do
     # The entry itself must be build output (build/local.env is not), and a build directory must not hold
     # secrets or data (a false match only keeps the worktree).
-    dl_rebuildable_entry "$keep" "$entry" || { printf '%s\n' "$entry"; break; }
+    dl_rebuildable_entry "$keep" "$caches" "$entry" || { printf '%s\n' "$entry"; break; }
     if [ -d "$1/$entry" ]; then
-      found=$(find "$1/$entry" \( -name '.env' -o -name '.env.*' -o -name '*.env' -o -name '*.pem' -o -name '*.key' \
-        -o -name '*.p12' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \) -print 2>/dev/null | head -n 1)
+      found=$(dl_secret_in "$1/$entry")
       [ -z "$found" ] || { printf '%s\n' "${found#"$1"/}"; break; }
     fi
   done
