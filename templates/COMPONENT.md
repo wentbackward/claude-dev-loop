@@ -1,7 +1,7 @@
 ---
 component: {{COMPONENT_NAME}}
 layer: {{LAYER_NUMBER_0_AT_THE_BOTTOM}}
-kind: component        # or: composition-root (entry points, CLI, job runner, app wiring)
+kind: component        # or: composition-root (entry points, CLI, job runner, app wiring); service, job, store
 paths: {{PATH_GLOBS_SEPARATED_BY_SPACES}}
 depends_on: {{COMPONENT_NAMES_IT_MAY_USE}}
 max_lines: {{SIZE_BUDGET_IN_LINES}}
@@ -10,7 +10,8 @@ max_lines: {{SIZE_BUDGET_IN_LINES}}
 only the header above. component: a plain name (letters, digits, _ . -). layer: a number, 0 at the
 bottom; no dependency may go up a layer (solve an upward need with an interface the lower component
 defines). kind: a composition root may depend on any layer below it and its fan-out is not flagged; keep
-it thin, split it per layer when it grows. paths: shell globs on the repository path, * also matches /,
+it thin, split it per layer when it grows. service, job and store mark a run-time component (a process,
+a scheduled job, a data store): the architect compares the run-time map with the code map. paths: shell globs on the repository path, * also matches /,
 the longest matching glob wins. depends_on: optional; when the line is there (even empty), a dependency on
 a component not listed is a violation. max_lines: optional, overrides architecture.budget. -->
 

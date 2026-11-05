@@ -1654,7 +1654,7 @@ expect "a summary table of every signal comes before the findings" \
 expect "the table counts the findings per signal" "2 1 1 2 1 1 1 2 1" \
   "$(echo "$out" | sed -n '3,11p' | awk '{print $2}' | paste -sd' ' -)"
 expect "arch-evidence prints each signal as a stable line" \
-  "size budget core 4/2|size growth ui +3 lines|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|hotspot app/core/c.py 3 merges|hotspot app/store/s.py 3 merges|cycle 3 components: core store ui|misplaced store -> ui (ui is in the top layer, 3)|fan-out core 3 components: api store worker|friction rounds feat/141-wide 5 rounds|friction reopened #142 2 merges: feat/142-pair fix/142-again|runtime api -> worker (separate at run time, connected in code)" \
+  "size budget core 4/2|size growth ui +3 lines|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|hotspot app/core/c.py 3 merges|hotspot app/store/s.py 3 merges|cycle 3 components: core store ui|misplaced store -> ui (ui is in the top layer, 3)|fan-out core 3 components: api store worker|friction reopened #142 2 merges: feat/142-pair fix/142-again|friction rounds feat/141-wide 5 rounds|runtime api -> worker (separate at run time, connected in code)" \
   "$(findings)"
 echo "$out" | grep -q "fan-out cli" && fail "a composition root's fan-out is a signal" ||
   pass "a composition root's fan-out is not a signal"
@@ -1677,7 +1677,7 @@ printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.
   >"$work/evidence-default.json"
 evidence "$work/evidence-default.json"
 expect "the default thresholds (scatter 3, growth 500, co-change 75% of 3, hotspot 5, cycle 3, fan-out 5, rounds 3)" \
-  "size budget core 4/2|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|misplaced store -> ui (ui is in the top layer, 3)|friction rounds feat/141-wide 5 rounds|friction reopened #142 2 merges: feat/142-pair fix/142-again|runtime api -> worker (separate at run time, connected in code)" \
+  "size budget core 4/2|scatter feat/141-wide 4 components: api core store worker|co-change core store 3/3 merges|misplaced store -> ui (ui is in the top layer, 3)|friction reopened #142 2 merges: feat/142-pair fix/142-again|friction rounds feat/141-wide 5 rounds|runtime api -> worker (separate at run time, connected in code)" \
   "$(findings)"
 sed 's/"hotspot": 2/"hotspot": "often"/' "$work/evidence.json" >"$work/evidence-bad.json"
 evidence "$work/evidence-bad.json" >/dev/null
