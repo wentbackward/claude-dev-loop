@@ -1154,6 +1154,163 @@ expect "the template's empty architecture block keeps the check off" "2 0" \
 [ -f "$plugin/templates/COMPONENT.md" ] && grep -q "^kind: component" "$plugin/templates/COMPONENT.md" &&
   pass "the component card template has the header" || fail "no templates/COMPONENT.md"
 
+# Ratchet integrity (#17): a card edit that hides a violation needs a reason, a fixed baseline entry is
+# removed by the branch that fixes it, a placeholder is not a reason, and two cards may not share a glob.
+git checkout -q -B main origin/main
+echo "app/store/s.py app/ui/u.py" >>edges.txt && git commit -q -am "feat: store uses ui"
+arch_check --baseline >/dev/null
+expect "the known violations of the base" "cycle core store ui|undeclared store -> ui|upward store -> ui" \
+  "$(paste -sd'|' - <docs/architecture/baseline.txt)"
+git commit -q -am "chore: known violations" && git push -q origin main
+loosen() { # loosen BRANCH: commit the working tree's edits on BRANCH, run arch-check.sh --loosened from main
+  git checkout -q -B "$1"
+  git add -A docs app edges.txt && git commit -q -m "feat: $1"
+  arch_check --loosened origin/main HEAD >/dev/null
+  hidden=$(echo "$out" | sed -n 's/^arch-check: hidden by a card edit: //p' | paste -sd'|' -)
+  git checkout -q -f main
+}
+echo "app/core/c.py app/core/util/u.py" >>edges.txt
+card core.md "component: core" "layer: 1" "paths: app/core/* app/core.py" "depends_on: store util" "max_lines: 2"
+loosen feat/110-depends
+expect "a name added to depends_on that hides a violation is a loosening edit" "1 undeclared core -> util" "$rc $hidden"
+echo 3 >>app/core/c.py
+card core.md "component: core" "layer: 1" "paths: app/core/* app/core.py" "depends_on: store" "max_lines: 5"
+loosen feat/111-budget
+expect "a raised max_lines that hides a budget violation is a loosening edit" "1 budget core 3/2" "$rc $hidden"
+echo "app/core/util/u.py app/ui/u.py" >>edges.txt
+card util.md "component: util" "layer: 2" "paths: app/core/util/*"
+loosen feat/112-layer
+expect "a raised layer that hides an upward dependency is a loosening edit" "1 upward util -> ui" "$rc $hidden"
+echo "app/core/util/u.py app/ui/u.py" >>edges.txt
+card ui.md "component: ui" "layer: 2" "paths: app/ui/other/*"
+loosen feat/113-paths
+expect "narrowed paths that hide violations are a loosening edit" \
+  "1 cycle core store ui|undeclared store -> ui|upward store -> ui|upward util -> ui" "$rc $hidden"
+echo "app/core/c.py app/core/util/u.py" >>edges.txt
+card core.md "component: core" "layer: 1" "kind: composition-root" "paths: app/core/* app/core.py" "depends_on: store" \
+  "max_lines: 2"
+loosen feat/114-root
+expect "turning a card into a composition root that hides a violation is a loosening edit" \
+  "1 undeclared core -> util" "$rc $hidden"
+card store.md "component: store" "layer: 3" "paths: app/store/*" "depends_on: ui"
+loosen feat/115-known
+expect "a card edit that hides a baselined violation is a loosening edit too" \
+  "1 undeclared store -> ui|upward store -> ui" "$rc $hidden"
+echo "More words about the component." >>docs/architecture/core.md
+loosen feat/116-body
+expect "a card edit outside the header is not a loosening edit" "0 " "$rc $hidden"
+card core.md "component: core" "layer: 1" "paths: app/core/* app/core.py" "depends_on: store" "max_lines: 1"
+loosen feat/117-tighter
+expect "a card edit that tightens the rules is not a loosening edit" "0 " "$rc $hidden"
+card dup.md "component: dup" "layer: 0" "paths: app/ui/*"
+git checkout -q -B feat/118-overlap && git add docs && git commit -q -m "docs: overlapping card"
+arch_check HEAD >/dev/null
+expect "two cards with an identical glob are a broken card" 1 "$rc"
+echo "$out" | grep "^arch-check: error:" | grep "docs/architecture/dup.md" | grep "app/ui/\*" | grep -qF "ui.md" &&
+  pass "the error names both cards and the shared glob" || fail "overlap message: $out"
+git checkout -q -f main
+
+# A placeholder under "## Architecture" is not a reason.
+reason_of() { # reason_of TEXT...: "yes" when notes with these lines under ## Architecture have a reason
+  printf 'feat: x\n\n## Architecture\n' >"$work/reason.md"
+  printf '%s\n' "$@" >>"$work/reason.md"
+  printf '\n## Test evidence\n- ok\n' >>"$work/reason.md"
+  bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/arch.sh"; dl_arch_notes_reason "$2" && echo yes || echo no' \
+    _ "$plugin" "$work/reason.md"
+}
+expect "placeholders are not reasons" "no no no no no no no no no" "$(reason_of none) $(reason_of "None.") \
+$(reason_of "- n/a") $(reason_of "* TODO") $(reason_of -) $(reason_of "TBD") $(reason_of '`none`') \
+$(reason_of "N/A" "- none") $(reason_of "none: no architecture change")"
+expect "a sentence is a reason, also next to a placeholder" "yes yes" \
+  "$(reason_of "- core reads the ui theme until #95 moves it down") $(reason_of "none" "core needs util for dates")"
+expect "reworded placeholders are not reasons" "no no no no no no no no no no" "$(reason_of "none (not configured)") \
+$(reason_of "n/a (not applicable)") $(reason_of "none, n/a") $(reason_of "- none needed") $(reason_of "nothing to report") \
+$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, core must read the ui theme") \
+$(reason_of "no changes") $(reason_of "TODO; later")"
+expect "sentences that start with a placeholder word are reasons" "yes yes" \
+  "$(reason_of "- no-op rename of the util glob") $(reason_of "None of the edges cross a layer; store reads ui types")"
+
+# The gate: a loosening edit without a reason is red, with a placeholder red, with a reason green.
+git push -q -u origin feat/110-depends 2>/dev/null
+notes110=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" notes feat/110-depends)
+rm -f "$notes110" "$work/arch-checks-ran"
+gate_arch "$work/arch.json" feat/110-depends >/dev/null
+expect "a loosening card edit without a reason is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/110-depends" | grep -qF "## Architecture" &&
+  echo "$out" | grep -qF "  undeclared core -> util" && pass "the message names the branch and the hidden violation" ||
+  fail "loosening message: $out"
+[ ! -e "$work/arch-checks-ran" ] && pass "a loosening edit stops the train before the checks" ||
+  fail "the checks ran after a loosening edit"
+printf 'feat: x (#110)\n\n## Architecture\n- none\n' >"$notes110"
+gate_arch "$work/arch.json" feat/110-depends >/dev/null
+expect "a loosening card edit with a placeholder reason is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+printf 'feat: x (#110)\n\n## Architecture\n- core formats dates with util; util is below core\n' >"$notes110"
+gate_arch "$work/arch.json" feat/110-depends >/dev/null
+expect "a loosening card edit with a reason is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+rm -f "$notes110"
+git push -q -u origin feat/116-body 2>/dev/null
+gate_arch "$work/arch.json" feat/116-body >/dev/null
+expect "a card body edit needs no reason" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+
+# A baseline entry fixed by a branch is removed from the baseline by that branch.
+git checkout -q -B feat/119-fixes origin/main && grep -vxF "app/store/s.py app/ui/u.py" edges.txt >edges.new &&
+  mv edges.new edges.txt && git commit -q -am "fix: store no longer uses ui" && git push -q -u origin feat/119-fixes
+git checkout -q -B feat/120-after feat/119-fixes && echo after >>src.txt && git commit -q -am "feat: after" &&
+  git push -q -u origin feat/120-after
+git checkout -q main
+rm -f "$work/arch-checks-ran"
+gate_arch "$work/arch.json" feat/119-fixes feat/120-after >/dev/null
+expect "a branch that fixes baseline entries but keeps them is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/119-fixes" | grep -qF "remove" && echo "$out" | grep -qxF "  upward store -> ui" &&
+  pass "the message names the fixing branch and the entries to remove" || fail "stale entry message: $out"
+echo "$out" | grep -q "arch-check red for feat/120-after" && fail "the branch above the fix was named" ||
+  pass "a branch above the fix is not named for it"
+[ ! -e "$work/arch-checks-ran" ] && pass "a kept fixed entry stops the train before the checks" ||
+  fail "the checks ran with a kept fixed entry"
+git checkout -q feat/119-fixes && : >docs/architecture/baseline.txt && git commit -q -am "chore: remove fixed entries" &&
+  git push -q origin feat/119-fixes && git checkout -q main
+gate_arch "$work/arch.json" feat/119-fixes >/dev/null
+expect "a branch that fixes baseline entries and removes them is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+
+# A renamed component's old violations show as hidden, and the message says so.
+sed 's/^component: store$/component: storage/' docs/architecture/store.md >store.new && mv store.new docs/architecture/store.md
+sed 's/^depends_on: store$/depends_on: storage/' docs/architecture/core.md >core.new && mv core.new docs/architecture/core.md
+loosen feat/121-rename
+echo "$out" | grep -q "renamed or removed component" && pass "hidden violations may be a renamed component's, the message says" ||
+  fail "rename message: $out"
+
+# A branch that changes "architecture" in .dev-loop.json needs a reason too.
+git checkout -q -B feat/122-config origin/main
+jq '. + {"architecture": {"check": "true"}}' .dev-loop.json >cfg.new && mv cfg.new .dev-loop.json
+git commit -q -am "chore: switch the architecture check off" && git push -q -u origin feat/122-config
+git checkout -q main
+notes122=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" notes feat/122-config)
+rm -f "$notes122" "$work/arch-checks-ran"
+gate_arch "$work/arch.json" feat/122-config >/dev/null
+expect "a branch that changes the architecture config without a reason is red" "1 TRAIN RED" \
+  "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/122-config" | grep -F ".dev-loop.json" | grep -qF "## Architecture" &&
+  pass "the message names the branch, the config and the notes section" || fail "config message: $out"
+[ ! -e "$work/arch-checks-ran" ] && pass "an architecture config change stops the train before the checks" ||
+  fail "the checks ran after an architecture config change"
+printf 'feat: x (#122)\n\n## Architecture\n- the edge scan moves to the new tool in #123\n' >"$notes122"
+gate_arch "$work/arch.json" feat/122-config >/dev/null
+expect "a branch that changes the architecture config with a reason is green" "0 TRAIN GREEN" \
+  "$rc $(echo "$out" | tail -n 1)"
+rm -f "$notes122"
+
+# A base that arch-check cannot judge stops the gate (exit 2) instead of passing the fixed entries.
+git checkout -q -B main origin/main && git rm -q -r docs/architecture && git commit -q -m "chore: no cards" &&
+  git push -q origin main
+git checkout -q -B feat/124-cards origin/main && git checkout -q origin/main~1 -- docs/architecture &&
+  echo "upward util -> cli" >>docs/architecture/baseline.txt && git add docs && git commit -q -m "docs: cards" &&
+  git push -q -u origin feat/124-cards
+git checkout -q main
+gate_arch "$work/arch.json" feat/124-cards >/dev/null
+echo "$out" | grep -q "arch-check error on the base" && [ "$rc" -eq 2 ] &&
+  pass "an error on the base while judging fixed entries ends the gate with exit 2" || fail "base error: rc $rc: $out"
+expect "no line of the implementer's steps is over 110 characters" "" "$(awk 'FNR > 5 && length > 110' "$plugin/agents/implementer.md")"
+
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
 # line (all only with "docs" configured), and the doc-auditor's brief and model.
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd

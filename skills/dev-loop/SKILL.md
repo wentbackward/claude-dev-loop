@@ -171,8 +171,9 @@ the machine-wide heavy-job queue.
 - **docs-check red for <branch>**: a branch changed mapped code without its docs (or a `none: <reason>`
   in its notes' `## Docs`), or broke a relative link. Send the lines to its implementer, gate the rest.
 - **arch-check red for <branch>**: the branch brings a new architecture violation (upward, undeclared,
-  cycle, budget), a broken card, or baseline entries without a reason under `## Architecture` in its
-  notes. Send the lines to its implementer, gate the rest.
+  cycle, budget), a broken card, baseline entries or card header edits that hide violations without a
+  reason under `## Architecture` in its notes, or baseline entries it fixed but kept. Send the lines to
+  its implementer, gate the rest.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for
