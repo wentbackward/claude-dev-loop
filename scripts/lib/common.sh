@@ -304,24 +304,32 @@ dl_archive_note() {
 }
 
 # Lowercase name patterns of secret and data files, matched without regard to case: never build output.
-DL_SECRET_PATTERNS=(.env '.env.*' '*.env' '*.pem' '*.key' '*.p12' '*.pfx' 'id_rsa*' 'id_ed25519*' 'id_ecdsa*'
-  'id_dsa*' 'credentials*' 'secrets*' '*.sqlite' '*.sqlite3' '*.sqlite-*' '*.db')
+# The strong ones are checked everywhere; the broad ones also match vendored code (credentials.js), so the
+# scan inside a whole dependency or cache folder (merge.rebuildable_caches) leaves them out.
+if [ -z "${DL_SECRET_STRONG_PATTERNS+set}" ]; then
+  DL_SECRET_STRONG_PATTERNS=(.env '.env.*' '*.env' '*.pem' '*.key' '*.p12' '*.pfx' '*.sqlite' '*.sqlite3'
+    '*.sqlite-*' '*.db')
+  DL_SECRET_BROAD_PATTERNS=('id_rsa*' 'id_ed25519*' 'id_ecdsa*' 'id_dsa*' 'credentials*' 'secrets*')
+  readonly DL_SECRET_STRONG_PATTERNS DL_SECRET_BROAD_PATTERNS
+fi
 
-# dl_secret_name NAME: succeeds when NAME looks like a secret or data file (DL_SECRET_PATTERNS, any case).
+# dl_secret_name NAME: succeeds when NAME looks like a secret or data file (strong or broad, any case).
 dl_secret_name() {
   local name pattern
   name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  for pattern in "${DL_SECRET_PATTERNS[@]}"; do
+  for pattern in "${DL_SECRET_STRONG_PATTERNS[@]}" "${DL_SECRET_BROAD_PATTERNS[@]}"; do
     # shellcheck disable=SC2053 # the pattern is a glob on purpose
     [[ "$name" == $pattern ]] && return 0
   done
   return 1
 }
 
-# dl_secret_in DIR: the first file or directory under DIR whose name is a secret or data name.
+# dl_secret_in DIR [strong]: the first file or directory under DIR whose name is a secret or data name
+# (strong or broad; only strong with "strong").
 dl_secret_in() {
-  local expr=() pattern
-  for pattern in "${DL_SECRET_PATTERNS[@]}"; do
+  local expr=() pattern patterns=("${DL_SECRET_STRONG_PATTERNS[@]}")
+  [ "${2:-}" = strong ] || patterns+=("${DL_SECRET_BROAD_PATTERNS[@]}")
+  for pattern in "${patterns[@]}"; do
     [ ${#expr[@]} -eq 0 ] || expr+=(-o)
     expr+=(-iname "$pattern")
   done
@@ -344,6 +352,18 @@ dl_rebuildable_entry() {
   return 1
 }
 
+# dl_in_cache CACHES ENTRY: succeeds when a component of ENTRY (a/b/) is in CACHES (" a b ... "), so ENTRY
+# is a dependency or cache folder or lies inside one (.venv/lib/ of a .venv with its own .gitignore).
+dl_in_cache() {
+  local caches=$1 path=${2%/}
+  while [ -n "$path" ]; do
+    [[ "$caches" == *" ${path##*/} "* ]] && return 0
+    [ "$path" != "${path%/*}" ] || return 1
+    path=${path%/*}
+  done
+  return 1
+}
+
 # dl_cfg_words PATH DEFAULT: the array at PATH in the project config as " a b ... ", or DEFAULT.
 dl_cfg_words() {
   local count i words=" "
@@ -358,17 +378,20 @@ dl_cfg_words() {
 # inside are judged one by one only under merge.rebuildable_caches, default the caches and dependencies).
 dl_unrebuildable_ignored() {
   local caches=" node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache "
-  local keep entry found
+  local keep entry found mode
   keep=$(dl_cfg_words merge.rebuildable " dist build target out coverage htmlcov .coverage$caches")
   caches=$(dl_cfg_words merge.rebuildable_caches "$caches")
   # A directory listed only because it holds other listed entries (web/ for web/node_modules/) is skipped.
   git -C "$1" ls-files --others --ignored --exclude-standard --directory 2>/dev/null | LC_ALL=C sort -r |
     awk '{ if (index(prev, $0) != 1 || substr($0, length($0)) != "/") print; prev = $0 }' | while read -r entry; do
     # The entry itself must be build output (build/local.env is not), and a build directory must not hold
-    # secrets or data (a false match only keeps the worktree).
+    # secrets or data (a false match only keeps the worktree); in a dependency or cache folder only a strong
+    # name counts, since vendored code is named credentials.js or secrets.py.
     dl_rebuildable_entry "$keep" "$caches" "$entry" || { printf '%s\n' "$entry"; break; }
     if [ -d "$1/$entry" ]; then
-      found=$(dl_secret_in "$1/$entry")
+      mode=""
+      ! dl_in_cache "$caches" "$entry" || mode=strong
+      found=$(dl_secret_in "$1/$entry" ${mode:+"$mode"})
       [ -z "$found" ] || { printf '%s\n' "${found#"$1"/}"; break; }
     fi
   done

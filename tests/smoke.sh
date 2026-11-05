@@ -515,11 +515,32 @@ git worktree add -q "$work/wt55" feat/55-results && mkdir -p "$work/wt55/out" &&
 branch_on feat/56-deep-key w56.txt && note_for feat/56-deep-key
 git worktree add -q "$work/wt56" feat/56-deep-key && mkdir -p "$work/wt56/.ruff_cache/0.1" &&
   echo '*' >"$work/wt56/.ruff_cache/.gitignore" && echo KEY >"$work/wt56/.ruff_cache/0.1/x.key"
+# Vendored files named like secrets (credentials.js) are output; a .env in a dependency folder is not (#15).
+branch_on feat/57-vendored w57.txt && note_for feat/57-vendored
+git worktree add -q "$work/wt57" feat/57-vendored && mkdir -p "$work/wt57/node_modules/pkg/lib" &&
+  echo x >"$work/wt57/node_modules/pkg/credentials.js" && echo x >"$work/wt57/node_modules/pkg/lib/secrets.js" &&
+  echo x >"$work/wt57/node_modules/pkg/id_map.js"
+branch_on feat/58-dep-env w58.txt && note_for feat/58-dep-env
+git worktree add -q "$work/wt58" feat/58-dep-env && mkdir -p "$work/wt58/node_modules/pkg" &&
+  echo x >"$work/wt58/node_modules/pkg/credentials.js" && echo SECRET=x >"$work/wt58/node_modules/.env"
+# A .venv with its own .gitignore lists its folders one by one; vendored names in them are output too.
+branch_on feat/61-venv w61.txt && note_for feat/61-venv
+git worktree add -q "$work/wt61" feat/61-venv && mkdir -p "$work/wt61/.venv/lib/site/pkg" &&
+  echo '*' >"$work/wt61/.venv/.gitignore" && echo x >"$work/wt61/.venv/lib/site/pkg/credentials.py"
+# In an output folder ignored as a whole, broad names still keep the worktree (a false negative deletes).
+branch_on feat/59-build-creds w59.txt && note_for feat/59-build-creds
+git worktree add -q "$work/wt59" feat/59-build-creds && mkdir -p "$work/wt59/build" &&
+  echo x >"$work/wt59/build/credentials.json" && echo x >"$work/wt59/build/id_rsa"
+branch_on feat/60-dist-secrets w60.txt && note_for feat/60-dist-secrets
+git worktree add -q "$work/wt60" feat/60-dist-secrets && printf 'dist/\n' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
+  mkdir -p "$work/wt60/dist/sub" && echo x >"$work/wt60/dist/sub/secrets.json"
 git branch -q train-person-work origin/main
 "$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
-  feat/54-cache-key feat/55-results feat/56-deep-key >/dev/null 2>&1
+  feat/54-cache-key feat/55-results feat/56-deep-key feat/57-vendored feat/58-dep-env \
+  feat/59-build-creds feat/60-dist-secrets feat/61-venv >/dev/null 2>&1
 out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
-  feat/54-cache-key feat/55-results feat/56-deep-key 2>&1)
+  feat/54-cache-key feat/55-results feat/56-deep-key feat/57-vendored feat/58-dep-env \
+  feat/59-build-creds feat/60-dist-secrets feat/61-venv 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
 echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
@@ -540,6 +561,32 @@ echo "$out" | grep -q "kept local feat/55-results: its worktree $work/wt55 holds
 echo "$out" | grep -q "kept local feat/56-deep-key: its worktree $work/wt56 holds ignored files that are not build output (.ruff_cache/0.1/x.key)" &&
   [ -f "$work/wt56/.ruff_cache/0.1/x.key" ] && pass "a key in a folder nested in a self-ignoring cache keeps its worktree" ||
   fail "wt56: $out"
+[ ! -d "$work/wt57" ] && [ -z "$(git branch --list feat/57-vendored)" ] &&
+  pass "merge-train removes a worktree whose node_modules only holds vendored files named like secrets" ||
+  fail "wt57 kept: $out"
+echo "$out" | grep -q "kept local feat/58-dep-env: its worktree $work/wt58 holds ignored files that are not build output (node_modules/.env)" &&
+  [ -f "$work/wt58/node_modules/.env" ] && pass "a .env inside node_modules keeps its worktree" || fail "wt58: $out"
+[ ! -d "$work/wt61" ] && [ -z "$(git branch --list feat/61-venv)" ] &&
+  pass "merge-train removes a worktree whose self-ignoring .venv only holds vendored files named like secrets" ||
+  fail "wt61 kept: $out"
+echo "$out" | grep -q "kept local feat/59-build-creds: its worktree $work/wt59 holds ignored files that are not build output (build/" &&
+  [ -f "$work/wt59/build/credentials.json" ] && [ -f "$work/wt59/build/id_rsa" ] &&
+  pass "credentials and keys by a broad name in an ignored build folder keep their worktree" || fail "wt59: $out"
+echo "$out" | grep -q "kept local feat/60-dist-secrets: its worktree $work/wt60 holds ignored files that are not build output (dist/sub/secrets.json)" &&
+  [ -f "$work/wt60/dist/sub/secrets.json" ] && pass "secrets.json deep in an ignored dist folder keeps its worktree" ||
+  fail "wt60: $out"
+# The deep scan finds strong and broad names, or only strong ones in strong mode; the lists are readonly.
+scan=$(bash -c '. "$1/scripts/lib/common.sh"; d=$2; mkdir -p "$d/a/b" "$d/k" "$d/c"
+  : >"$d/a/credentials.py"; : >"$d/a/b/secrets.json"; : >"$d/a/b/id_rsa"; : >"$d/k/x.pem"; : >"$d/c/secrets.json"
+  printf "a=[%s] k=[%s] " "$(dl_secret_in "$d/a" strong)" "$(dl_secret_in "$d/k" strong)"
+  printf "full-c=[%s] full-k=[%s] " "$(dl_secret_in "$d/c")" "$(dl_secret_in "$d/k")"
+  [ -n "$(dl_secret_in "$d/a")" ] && printf "full-a "
+  (DL_SECRET_STRONG_PATTERNS=(x)) 2>/dev/null || printf "strong-ro "
+  (DL_SECRET_BROAD_PATTERNS=(x)) 2>/dev/null || printf "broad-ro "
+  . "$1/scripts/lib/common.sh" && printf "resourced"' _ "$plugin" "$work/scan15")
+expect "the deep scan finds broad and strong names, strong mode only strong ones; the lists are readonly" \
+  "a=[] k=[$work/scan15/k/x.pem] full-c=[$work/scan15/c/secrets.json] full-k=[$work/scan15/k/x.pem] full-a strong-ro broad-ro resourced" "$scan"
+rm -rf "$work/scan15"
 # Secret and data names inside a cache are matched without regard to case; ordinary cache files are output.
 judged=$(bash -c '. "$1/scripts/lib/common.sh"; shift
   for e in "$@"; do if dl_rebuildable_entry " .ruff_cache build out " " .ruff_cache " "$e"; then echo "y $e"; else echo "n $e"; fi; done' _ \
@@ -555,7 +602,8 @@ expect "secret and data names in a cache are never output, whatever their case; 
 git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
 git branch -q -D train-person-work
 git worktree remove --force "$work/wt52" && git worktree remove --force "$work/wt54" && git worktree remove --force "$work/wt55"
-git worktree remove --force "$work/wt56"
+git worktree remove --force "$work/wt56" && git worktree remove --force "$work/wt58"
+git worktree remove --force "$work/wt59" && git worktree remove --force "$work/wt60"
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
