@@ -89,7 +89,7 @@ def scenarios_dir(config: dict, cwd: str) -> str:
     root = main_root(cwd)
     repo = os.path.basename(root or cwd)
     home = os.environ.get("HOME", "")
-    state = os.path.join(os.environ.get("DEV_LOOP_HOME") or f"{home}/.dev-loop", repo)
+    state = f"{os.environ.get('DEV_LOOP_HOME') or home + '/.dev-loop'}/{repo}"
     block = config.get("scenarios")
     configured = block.get("dir") if isinstance(block, dict) else None
     if configured is not None and not isinstance(configured, str):
