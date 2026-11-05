@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.7.0 — 2026-11-05
 
 - The tool that reads NUL-separated file names (jq, python3 or bash) is chosen once per process tree,
   not again in every pipeline and command substitution. Without jq or python3, the line form
