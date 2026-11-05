@@ -401,6 +401,61 @@ expect "a branch without a config keeps today's error" "2 yes" \
   "$? $(echo "$out" | grep -q "no config at" && echo yes || echo no)"
 cd "$work/project" || exit 1
 
+# 11c. The branch-config fallback (#9): a leftover copy is never read, the branch is fetched before its config
+#      is read, a missing branch on the config's remote is named, and a local branch is named as refs/heads/.
+cd "$work/setup-project" || exit 1
+printf '{"checks": []}\n' >"$DEV_LOOP_HOME/setup-project/branch-config.json"
+git checkout -q -b feat/82-next && echo two >>src.txt && git commit -q -am "feat: next (Refs #82)" &&
+  git push -q -u origin feat/82-next && git checkout -q main
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" feat/82-next 2>&1)
+rc=$?
+expect "a leftover branch-config.json is ignored once the main checkout has its own config" "0 no" \
+  "$rc $(echo "$out" | grep -q "config read from\|branch-config.json" && echo yes || echo no)"
+expect "DEV_LOOP_CONFIG exported by the fallback does not reach the caller" unset "${DEV_LOOP_CONFIG-unset}"
+setup_project setup-noconfig origin
+cd "$work/setup-noconfig" || exit 1
+mkdir -p "$DEV_LOOP_HOME/setup-noconfig"
+printf '{"checks": [{"name": "unit", "command": "echo 1 passed", "heavy": false}]}\n' \
+  >"$DEV_LOOP_HOME/setup-noconfig/branch-config.json"
+git checkout -q -b feat/83-plain && echo two >>src.txt && git commit -q -am "feat: plain (Refs #83)" &&
+  git push -q -u origin feat/83-plain && git checkout -q main
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" feat/83-plain 2>&1)
+expect "a leftover branch-config.json is ignored when a later run finds no config at all" "2 yes" \
+  "$? $(echo "$out" | grep -q "no config at $work/setup-noconfig/.dev-loop.json" && echo yes || echo no)"
+# The remote-tracking ref is stale (the branch moved on origin since the last fetch): the fresh config is read.
+setup_project setup-stale origin
+setup_branch setup-stale origin
+git clone -q -b chore/80-setup "$work/setup-stale.git" "$work/setup-stale-2" 2>/dev/null
+(cd "$work/setup-stale-2" && sed 's/1 passed/2 passed/' .dev-loop.json >cfg.tmp && mv cfg.tmp .dev-loop.json &&
+  git commit -q -am "chore: fix the check (Refs #80)" && git push -q origin chore/80-setup)
+cd "$work/setup-stale" || exit 1
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+rc=$?
+expect "the branch is fetched before its config is read (a stale remote-tracking ref is not used)" "0 yes" \
+  "$rc $(grep -q '2 passed' "$DEV_LOOP_HOME/setup-stale/branch-config.json" && echo yes || echo no)"
+# The config names another remote, where the branch is missing: said so, not "no config at".
+setup_project setup-noupstream origin
+cd "$work/setup-noupstream" || exit 1
+git checkout -q -b chore/80-setup &&
+  printf '{"remote": "upstream", "checks": [{"name": "unit", "command": "echo 1 passed"}]}\n' >.dev-loop.json &&
+  git add .dev-loop.json && git commit -q -m "chore: set up the dev loop (Refs #80)" &&
+  git push -q -u origin chore/80-setup && git checkout -q main
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+rc=$?
+echo "$out"
+expect "a config naming another remote without the branch there says so" "2 yes no" \
+  "$rc $(echo "$out" | grep -q "names remote upstream, but upstream/chore/80-setup is missing" && echo yes || echo no) $(echo "$out" | grep -q "no config at" && echo yes || echo no)"
+# A branch that exists only locally: the source line names it as refs/heads/<branch>.
+setup_project setup-local origin
+cd "$work/setup-local" || exit 1
+git checkout -q -b chore/80-setup &&
+  printf '{"checks": [{"name": "unit", "command": "echo 1 passed"}]}\n' >.dev-loop.json &&
+  git add .dev-loop.json && git commit -q -m "chore: set up the dev loop (Refs #80)" && git checkout -q main
+out=$(env -u DEV_LOOP_CONFIG "$plugin/scripts/gate-train.sh" chore/80-setup 2>&1)
+echo "$out" | grep -q "config read from refs/heads/chore/80-setup:.dev-loop.json" &&
+  pass "the source line names a local branch as refs/heads/<branch>" || fail "local branch source line: $out"
+cd "$work/project" || exit 1
+
 # 12. Branch lifecycle: gate and merge clean up after themselves, cleanup.sh classifies the rest.
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 expect "the next gate removed the red train's refs" "" "$(git branch --list train-feat/3-broken)"
