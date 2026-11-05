@@ -11,9 +11,11 @@
 # Green needs every required scenario at >= pass and the mean at >= scenarios.min_satisfaction.
 #
 # The output never holds scenario text: an unsatisfied scenario is named with the judge's "missing" line, and
-# the sealed share (scenarios.sealed, chosen by id) is only counted. Each judge result is recorded in
+# the sealed share (scenarios.sealed, chosen by id) is only counted. A judge that runs longer than
+# scenarios.judge_seconds (default 600) is stopped and counts as invalid. Each judge result is recorded in
 # train-scenario-results.jsonl in the logs directory, the judge's own output in train-scenario-judge/, the
-# output of scenarios.run in train-scenarios-run.log. The system is stopped when the stage ends.
+# output of scenarios.run in train-scenarios-run.log. The system and a running judge are stopped (their
+# process groups, KILL after 2 s) when the stage ends, also on SIGTERM, SIGINT or SIGHUP.
 #
 # Exit: 0 green, 1 red, 2 config error.
 set -u
@@ -34,6 +36,12 @@ for value in "$pass" "$min_satisfaction" "$sealed_share"; do
     { echo "scenarios error: a threshold is not a number from 0 to 1 (doctor.sh names it)"; exit 2; }
 done
 run_seconds=$(cfg scenarios.run_seconds 120)
+judge_seconds=$(cfg scenarios.judge_seconds 600)
+for value in "$run_seconds" "$judge_seconds"; do
+  case $value in
+    "" | *[!0-9]*) echo "scenarios error: run_seconds and judge_seconds must be whole seconds"; exit 2 ;;
+  esac
+done
 logs=$(dl_logs_dir)
 results="$logs/train-scenario-results.jsonl"
 judge_dir="$logs/train-scenario-judge"
@@ -42,7 +50,7 @@ mkdir -p "$logs" || exit 2
 rm -rf "$judge_dir" && rm -f "$results" "$run_log" && mkdir -p "$judge_dir" || exit 2
 store=$(dl_scenarios_dir)
 judge=$(dl_scenarios_judge_command)
-run_pid=""
+run_pid="" judge_pid=""
 
 # selected_scenarios: the scenario files to judge, one per line.
 selected_scenarios() {
@@ -56,18 +64,28 @@ selected_scenarios() {
   done < <(dl_scenarios_files "$store")
 }
 
-# stop_system: stop the process group of scenarios.run (TERM, then KILL after 5 s).
-stop_system() {
-  local tries
-  [ -n "$run_pid" ] || return 0
-  kill -TERM -- "-$run_pid" 2>/dev/null
-  for tries in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 -- "-$run_pid" 2>/dev/null || break
-    sleep 0.5
+# stop_groups PID...: stop these process groups (TERM, then KILL after 2 s), well inside the gate's grace
+# period (DEV_LOOP_STOP_GRACE_SECONDS, default 10) when the gate stops this stage.
+stop_groups() {
+  local pid alive
+  for pid in "$@"; do kill -TERM -- "-$pid" 2>/dev/null; done
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    alive=""
+    for pid in "$@"; do kill -0 -- "-$pid" 2>/dev/null && alive=yes; done
+    [ -n "$alive" ] || return 0
+    sleep 0.2
   done
-  [ "$tries" -lt 10 ] || kill -KILL -- "-$run_pid" 2>/dev/null
-  run_pid=""
+  for pid in "$@"; do kill -KILL -- "-$pid" 2>/dev/null; done
 }
+
+# stop_all: stop the running judge and the system scenarios.run started.
+stop_all() {
+  # shellcheck disable=SC2086  # the empty ones drop out on purpose
+  [ -z "$run_pid$judge_pid" ] || stop_groups $run_pid $judge_pid
+  run_pid="" judge_pid=""
+}
+trap stop_all EXIT
+trap 'exit 1' TERM INT HUP
 
 # start_system: start scenarios.run in its own process group and set target to the first line it prints;
 # without scenarios.run the target is empty. Red when it ends or times out before printing a line.
@@ -76,8 +94,6 @@ start_system() {
   target=""
   run=$(cfg scenarios.run "")
   [ -n "$run" ] || return 0
-  trap stop_system EXIT
-  trap 'exit 1' TERM INT HUP
   dl_new_session bash -c "$run" </dev/null >"$run_log" 2>&1 &
   run_pid=$!
   deadline=$(($(date +%s) + run_seconds))
@@ -99,18 +115,29 @@ start_system() {
   echo "scenarios run: $target"
 }
 
-# judge_once FILE ID SEALED RUN: run the judge on one scenario and record its result; sets verdict to the
-# line of dl_scenario_verdict.
+# judge_once FILE ID SEALED RUN: run the judge on one scenario in its own process group (stopped after
+# scenarios.judge_seconds) and record its result; sets verdict to the line of dl_scenario_verdict.
 judge_once() {
-  local out="$judge_dir/$4.out" rc record
-  DL_SCENARIO_FILE=$1 DL_SCENARIO_ID=$2 DL_SCENARIO_TARGET=$target bash -c "$judge" </dev/null >"$out" 2>"$judge_dir/$4.err" &
-  wait $!
-  rc=$?
-  if [ "$rc" -ne 0 ]; then
-    verdict=$(printf 'invalid\tthe judge exited with %s' "$rc")
+  local out="$judge_dir/$4.out" rc deadline record
+  DL_SCENARIO_FILE=$1 DL_SCENARIO_ID=$2 DL_SCENARIO_TARGET=$target \
+    dl_new_session bash -c "$judge" </dev/null >"$out" 2>"$judge_dir/$4.err" &
+  judge_pid=$!
+  deadline=$(($(date +%s) + judge_seconds))
+  while kill -0 "$judge_pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+  if kill -0 "$judge_pid" 2>/dev/null; then
+    stop_groups "$judge_pid"
+    wait "$judge_pid" 2>/dev/null
+    verdict=$(printf 'invalid\tthe judge ran longer than %s s' "$judge_seconds")
   else
-    verdict=$(dl_scenario_verdict "$2" <"$out")
+    wait "$judge_pid"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      verdict=$(printf 'invalid\tthe judge exited with %s' "$rc")
+    else
+      verdict=$(dl_scenario_verdict "$2" <"$out")
+    fi
   fi
+  judge_pid=""
   if [ "${verdict%%$'\t'*}" = ok ]; then
     record="\"valid\": true, \"result\": ${verdict##*$'\t'}, \"error\": null"
   else
@@ -178,7 +205,7 @@ while IFS= read -r file; do
     echo "scenario $id unsatisfied ($score, $kind): $(reason_of "$best")"
   fi
 done <<<"$files"
-stop_system
+stop_all
 
 [ "$sealed_judged" -eq 0 ] || echo "scenarios sealed: $sealed_judged judged, $sealed_red unsatisfied"
 mean=$(awk -v s="$sum" -v n="$judged" 'BEGIN { print s / n }')
