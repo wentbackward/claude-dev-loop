@@ -163,12 +163,28 @@ doctor_architect() {
 # shellcheck source=lib/scenarios.sh
 . "$scripts_dir/lib/scenarios.sh"
 
+# doctor_factory: print the operating mode and whether scenarios are on, marked (preset), (explicit) or
+# (default); report a mode other than collaborative or dark. Silent without "factory".
+doctor_factory() {
+  local mode setting
+  mode=$(cfg factory "")
+  [ -n "$mode" ] || return 0
+  case $mode in
+    collaborative | dark) ;;
+    *) missing "factory: \"$mode\" is not collaborative or dark" ;;
+  esac
+  setting=$(dl_scenarios_setting)
+  echo "        factory       $(dl_factory), scenarios ${setting% *} (${setting#* })"
+}
+
 # doctor_scenarios: print the scenario store and its settings, the number of scenarios and of required ones;
 # report bad thresholds and each invalid scenario file; note a store inside the repository or not yet made.
 doctor_scenarios() {
   local dir key value file reason
   dir=$(dl_scenarios_dir)
   echo "        scenarios     $dir"
+  [ "$(dl_factory)" = dark ] && ! dl_scenarios_ready "$dir" &&
+    missing "factory dark: no scenario store with a valid required scenario in $dir (write scenarios from the spec, see the setup skill's go-dark step, or set \"scenarios\": false)"
   echo "        scenarios     run $(cfg scenarios.run none), judge $(cfg scenarios.judge "scenario-judge agent"), pass $(cfg scenarios.pass 0.8), min_satisfaction $(cfg scenarios.min_satisfaction 0.9), sealed $(cfg scenarios.sealed 0)"
   for key in pass min_satisfaction sealed; do
     value=$(cfg "scenarios.$key" "")
@@ -261,6 +277,7 @@ else
   echo "        models        $models"
   dl_docs_on && doctor_docs
   dl_arch_on && doctor_arch
+  doctor_factory
   dl_scenarios_on && doctor_scenarios
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
     ok ".claude/CLAUDE.md"

@@ -170,6 +170,10 @@ if [ "$invalid" -gt 0 ]; then
   echo "scenarios red: $invalid invalid scenario file(s) in the store (doctor.sh names them)"
   exit 1
 fi
+if [ "$(dl_factory)" = dark ] && ! dl_scenarios_ready "$store"; then
+  echo "scenarios red: factory dark needs a scenario store with at least one valid required scenario ($store)"
+  exit 1
+fi
 if [ -z "$files" ]; then
   echo "scenarios green: 0 judged (no scenario to judge in $store)"
   exit 0

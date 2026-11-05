@@ -53,7 +53,7 @@ stale_days=$(cfg cleanup.stale_days 14)
 keep_days=$(cfg cleanup.keep_days 30)
 [[ "$stale_days" =~ ^[0-9]+$ && "$keep_days" =~ ^[0-9]+$ ]] ||
   dl_die "cleanup.stale_days and cleanup.keep_days must be whole days"
-factory=$(cfg factory collaborative)
+factory=$(dl_factory)
 [ "$factory" = dark ] && include+="closed stale "
 git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
 base="$DL_REMOTE/$DL_BASE"

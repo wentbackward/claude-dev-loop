@@ -152,6 +152,29 @@ cfg() {
   if [ -n "$value" ]; then printf '%s\n' "$value"; else printf '%s\n' "${2:-}"; fi
 }
 
+# cfg_has KEY: true when the project config has the top-level KEY, whatever its value (null and false too).
+cfg_has() {
+  [ -n "${DL_CONFIG:-}" ] && [ -f "$DL_CONFIG" ] || return 1
+  if dl_have_jq; then
+    jq -e --arg k "$1" 'type == "object" and has($k)' "$DL_CONFIG" >/dev/null 2>&1
+  else
+    python3 -I -c '
+import json, sys
+try:
+    value = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if isinstance(value, dict) and sys.argv[2] in value else 1)
+' "$DL_CONFIG" "$1" 2>/dev/null
+  fi
+}
+
+# dl_factory: the operating mode, "dark" or "collaborative" (the default; any other value of "factory" counts
+# as collaborative, and doctor.sh reports it).
+dl_factory() {
+  if [ "$(cfg factory collaborative)" = dark ]; then echo dark; else echo collaborative; fi
+}
+
 # cfg_len PATH: the length of an array in the project config.
 cfg_len() {
   if [ -n "${DL_CONFIG:-}" ] && [ -f "$DL_CONFIG" ]; then json_len "$1" <"$DL_CONFIG"; else echo 0; fi
