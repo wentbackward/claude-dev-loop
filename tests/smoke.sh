@@ -381,15 +381,23 @@ git worktree remove --force "$work/wt22"
 branch_on feat/48-locked w48.txt && note_for feat/48-locked
 branch_on feat/49-env w49.txt && note_for feat/49-env
 git worktree add -q "$work/wt48" feat/48-locked && git worktree lock "$work/wt48"
-git worktree add -q "$work/wt49" feat/49-env && echo '.env' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
+git worktree add -q "$work/wt49" feat/49-env && printf '.env\nnode_modules/\n' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
   echo SECRET=x >"$work/wt49/.env"
-"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env >/dev/null 2>&1
-out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env 2>&1)
+branch_on feat/51-build w51.txt && note_for feat/51-build
+git worktree add -q "$work/wt51" feat/51-build && mkdir -p "$work/wt51/web/node_modules/pkg" && echo x >"$work/wt51/web/node_modules/pkg/i.js"
+git branch -q train-person-work origin/main
+"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build >/dev/null 2>&1
+out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
-echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds a .env file" && [ -f "$work/wt49/.env" ] &&
-  pass "merge-train keeps a worktree holding a .env file" || fail ".env worktree: $out"
+echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
+  [ -f "$work/wt49/.env" ] && pass "merge-train keeps a worktree holding a .env file" || fail ".env worktree: $out"
+[ ! -d "$work/wt51" ] && [ -z "$(git branch --list feat/51-build)" ] &&
+  pass "merge-train removes a worktree whose ignored files are only build output" || fail "build-only worktree kept: $out"
+[ -n "$(git branch --list train-person-work)" ] && pass "the gate never deletes a person's train-* branch" ||
+  fail "the gate deleted train-person-work"
 git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
+git branch -q -D train-person-work
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
@@ -454,6 +462,9 @@ expect "kept branches survive every run" "feat/25-moved feat/28-open" \
 
 # The reviewer's cases: the dangerous direction of every rule.
 git push -q origin origin/main~1:refs/heads/develop                       # a long-lived branch behind main
+git checkout -q -B release-1 origin/main && echo r >rel.txt && git add rel.txt && git commit -q -m "release" &&
+  git push -q -u origin release-1 && git checkout -q main && gh_pr release-1 && gh pr merge release-1 --squash >/dev/null
+git fetch -q origin                                                          # a non-loop branch with a merged PR
 git checkout -q -B "fix/42-it's" origin/main && echo q >q.txt && git add q.txt && git commit -q -m "fix: q" &&
   git push -q -u origin "fix/42-it's" && git checkout -q main                # a quote in the name
 printf '42\tCLOSED\tNOT_PLANNED\n' >>"$FAKE_GH_DIR/issues.tsv"
@@ -474,7 +485,7 @@ git fetch -q origin
 out=$(DEV_LOOP_CONFIG="$work/dark.json" "$plugin/scripts/cleanup.sh" --apply 2>&1)
 echo "$out"
 report=$(echo "$out" | sed -n 's/^report: //p')
-for row in "keep remote develop" "closed local fix/42-it's" "keep local feat/43-reopened" \
+for row in "keep remote develop" "keep remote release-1" "keep local release-1" "closed local fix/42-it's" "keep local feat/43-reopened" \
   "keep local fix/45-checked-out" "keep local train-station-fix" "keep local train-feat/46-live"; do
   read -r want scope name <<<"$row"
   expect "cleanup classifies $scope $name as $want" "$want" "$(class_of "$report" "$scope" "$name")"
@@ -500,6 +511,11 @@ git branch -q -D restored44 2>/dev/null
 rm -f "$DEV_LOOP_HOME/project/train-running.txt"
 git branch -q -D train-feat/46-live
 git worktree remove --force "$work/wt45"
+echo first >"$work/pr-feat_60-twice.md" && echo second >"$work/pr-feat_60-twice.b" &&
+  bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_archive_note_file "$2"; mv "$3" "$2"; dl_archive_note_file "$2"' \
+    _ "$plugin" "$work/pr-feat_60-twice.md" "$work/pr-feat_60-twice.b"
+expect "a note archived twice under one name keeps both" "first second" \
+  "$(cat "$notes"/merged/pr-feat_60-twice*.md | sort | paste -sd' ')"
 expect "the JSON of a branch name with quotes and backslashes parses" 'a"b\c' \
   "$(bash -c '. "$1/scripts/lib/common.sh"; dl_json_string "a\"b\\c"' _ "$plugin" | jq -r .)"
 

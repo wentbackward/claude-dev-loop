@@ -23,7 +23,8 @@
 #                       script in parallel mode stops the running checks the same way (TRAIN RED).
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
-# longer in a train); it keeps those of this train and of a green train still waiting to merge. While it
+# longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
+# green train still waiting to merge, and never touches other branches whose names start with train-. While it
 # runs, the train is recorded in train-running.txt, so cleanup.sh leaves its refs alone.
 #
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
@@ -55,7 +56,8 @@ git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
 git rebase --abort >/dev/null 2>&1
 git checkout -q --detach "$DL_REMOTE/$DL_BASE" || dl_die "cannot check out $DL_REMOTE/$DL_BASE"
 git for-each-ref --format='%(refname:strip=2)' refs/heads | while read -r ref; do # (a ref glob stops at "/")
-  [[ "$ref" == train-* && "$keep_train" != *" ${ref#train-} "* ]] && git branch -q -D "$ref" >/dev/null 2>&1
+  [[ "$ref" == train-* && "$keep_train" != *" ${ref#train-} "* ]] && dl_loop_branch "${ref#train-}" &&
+    git branch -q -D "$ref" >/dev/null 2>&1
 done
 
 base_ref="$DL_REMOTE/$DL_BASE"

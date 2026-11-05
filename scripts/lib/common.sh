@@ -234,19 +234,47 @@ dl_notes_merged_dir() {
   printf '%s/merged\n' "$(dl_notes_dir)"
 }
 
-# dl_archive_note BRANCH: move the branch's notes file to the merged notes directory (if it exists),
-# stamped with the time of the move, so cleanup.keep_days counts from the merge.
+# dl_archive_note_file FILE: move a notes file to the merged notes directory, stamped with the time of the
+# move (cleanup.keep_days counts from the merge); an earlier archived note of the same name is kept.
+dl_archive_note_file() {
+  local dir target
+  dir=$(dl_notes_merged_dir)
+  target=$dir/$(basename "$1")
+  [ ! -e "$target" ] || target=$dir/$(basename "$1" .md)-$(date +%Y%m%d-%H%M%S)-$$.md
+  mkdir -p "$dir" && mv "$1" "$target" && touch "$target"
+}
+
+# dl_archive_note BRANCH: archive the branch's notes file (if it exists).
 dl_archive_note() {
   local note
   note=$(dl_note_file "$1")
-  [ -f "$note" ] || return 0
-  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$note" "$(dl_notes_merged_dir)/" &&
-    touch "$(dl_notes_merged_dir)/$(basename "$note")"
+  [ ! -f "$note" ] || dl_archive_note_file "$note"
+}
+
+# dl_unrebuildable_ignored WORKTREE: the first ignored file or directory of WORKTREE that is not build
+# output (merge.rebuildable, default node_modules dist build target .venv and the usual caches).
+dl_unrebuildable_ignored() {
+  local keep=" node_modules dist build target out coverage htmlcov .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache .coverage "
+  local count i entry part
+  count=$(cfg_len merge.rebuildable)
+  if [ "$count" -gt 0 ]; then
+    keep=" "
+    for ((i = 0; i < count; i++)); do keep+="$(cfg "merge.rebuildable.$i") "; done
+  fi
+  # A directory listed only because it holds other listed entries (web/ for web/node_modules/) is skipped.
+  git -C "$1" ls-files --others --ignored --exclude-standard --directory 2>/dev/null | LC_ALL=C sort -r |
+    awk '{ if (index(prev, $0) != 1 || substr($0, length($0)) != "/") print; prev = $0 }' | while read -r entry; do
+    local rebuildable=""
+    IFS=/ read -r -a parts <<<"${entry%/}"
+    for part in "${parts[@]}"; do [[ "$keep" == *" $part "* ]] && rebuildable=yes; done
+    [ -n "$rebuildable" ] || { printf '%s\n' "$entry"; break; }
+  done
 }
 
 # dl_remove_merged_local BRANCH HEAD...: after BRANCH merged, delete its local branch when its tip is one
-# of the merged HEADs, removing a clean worktree that has it checked out first (with its ignored files, such
-# as node_modules and build output; a worktree holding a .env file is kept). Prints what it kept, and why.
+# of the merged HEADs, removing a clean worktree that has it checked out first. Removing a worktree removes
+# its ignored files too, so only one whose ignored files are all build output goes (merge.rebuildable);
+# one holding anything else (.env, keys, local data) is kept. Prints what it kept, and why.
 dl_remove_merged_local() {
   local branch=$1 tip head accepted="" worktree
   shift
@@ -266,8 +294,8 @@ dl_remove_merged_local() {
     elif [ "$(printf '%s\n' "$worktree" | sed -n 2p)" = locked ]; then
       echo "kept local $branch: its worktree $path is locked"
       return 0
-    elif git -C "$path" ls-files --others --ignored --exclude-standard 2>/dev/null | grep -qE '(^|/)\.env(\..*)?$'; then
-      echo "kept local $branch: its worktree $path holds a .env file"
+    elif [ -n "$(dl_unrebuildable_ignored "$path")" ]; then
+      echo "kept local $branch: its worktree $path holds ignored files that are not build output ($(dl_unrebuildable_ignored "$path"))"
       return 0
     elif ! git -C "$DL_ROOT" worktree remove "$path" >/dev/null 2>&1; then
       echo "kept local $branch: its worktree $path has changes"

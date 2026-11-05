@@ -126,7 +126,7 @@ record, never by `git branch --merged`.
 | Thing | Removed |
 |---|---|
 | remote feature branch | by `merge-train.sh` after the merge (`merge.delete_branch`) |
-| local feature branch and its worktree | by `merge-train.sh` after the merge, when the local tip is the merged head and the worktree is clean (its ignored files, such as `node_modules`, go with it; a worktree holding a `.env` file is kept); otherwise it says what it kept and why (`merge.delete_local`) |
+| local feature branch and its worktree | by `merge-train.sh` after the merge, when the local tip is the merged head and the worktree is clean (only when its ignored files are all build output, `merge.rebuildable`; a worktree holding `.env`, keys or local data is kept); otherwise it says what it kept and why (`merge.delete_local`) |
 | `train-<branch>` | by `merge-train.sh` once the whole train merged; by the next `gate-train.sh` for red trains and branches no longer in a train |
 | `replay-<branch>` | by `merge-train.sh` right after use |
 | notes file | moved to `notes/merged/` on merge; removed by `cleanup.sh` after `cleanup.keep_days` |
@@ -144,6 +144,8 @@ then the issue its name points at (`<type>/<n>-...`):
 | closed | PR closed unmerged at this tip, or its issue closed as not planned | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
 | stale | no PR, no open issue, idle for `cleanup.stale_days` (remote: loop branches only) | with `--include stale`; automatic with `"factory": "dark"` |
 | keep | open PR or issue, checked out in a worktree, a live train, recent, moved on after its PR, or a remote branch outside the loop (`develop`, `release-*`) | never |
+
+Branches outside the loop are never judged by PRs or the ledger: locally they can only be stale, remotely they are always kept. The gate deletes only `train-*` refs of loop branches.
 
 Loop branches are the ones matching `github.feature_patterns` (default `feat/* fix/* chore/* docs/*`).
 Every deletion is conditional on the tip that was classified (`update-ref` with the old value, a push

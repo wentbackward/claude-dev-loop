@@ -5,7 +5,8 @@
 #
 # Merged is decided by the merge ledger of merge-train.sh, then by the PR list (gh); a squash merge leaves
 # no ancestry. Branches outside the loop (names not matching github.feature_patterns, default feat/* fix/*
-# chore/* docs/*) are only ever deleted locally, and only as stale. Classes:
+# chore/* docs/*) are only ever deleted locally, and only as stale; the PR and ledger rules never apply to
+# them. Classes:
 #   merged    the ledger or a merged PR has this tip (or a replayed copy with the same changes); a local
 #             loop branch the base contains
 #   helper    local train-<branch> and replay-<branch> refs of loop branches outside a live train; local
@@ -132,6 +133,15 @@ classify() {
       return
     fi
   fi
+  # Branches outside the loop (develop, release-*, a person's own): only ever stale, and only locally.
+  if ! loop_branch "$name"; then
+    if [ "$scope" = remote ]; then out keep "not a loop branch"; return; fi
+    days=$(((now - date) / 86400))
+    if [ "$days" -ge "$stale_days" ]; then out stale "not a loop branch, last commit $days days ago"; else
+      out keep "not a loop branch, recent ($days days)"
+    fi
+    return
+  fi
   if grep -qxF -- "$name $tip" "$work/ledger"; then out merged "in the merge ledger"; return; fi
   while IFS=$'\t' read -r _ oid state number; do
     case "$state" in
@@ -147,9 +157,7 @@ classify() {
   [ -n "$closed" ] && { out closed "closed PR $closed, not merged"; return; }
   [ -n "$moved" ] && { out keep "$moved, but the branch moved on since"; return; }
   if grep -qxF -- "$ref" "$work/contained"; then
-    if [ "$scope" = local ] && loop_branch "$name"; then out merged "the base contains it"; else
-      out keep "the base contains it, no PR"
-    fi
+    if [ "$scope" = local ]; then out merged "the base contains it"; else out keep "the base contains it, no PR"; fi
     return
   fi
   if [[ "$name" =~ ^[a-z]+/([0-9]+)[-_] ]]; then
@@ -159,10 +167,6 @@ classify() {
       *$'\tOPEN\t'*) out keep "issue #$number is open"; return ;;
       *$'\tCLOSED\tNOT_PLANNED') out closed "issue #$number closed as not planned, no PR"; return ;;
     esac
-  fi
-  if [ "$scope" = remote ] && ! loop_branch "$name"; then
-    out keep "not a loop branch (no PR or ledger record)"
-    return
   fi
   days=$(((now - date) / 86400))
   if [ "$days" -ge "$stale_days" ]; then out stale "no PR, no open issue, last commit $days days ago"; else
@@ -254,7 +258,7 @@ if [ -s "$work/delete" ]; then
     args=()
     flush() {
       [ ${#args[@]} -gt 0 ] || return 0
-      "$scripts_dir/as-role.sh" gate git push -q "$DL_REMOTE" "${args[@]}" >/dev/null 2>&1
+      "$scripts_dir/as-role.sh" gate git push -q "$DL_REMOTE" "${args[@]}" </dev/null >/dev/null 2>&1
       args=()
     }
     while IFS=$'\t' read -r name tip; do
@@ -277,8 +281,7 @@ fi
 
 moved=0
 while read -r file; do
-  mkdir -p "$(dl_notes_merged_dir)" && mv -f "$file" "$(dl_notes_merged_dir)/" &&
-    touch "$(dl_notes_merged_dir)/$(basename "$file")" && moved=$((moved + 1))
+  dl_archive_note_file "$file" && moved=$((moved + 1))
 done < <(notes_to_archive)
 echo "moved $moved notes files of merged PRs to $(dl_notes_merged_dir)"
 find "$(dl_notes_merged_dir)" -maxdepth 1 -type f -name 'pr-*.md' -mtime +"$keep_days" -exec rm -f {} + 2>/dev/null
