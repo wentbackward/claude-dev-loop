@@ -52,7 +52,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   red: factory dark needs ...`). `doctor.sh` prints the mode and marks the scenarios setting `(preset)`,
   `(explicit)` or `(default)`, and reports any other mode. The `dev-loop` skill keeps one list of stop
   conditions for both modes and a "Factory mode" section (section 8a); the `setup` skill asks for the mode
-  once and has a go-dark step (3d). Without `factory`, nothing changes.
+  once and has a go-dark step (3d). The role guard hook applies the same rule, so a dark factory hides
+  the default store from the coding agents. Without `factory`, nothing changes.
 
 ## 0.6.0 — 2026-11-05
 

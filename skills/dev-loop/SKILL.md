@@ -77,8 +77,9 @@ absolute paths into their prompts.
 ## 1b. Scenarios (`scenarios` in `.dev-loop.json`)
 
 Holdout scenarios are end-to-end user scenarios kept in the scenario store (`scenarios.dir`), outside
-every worktree, where the coding agents never see them. Without `scenarios` in `.dev-loop.json`, skip
-this section.
+every worktree, where the coding agents never see them. Skip this section when scenarios are off: no
+`scenarios` in `.dev-loop.json` and no `"factory": "dark"`, or `"scenarios": false` (`doctor.sh` prints
+`scenarios on` or `off` on its `factory` line).
 
 - **When:** at ticket creation, after the issue exists and before its implementer starts, launch a fresh
   `scenario-writer` agent (`model` from `models.scenario-writer`, see step 0) with:

@@ -2,9 +2,9 @@
 # PreToolUse hook: the implementer, test-engineer and code-reviewer may not touch the holdout scenario
 # store; in identity mode, GitHub writes only through as-role.sh with the agent's own role, no merges or
 # repository admin by agents, no reads of role credentials (logic in guard-role.py).
-# A no-op without python3 or without "scenarios" or "identities" in .dev-loop.json.
+# A no-op without python3 or without "scenarios", "factory" or "identities" in .dev-loop.json.
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -z "${DEV_LOOP_CONFIG:-}" ] &&
-  ! grep -qsE '"(identities|scenarios)"' "$CLAUDE_PROJECT_DIR/.dev-loop.json"; then
+  ! grep -qsE '"(identities|scenarios|factory)"' "$CLAUDE_PROJECT_DIR/.dev-loop.json"; then
   cat >/dev/null
   exit 0
 fi

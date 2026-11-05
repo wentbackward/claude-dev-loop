@@ -105,7 +105,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
-| hook | role guard | with `scenarios`: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
+| hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 All hooks do nothing in a project without `.dev-loop.json`, so the plugin is safe to install globally.
 
@@ -469,13 +469,13 @@ whenever `scenarios` is configured):
 
 ### Isolation: the agent-type guard
 
-The isolation is the role guard hook (PreToolUse), by agent type. With `scenarios` configured, identity
-mode or not, it refuses `Read`, `Grep`, `Glob`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and Bash
+The isolation is the role guard hook (PreToolUse), by agent type. With scenarios on (a `scenarios` block,
+or `"factory": "dark"` without `"scenarios": false`), identity mode or not, it refuses `Read`, `Grep`, `Glob`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and Bash
 calls by the `implementer`, `test-engineer` and `code-reviewer` agents that name a path inside
 `scenarios.dir`: absolute, with `~` or `$HOME`, relative to the working directory (also after a `cd` in
 the same command), through a symlink into the store, or a shell glob that matches a file in it. The main
-session, the `scenario-judge`, the `scenario-writer` and every other agent type are allowed. Without
-`scenarios` it refuses nothing. The guard resolves the store like `paths.sh scenarios`.
+session, the `scenario-judge`, the `scenario-writer` and every other agent type are allowed. With
+scenarios off it refuses nothing. The guard resolves the store like `paths.sh scenarios`.
 
 There is deliberately no deny rule for the store in `templates/settings.json`: deny rules apply to every
 agent, so they would block the judge too.
