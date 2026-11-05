@@ -9,7 +9,9 @@
 #     notes file's "## Docs" section has no line "none: <reason>" (any case, a non-empty reason);
 #   - a Markdown file changed in the range (and still there in <to>) has a relative link, [text](path) or
 #     [text](path#anchor), that does not resolve in <to>. Links with a scheme (https:, mailto:), anchors
-#     (#x), absolute paths (/x) and links inside code are not checked.
+#     (#x), absolute paths (/x), links inside code, reference-style links and targets with nested
+#     parentheses are not checked. <path with spaces> and %20 are understood.
+# A <from> that is not an ancestor of <to> is replaced by their merge base (only the branch's own changes).
 # Globs are shell globs matched against the whole repository path, where * also matches / ("src/*" covers
 # src/a/b.py). The gate runs it for each branch of a train on that branch's own commits; an implementer can
 # run it on a branch: docs-check.sh origin/main HEAD "$(scripts/paths.sh notes <branch>)".
@@ -29,6 +31,11 @@ dl_docs_on || dl_die "no \"docs.aspects\" in $DL_CONFIG: nothing to check"
 for ref in "$from" "$to"; do
   git rev-parse -q --verify "$ref^{commit}" >/dev/null || dl_die "$ref is not a commit"
 done
+# A from that is not an ancestor of to (the base moved on): compare from the merge base, so the base's own
+# changes are not judged as the branch's.
+if ! git merge-base --is-ancestor "$from" "$to"; then
+  from=$(git merge-base "$from" "$to") || dl_die "$1 and $to have no common ancestor"
+fi
 
 problems=0
 problem() {
@@ -124,6 +131,19 @@ resolve_link() {
   echo
 }
 
+# link_target LINK: the path part of a link: <path with spaces> up to the ">", else up to the first space
+# (a title follows it); without #anchor and ?query, %20 decoded to a space.
+link_target() {
+  local target
+  case "$1" in
+    "<"*) target=${1#<} && target=${target%%>*} ;;
+    *) target=${1%%[[:space:]]*} ;;
+  esac
+  target=${target%%#*}
+  target=${target%%\?*}
+  printf '%s\n' "${target//%20/ }"
+}
+
 # check_links CHANGED: every relative link in the changed Markdown files resolves in <to>.
 check_links() {
   local file dir link target path
@@ -133,11 +153,7 @@ check_links() {
     dir=$(dirname "$file")
     [ "$dir" = . ] && dir=""
     while IFS= read -r link; do
-      target=${link#<}
-      target=${target%%[[:space:]]*}
-      target=${target%>}
-      target=${target%%#*}
-      target=${target%%\?*}
+      target=$(link_target "$link")
       case "$link" in "#"* | /* | "") continue ;; esac
       [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: ]] && continue
       [ -n "$target" ] || continue
@@ -150,7 +166,8 @@ check_links() {
   done <<<"$1"
 }
 
-changed=$(git diff --name-only --no-renames "$from" "$to") || dl_die "cannot diff $from..$to"
+# NUL-separated names, so git does not quote non-ASCII or special paths (one name per line from here on).
+changed=$(git diff --name-only --no-renames -z "$from" "$to" | tr '\0' '\n') || dl_die "cannot diff $from..$to"
 check_map "$changed"
 check_links "$changed"
 if [ "$problems" -gt 0 ]; then
