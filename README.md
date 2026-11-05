@@ -433,10 +433,12 @@ whenever `scenarios` is configured):
 - **`scenarios.judge`** judges one scenario, run once per scenario with `DL_SCENARIO_FILE`,
   `DL_SCENARIO_ID` and `DL_SCENARIO_TARGET`; its last line that starts with `{` is the verdict
   `{"id", "satisfied": 0..1, "required", "evidence", "missing"}`. The default is headless Claude Code with
-  the [`scenario-judge`](agents/scenario-judge.md) agent on `models.scenario-judge`: `claude -p --agent
-  dev-loop:scenario-judge --model <model> --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash"
-  ...`. Output without a valid verdict (no JSON object, another id, `satisfied` not from 0 to 1, a
-  non-zero exit) counts as 0.
+  the [`scenario-judge`](agents/scenario-judge.md) agent on `models.scenario-judge`: `claude -p "<prompt>"
+  --agent dev-loop:scenario-judge --model <model> --permission-mode dontAsk
+  --allowedTools=Read,Grep,Glob,Bash --add-dir=<the scenario's folder> ...` (the prompt right after `-p`,
+  and `=` on the options that take several values, so none of them takes the prompt). Output without a
+  valid verdict (no JSON object, another id, `satisfied` not from 0 to 1, a non-zero exit, or a run longer
+  than `scenarios.judge_seconds`, default 600, after which its process group is stopped) counts as 0.
 - **Rejudge:** a scenario below `scenarios.pass` is judged once more; its better run counts, so it fails
   only when both runs fail.
 - **Green** needs every required scenario at `>= scenarios.pass` and the mean of all judged scenarios at
@@ -455,8 +457,14 @@ whenever `scenarios` is configured):
 - **Logs** (`paths.sh logs`): `train-scenarios.log` (the stage's lines, safe to forward),
   `train-scenario-results.jsonl` (one line per judge run: `scenario`, `run`, `sealed`, `valid`, the
   judge's `result` JSON or the `error`), `train-scenario-judge/` (each judge run's own output) and
-  `train-scenarios-run.log`. The last three hold evidence and sealed results: they are for the human, not
-  for the implementers.
+  `train-scenarios-run.log`. The last three hold the judge's evidence, sealed ids and their results, and
+  whatever the system printed: **never show them, or the logs directory, to an implementer**, a
+  test-engineer or a code-reviewer; they are for the human. Forward only the `missing` text of a
+  `scenario <id> unsatisfied` line.
+- **Stopping:** when the stage ends, or the gate stops it (`fail_fast`, or a signal), it stops the
+  system's and a running judge's process groups: SIGTERM, SIGKILL after 2 s, inside the gate's grace
+  period (`DEV_LOOP_STOP_GRACE_SECONDS`, default 10). With a grace period under 3 s the gate may kill the
+  stage first and the system's session is left running.
 
 ### Isolation: the agent-type guard
 
@@ -554,6 +562,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `scenarios.dir` | `~/.dev-loop/<repo>/scenarios` | the holdout scenario store; the `scenarios` key turns it on (see Holdout scenarios) |
 | `scenarios.run` | none | the command that starts the system for the scenario stage; its first output line is how to reach it |
 | `scenarios.run_seconds` | `120` | how long the stage waits for that first line |
+| `scenarios.judge_seconds` | `600` | how long one judge run may take; a longer one is stopped and counts as invalid |
 | `scenarios.judge` | the `scenario-judge` agent | the command that judges one scenario and prints its JSON verdict |
 | `scenarios.heavy` | `true` | run the scenario stage through `heavy.sh` |
 | `scenarios.pass`, `scenarios.min_satisfaction`, `scenarios.sealed` | `0.8`, `0.9`, `0` | the share each required scenario must reach, the mean the train must reach, the share never reported in detail |

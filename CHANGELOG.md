@@ -36,7 +36,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - The scenario judge and the gate's scenario stage (#32, part 3 of #2; off without `scenarios`): after
   the checks pass (or alongside them with `parallel`), `gate-train.sh` runs `scripts/scenario-stage.sh`,
   which starts `scenarios.run`, judges each scenario with `scenarios.judge` (default: the new read-only
-  `scenario-judge` agent on `models.scenario-judge`), rejudges a failure once and is green only with
+  `scenario-judge` agent on `models.scenario-judge`), rejudges a failure once (a judge run
+  longer than `scenarios.judge_seconds`, default 600, is stopped and counts as invalid) and is green only with
   every required scenario at `>= pass` and the mean at `>= min_satisfaction`. A red train names each
   unsatisfied scenario with the judge's `missing` line only; the `scenarios.sealed` share is only
   counted. With `affected`, only scenarios whose `spec` or `tags` match a changed path run, plus the

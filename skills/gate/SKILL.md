@@ -132,8 +132,10 @@ A red stage prints `scenario <id> unsatisfied (<score>, required|scored): <missi
 scenario that is not sealed, `scenarios sealed: <n> judged, <k> unsatisfied` for the sealed share
 (`scenarios.sealed`, chosen by id, never named), and `scenarios red: ...` with the mean. Send the
 implementer only the `missing` line of its scenarios: never the scenario file, the judge's evidence or
-anything from `train-scenario-results.jsonl` or `train-scenario-judge/`, which hold the evidence and the
-sealed results for the human. Bisect a red scenario stage like a red check. Without `scenarios` this
+anything from `train-scenario-results.jsonl`, `train-scenario-judge/` or `train-scenarios-run.log`, which
+hold the evidence, the sealed ids and their results for the human: never point an implementer,
+test-engineer or reviewer at the logs directory. A judge run longer than `scenarios.judge_seconds`
+(default 600) is stopped and counts as invalid. Bisect a red scenario stage like a red check. Without `scenarios` this
 stage does not exist and the gate's output is unchanged; a check may not be named `scenarios` then.
 
 ## Read the result (last line)
