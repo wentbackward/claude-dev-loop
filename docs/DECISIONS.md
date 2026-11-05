@@ -19,8 +19,12 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Decision:** the docs are on when `docs.aspects` has at least one entry; `templates/dev-loop.json`
   carries a valid `docs` block with empty `aspects` and `map`, so a project copied from the template
   behaves as before. `docs.planned` is a path, checked by `doctor.sh` like an aspect but not size-checked.
-  `docs-check.sh` skips links with any URL scheme (not only http(s) and mailto), absolute paths and links
-  inside fenced or inline code, and does not link-check Markdown files deleted in the range. A
+  `docs-check.sh` skips links with any URL scheme (not only http(s) and mailto), absolute paths, links
+  inside fenced or inline code, reference-style links (`[x]: path`) and targets with nested parentheses
+  (`a_(b).md`), and does not link-check Markdown files deleted in the range. It understands
+  `<path with spaces>` and decodes `%20` only (other percent-escapes are not decoded). A `<from>` that is
+  not an ancestor of `<to>` is replaced by their merge base. The gate reads `docs` from the main
+  checkout's config, so a branch cannot change the rules of its own check. A
   `none: <reason>` line may be a list item and exempts the whole branch, every rule. The gate checks every
   branch of the train and reports all red ones before ending `TRAIN RED`; a config error (exit 2) ends the
   gate with exit 2. A map rule naming an unknown aspect is a config error in `docs-check.sh` and MISSING in

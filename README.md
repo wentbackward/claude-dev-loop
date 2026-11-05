@@ -188,11 +188,14 @@ every merge:
 - **`scripts/docs-check.sh <from> <to> [<notes file>]`** (deterministic; exit 0 green, 1 red, 2 usage or
   config) is red when a file changed in the range matches a map rule but none of that rule's docs changed
   and the notes' `## Docs` section has no `none: <reason>` line, or when a changed Markdown file has a
-  relative link (`[x](path)`, `[x](path#anchor)`) that does not resolve in `<to>`. Links with a scheme,
-  anchors, absolute paths and links in code are not checked. Each message names the file, the rule and
-  its docs.
+  relative link (`[x](path)`, `[x](path#anchor)`, `[x](<path with spaces>)`, `%20`) that does not resolve
+  in `<to>`. Links with a scheme, anchors, absolute paths, links in code, reference-style links and
+  targets with nested parentheses are not checked. A `<from>` that is not an ancestor of `<to>` is
+  replaced by their merge base, so `docs-check.sh origin/main HEAD` judges only the branch's own changes.
+  Each message names the file, the rule and its docs.
 - **The gate** runs it for each branch of a train right after stacking, on that branch's own commits with
-  its notes file, and ends `TRAIN RED` naming the branch before `gate_setup` and the checks.
+  its notes file, and ends `TRAIN RED` naming the branch before `gate_setup` and the checks. It reads
+  `docs` from the main checkout's `.dev-loop.json`, so a branch cannot change the rules of its own check.
 - **`doctor.sh`** prints the aspects, the planned list and the map; reports a missing aspect path as
   MISSING; and notes files over `max_lines` and map rules that match no tracked file.
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the

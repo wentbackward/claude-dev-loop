@@ -64,7 +64,9 @@ commits only (from the train ref below it, or the base, to `train-<branch>`), wi
 branch is red when it changes code a `docs.map` rule covers without changing one of that rule's docs, and
 its notes' `## Docs` section has no `none: <reason>` line; or when a changed Markdown file has a relative
 link that does not resolve. The gate prints `docs-check red for <branch> (...)` with the problems and ends
-`TRAIN RED` before `gate_setup` and the checks. Without `docs` this stage does not run.
+`TRAIN RED` before `gate_setup` and the checks. The rules come from the main checkout's `.dev-loop.json`
+(as every gate setting), so a branch cannot change the rules of its own check. Without `docs` this stage
+does not run.
 
 ## Read the result (last line)
 
