@@ -172,9 +172,12 @@ dl_scenarios_judge_command() {
   fi
   model=$(cfg models.scenario-judge inherit)
   [ "$model" = inherit ] && model="" || model="--model $model "
+  # The prompt follows -p and the variadic options (--allowedTools, --add-dir) take =value, so none of them
+  # swallows the prompt as another value.
   # shellcheck disable=SC2016  # expanded by the shell that runs the judge
-  printf 'claude -p --agent dev-loop:scenario-judge %s%s\n' "$model" \
-    '--no-session-persistence --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash" --add-dir "$(dirname "$DL_SCENARIO_FILE")" "Judge the scenario $DL_SCENARIO_ID in $DL_SCENARIO_FILE against the running system: ${DL_SCENARIO_TARGET:-the project in the current directory}. End with the JSON object."'
+  printf '%s --agent dev-loop:scenario-judge %s%s\n' \
+    'claude -p "Judge the scenario $DL_SCENARIO_ID in $DL_SCENARIO_FILE against the running system: ${DL_SCENARIO_TARGET:-the project in the current directory}. End with the JSON object."' \
+    "$model" '--no-session-persistence --permission-mode dontAsk --allowedTools=Read,Grep,Glob,Bash --add-dir="$(dirname "$DL_SCENARIO_FILE")"'
 }
 
 # dl_scenario_sealed FILE|ID [SHARE]: true when the scenario (a scenario file, or an id) is sealed: only
