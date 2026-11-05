@@ -40,5 +40,11 @@
     "planned": "",
     "map": [],
     "max_lines": 1000
+  },
+  "architecture": {
+    "cards": "docs/architecture/",
+    "check": "",
+    "baseline": "docs/architecture/baseline.txt",
+    "budget": 0
   }
 }
