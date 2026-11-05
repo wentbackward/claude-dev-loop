@@ -101,10 +101,10 @@ for branch in "$@"; do
     exit 4
   fi
   head=$(git rev-parse HEAD)
-  changed=$(git -c core.quotePath=false diff --name-only "$DL_REMOTE/$DL_BASE" HEAD)
+  changed=$(git diff -z --name-only "$DL_REMOTE/$DL_BASE" HEAD | dl_json_list_z)
   read -r added deleted <<<"$(dl_diff_lines "$DL_REMOTE/$DL_BASE" HEAD)"
   components=""
-  dl_arch_on && components=$(printf '%s\n' "$changed" | dl_arch_components_at HEAD)
+  dl_arch_on && components=$(git diff -z --name-only "$DL_REMOTE/$DL_BASE" HEAD | dl_z_lines | dl_arch_components_at HEAD)
   if [ "$head" != "$source_head" ]; then
     if ! as_role gate git push -q --force-with-lease="$branch:$source_head" "$DL_REMOTE" "replay-$branch:$branch"; then
       git checkout -q --detach "$DL_REMOTE/$DL_BASE"

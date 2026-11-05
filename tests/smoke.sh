@@ -1631,8 +1631,8 @@ DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/gate-train.sh" feat/131-n
 DEV_LOOP_NO_JQ=1 DEV_LOOP_CONFIG="$work/evidence.json" "$plugin/scripts/merge-train.sh" feat/131-names >/dev/null 2>&1
 expect "a merge with unusual file names merges" 0 "$?"
 odd_files='["app/store/bad'$'\xef\xbf\xbd''.py","app/store/n\nl.py","app/store/q\"b\\c.py","app/store/t\tb.py"]'
-expect "the ledger stores the real paths of unusual names, and their components" "$odd_files [\"store\"]" \
-  "$(ledger_of feat/131-names '.files, .components' | paste -sd' ' -)"
+expect "the ledger stores the real paths of unusual names, and their components" "[$odd_files,[\"store\"]]" \
+  "$(ledger_of feat/131-names '[.files, .components]')"
 python3 -I -c 'import json, sys; [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]' \
   "$DEV_LOOP_HOME/project/merged.jsonl" 2>/dev/null && pass "every ledger line is valid UTF-8 JSON for python3" ||
   fail "python3 cannot read the ledger"

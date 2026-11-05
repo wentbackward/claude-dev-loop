@@ -1,9 +1,9 @@
 # shellcheck shell=bash
 # Helpers for the component cards and the architecture fitness checks ("architecture" in .dev-loop.json),
 # shared by arch-check.sh, arch-evidence.sh, gate-train.sh, merge-train.sh and doctor.sh. Source
-# scripts/lib/common.sh and run dl_load_config first. Tagged lines separate the results: "E<TAB>error", "V<TAB>violation", "N<TAB>path in no component",
-# "S<TAB>layer<TAB>name<TAB>kind<TAB>lines<TAB>budget" (one per component), "D<TAB>from<TAB>to" (one per
-# dependency between two components).
+# scripts/lib/common.sh and run dl_load_config first. Tagged lines separate the results: "E<TAB>error",
+# "V<TAB>violation", "N<TAB>path in no component", "S<TAB>layer<TAB>name<TAB>kind<TAB>lines<TAB>budget"
+# (one per component), "D<TAB>from<TAB>to" (one per dependency between two components).
 
 # shellcheck source=reasons.sh
 . "$(dirname "${BASH_SOURCE[0]}")/reasons.sh"
@@ -539,7 +539,7 @@ _dl_arch_old_files() {
   local n commit
   while IFS=$'\t' read -r n commit; do
     git -C "$1" rev-parse -q --verify "$commit^{commit}" >/dev/null 2>&1 || continue
-    git -C "$1" -c core.quotePath=false diff-tree -r --root --no-commit-id --name-only "$commit" 2>/dev/null |
+    git -C "$1" diff-tree -z -r --root --no-commit-id --name-only "$commit" 2>/dev/null | dl_z_lines |
       awk -v n="$n" '{ print "F\t" n "\t" $0 }'
   done < <(awk -F'\t' '$1 == "M" && $8 == 0 && $9 == 1 && $7 != "" { print $2 "\t" $7 }' "$2")
 }

@@ -234,10 +234,47 @@ dl_ledger_file() {
   printf '%s/merged.jsonl\n' "$DL_STATE"
 }
 
-# dl_json_string VALUE: VALUE as a JSON string (git refs and hashes need only \ and " escaped).
+# dl_json_string VALUE: VALUE as a JSON string. Printable ASCII needs only \ and " escaped; other text goes
+# through dl_json_list_z, which escapes control characters and replaces bytes that are not UTF-8.
 dl_json_string() {
-  local value=${1//\\/\\\\}
+  local LC_ALL=C value list
+  if [[ $1 == *[^\ -~]* ]]; then
+    list=$(printf '%s\0' "$1" | dl_json_list_z)
+    list=${list#[}
+    printf '%s' "${list%]}"
+    return
+  fi
+  value=${1//\\/\\\\}
   printf '"%s"' "${value//\"/\\\"}"
+}
+
+# dl_json_list_z < NAMES: the NUL-separated names as a compact JSON array of strings, control characters
+# escaped and bytes that are not UTF-8 replaced by U+FFFD.
+dl_json_list_z() {
+  if dl_have_jq; then
+    jq -R -s -c 'split("\u0000") | map(select(. != ""))'
+  else
+    python3 -I -c '
+import json, sys
+names = [n for n in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0") if n]
+sys.stdout.buffer.write((json.dumps(names, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
+'
+  fi
+}
+
+# dl_z_lines < NAMES: the NUL-separated names one per line, as dl_json_list_z stores them (bytes that are
+# not UTF-8 replaced by U+FFFD), with tabs and line breaks as spaces (the form dl_ledger_rows prints).
+dl_z_lines() {
+  if dl_have_jq; then
+    jq -R -s -r 'split("\u0000")[] | select(. != "") | gsub("[\t\n\r]"; " ")'
+  else
+    python3 -I -c '
+import sys
+for name in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0"):
+    if name:
+        sys.stdout.buffer.write((" ".join(name.replace("\r", "\n").replace("\t", "\n").split("\n")) + "\n").encode("utf-8"))
+'
+  fi
 }
 
 # dl_json_list < LINES: the non-empty lines as a JSON array of strings.
@@ -255,14 +292,14 @@ dl_json_number() {
 }
 
 # dl_ledger_append BRANCH SOURCE_HEAD PUSHED_HEAD GATED_HEAD GATED_TREE PR MERGE_COMMIT [TICKET REVIEW_ROUNDS
-# ADDED DELETED FILES COMPONENTS]: FILES one path per line, COMPONENTS separated by spaces; missing evidence
-# is written as none (null ticket, 0 rounds and lines, empty lists).
+# ADDED DELETED FILES COMPONENTS]: FILES a JSON array of paths (dl_json_list_z), COMPONENTS separated by
+# spaces; missing evidence is written as none (null ticket, 0 rounds and lines, empty lists).
 dl_ledger_append() {
   mkdir -p "$DL_STATE" &&
     printf '{"branch":%s,"source_head":%s,"head":%s,"gated":%s,"gated_tree":%s,"pr":%s,"merge_commit":%s,"merged_at":%s,"files":%s,"components":%s,"lines":{"added":%s,"deleted":%s},"review_rounds":%s,"ticket":%s}\n' \
       "$(dl_json_string "$1")" "$(dl_json_string "$2")" "$(dl_json_string "$3")" "$(dl_json_string "$4")" \
       "$(dl_json_string "$5")" "$(dl_json_string "$6")" "$(dl_json_string "$7")" \
-      "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" "$(printf '%s\n' "${12:-}" | dl_json_list)" \
+      "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" "${12:-[]}" \
       "$(printf '%s\n' "${13:-}" | tr ' ' '\n' | dl_json_list)" "$(dl_json_number "${10:-0}")" "$(dl_json_number "${11:-0}")" \
       "$(dl_json_number "${9:-0}")" "$(dl_json_number "${8:-}")" >>"$(dl_ledger_file)"
 }
@@ -273,14 +310,16 @@ dl_ledger_heads() {
   ledger=$(dl_ledger_file)
   [ -s "$ledger" ] || return 0
   if dl_have_jq; then
-    jq -r '.branch as $b | [.source_head, .head] | unique[] | select(. != "") | "\($b) \(.)"' "$ledger" 2>/dev/null
+    jq -R -r 'fromjson? | select(type == "object") | .branch as $b | [.source_head, .head] | unique[]
+      | select(. != "" and . != null) | "\($b) \(.)"' "$ledger" 2>/dev/null
   else
     python3 -I -c '
 import json, sys
-for line in open(sys.argv[1]):
+sys.stdout.reconfigure(errors="replace")
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     try:
         entry = json.loads(line)
-    except ValueError:
+    except (ValueError, UnicodeError):
         continue
     for head in sorted({entry.get("source_head", ""), entry.get("head", "")} - {""}):
         print(entry["branch"], head)
@@ -300,10 +339,10 @@ dl_ledger_count_since() {
     python3 -I -c '
 import json, sys
 count = 0
-for line in open(sys.argv[1]):
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     try:
         entry = json.loads(line)
-    except ValueError:
+    except (ValueError, UnicodeError):
         continue
     if isinstance(entry, dict) and str(entry.get("merged_at") or "") > sys.argv[2]:
         count += 1
@@ -344,11 +383,12 @@ def clean(value):
     if isinstance(value, bool):
         value = "true" if value else "false"
     return str(value).replace("\t", " ").replace("\n", " ").replace("\r", " ")
+sys.stdout.reconfigure(errors="replace")
 n = 0
-for line in open(sys.argv[1]):
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     try:
         entry = json.loads(line)
-    except ValueError:
+    except (ValueError, UnicodeError):
         continue
     if not isinstance(entry, dict):
         continue

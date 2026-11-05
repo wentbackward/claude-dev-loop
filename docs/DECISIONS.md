@@ -214,7 +214,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 
 - **Decision:** `merge-train.sh` computes the evidence in the gate worktree right after the replay: `files`
   and `lines` from `git diff <remote>/<base> <replayed head>` (exactly what the squash commit changes;
-  paths as git prints them, so an unusual name stays a quoted string), `components` through the cards
+  names read NUL-separated and stored as real paths, JSON-escaped, a byte that is not UTF-8 replaced by
+  U+FFFD so every line stays valid UTF-8 JSON; `arch-evidence.sh` reads a tab or a line break in a name
+  as a space), `components` through the cards
   of the replayed head (empty without `architecture.check`), `ticket` from the notes' first `Closes`,
   `Fixes` or `Resolves #n`, else the branch's `<type>/<n>-` number, else `null`, and `review_rounds` from a
   `Review rounds: <n>` line in the notes, else one plus each `Review fixes` heading, `0` without a notes
