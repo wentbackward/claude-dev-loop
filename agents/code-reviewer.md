@@ -38,7 +38,10 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
      their `paths`, `layer`, `depends_on`, responsibility and public interface still describe the code. A
      false card, a new file in no component, or a new upward dependency is a must fix, also when the branch
      adds it to the baseline with a reason: the fix is an interface the lower layer defines and the higher
-     one implements. An added baseline entry needs a convincing `## Architecture` reason in the notes.
+     one implements. An added baseline entry, or a card header edit that hides a violation (a new
+     `depends_on` name, a higher `max_lines` or `layer`, narrower `paths`, a new composition root; see
+     `arch-check.sh --loosened <remote>/<base> HEAD`), needs a convincing `## Architecture` reason in the
+     notes.
      Fan-out is expected of a composition root (keep it thin) and a warning sign everywhere else.
 4. **Reproduce, do not speculate.** When you suspect a bug, prove it: write a throwaway test (name it so it
    is obviously temporary, e.g. `test_zz_review_tmp_*`), run it, record the result in your report, then

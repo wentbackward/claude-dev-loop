@@ -276,11 +276,19 @@ violations may only shrink:
 - **The ratchet.** `arch-check.sh --baseline [<ref>]` writes today's violations to the baseline file,
   sorted, to be committed. A budget entry stays known while the component does not grow past its
   baselined size. In the gate a branch may add baseline entries only with a reason under `## Architecture`
-  in its notes, so by default the baseline only shrinks.
-- **The gate** runs after `gate_setup` and before the checks: the baseline rule for each branch, then
-  `arch-check.sh` on the train's top. When the top is red, each branch's train ref is checked in order and
-  named with the new lines it brings (`arch-check red for <branch>`), and the train ends `TRAIN RED`. The
-  config comes from the main checkout's `.dev-loop.json`; the cards and the baseline from the branch.
+  in its notes, so by default the baseline only shrinks. The same reason is needed for a card header edit
+  that makes violations disappear (a name added to `depends_on`, a higher `max_lines` or `layer`, narrower
+  `paths`, a new composition root): `arch-check.sh --loosened <from> <ref>` judges the code of `<ref>` by
+  the cards of `<from>` and lists what `<ref>`'s cards hide (exit 1), without running `check` when no
+  header changed. A placeholder (`none`, `n/a`, `TODO`, `-` and the like, also `none: ...`) is not a
+  reason. Two cards with the same `paths` glob are a broken card.
+- **The gate** runs after `gate_setup` and before the checks: the baseline and card rules for each branch,
+  then `arch-check.sh` on the train's top. When the top is red, or reports as fixed a baseline entry that
+  occurred at the base, each branch's train ref is checked in order and named with the new lines it brings
+  or the fixed entries it keeps (`arch-check red for <branch>`: the branch that fixes an entry removes it,
+  so a later branch cannot bring it back as known), and the train ends `TRAIN RED`. An entry already stale
+  at the base is only reported. The config comes from the main checkout's `.dev-loop.json`; the cards and
+  the baseline from the branch.
 - **`doctor.sh`** prints the components by layer with their sizes against their budgets, reports a broken
   card or a failing `check` as MISSING, and notes components over budget, files in no component and the
   baseline size.

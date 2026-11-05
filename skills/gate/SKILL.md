@@ -76,11 +76,18 @@ With `architecture.check` configured in `.dev-loop.json`, the gate checks the ar
 - a branch whose own commits add entries to the baseline (`architecture.baseline`) is red unless its notes
   have an `## Architecture` section that says why: `arch-check red for <branch>: it adds baseline
   entries ...`, with the entries;
+- a branch whose card header edits make violations disappear (a name added to `depends_on`, a higher
+  `max_lines` or `layer`, narrower `paths`, a new composition root) is red unless its notes say why under
+  `## Architecture`: `arch-check red for <branch>: its card header edits hide violations ...`, with what
+  they hide (`arch-check.sh --loosened <train ref below> <train ref>`: the branch's code judged by the
+  cards below it). A placeholder (`none`, `n/a`, `TODO`, `-` and the like) is not a reason;
 - `${CLAUDE_PLUGIN_ROOT}/scripts/arch-check.sh HEAD` on the train's top. A violation not in the baseline,
-  a broken card or a failing `architecture.check` is red: each branch's train ref is then checked in order,
-  and `arch-check red for <branch> (<sha>):` lists the new lines that branch brings. Fixed baseline entries
-  print as `arch-check: fixed ... (remove it from the baseline)` and keep the train green: the next branch
-  removes them.
+  a broken card (also two cards with the same `paths` glob) or a failing `architecture.check` is red: each
+  branch's train ref is then checked in order, and `arch-check red for <branch> (<sha>):` lists the new
+  lines that branch brings. A baseline entry the top reports as fixed that occurred at the base is red
+  too: `arch-check red for <branch>: it fixes baseline entries but keeps them ...` names the first branch
+  that fixes it, which removes it from the baseline. Entries that were already stale at the base print as
+  `arch-check: fixed ... (remove it from the baseline)` and keep the train green.
 
 Red ends `TRAIN RED` before the checks; a config error (exit 2 of `arch-check.sh`) ends the gate with
 exit 2. The config comes from the main checkout; the cards and the baseline from the branch. Without

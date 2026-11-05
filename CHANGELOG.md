@@ -27,6 +27,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   - `doctor.sh` prints the component map with sizes against budgets, reports broken cards, and notes files
     in no component and the baseline size.
   - The setup, dev-loop, gate and doctor skills and the implementer and reviewer agents carry the rules.
+- The architecture ratchet can't be loosened quietly (#17): a branch whose card header edits make
+  violations disappear (`depends_on`, `max_lines`, `layer`, `paths`, a composition root) needs a reason
+  under `## Architecture`, as baseline growth does (`arch-check.sh --loosened <from> <ref>` lists what the
+  edits hide); a baseline entry that occurred at the base and a branch fixes must be removed by that
+  branch, else the gate is red; placeholders (`none`, `n/a`, `TODO`, `-`) are not reasons; two cards with
+  the same `paths` glob are a broken card.
 - Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
   - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules
     `{"paths": [globs], "docs": [aspects]}` (`*` also matches `/`) and `max_lines` (default 1000).

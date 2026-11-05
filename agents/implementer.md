@@ -63,9 +63,13 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    dependency between components must be allowed by the cards (not up a layer, and in `depends_on` when the
    card lists it); solve an upward need with an interface the lower component defines. Check with
    `<plugin>/scripts/arch-check.sh HEAD`: a `new` line is a violation. Only when a violation other than an
-   upward dependency cannot be avoided in this ticket, add it to the baseline (`arch-check.sh --baseline`, commit the file) and say why
-   in an `## Architecture` section of the notes; the gate is red for added baseline entries without it.
-   Remove baseline entries the check reports as `fixed`.
+   upward dependency cannot be avoided in this ticket, add it to the baseline (`arch-check.sh --baseline`,
+   commit the file) and say why in an `## Architecture` section of the notes; the gate is red for added
+   baseline entries without it. The same holds for a card header edit that makes a violation disappear (a
+   name added to `depends_on`, a higher `max_lines` or `layer`, narrower `paths`, a new composition root):
+   `arch-check.sh --loosened <remote>/<base> HEAD` lists what it hides. A reason is a sentence; `none`,
+   `n/a`, `TODO` or `-` are not. Remove the baseline entries the check reports as `fixed` in the branch
+   that fixes them: the gate is red while they stay.
 6. Self-review your diff (`git diff <remote>/<base>...HEAD`) against the acceptance criteria and CLAUDE.md:
    every criterion tested, no dead or commented-out code, no debug output, no secrets.
 7. Run your targeted tests and the fast check once more; both green.
