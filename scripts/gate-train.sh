@@ -9,6 +9,15 @@
 # of .dev-loop.json "checks" once on the top of the stack; heavy checks run through heavy.sh, so the
 # machine-wide slot limit and memory cap apply.
 #
+# Options (.dev-loop.json, all off by default):
+#   "affected": {"command", "summary", "heavy"} (or a plain command): run first, after gate_setup, with
+#     DL_CHANGED_FILES naming a file that lists the paths the train changes against the base, one per line.
+#   "parallel": true    run the checks at the same time (each heavy one in its own heavy.sh slot), each in
+#                       its own process group; the results print in config order once all have ended.
+#   "fail_fast": true   after the first failure (affected or a check), skip the checks not started yet and
+#                       stop the running ones (SIGTERM to their process groups, SIGKILL after
+#                       DEV_LOOP_STOP_GRACE_SECONDS, default 10); they print as "<name> stopped".
+#
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
 # (the output names the branch: drop it from the train, rebase it after the others merge).
 set -u
@@ -62,6 +71,10 @@ for branch in "$@"; do
   echo "stacked $branch -> $(git rev-parse --short HEAD)"
 done
 
+DL_CHANGED_FILES="$logs/train-changed-files.txt"
+git diff --name-only "$DL_REMOTE/$DL_BASE" HEAD >"$DL_CHANGED_FILES" || dl_die "cannot list the changed files"
+export DL_CHANGED_FILES
+
 setup=$(cfg gate_setup "")
 if [ -n "$setup" ]; then
   if ! bash -c "$setup" >"$logs/train-setup.log" 2>&1; then
@@ -71,35 +84,174 @@ if [ -n "$setup" ]; then
   fi
 fi
 
-# check_field INDEX FIELD DEFAULT: a field of checks[INDEX]; a plain string entry is its own command.
-check_field() {
+# entry_field PATH FIELD DEFAULT: a field of the check entry at PATH; a plain string entry is its command.
+entry_field() {
   local entry
-  entry=$(cfg "checks.$1" "")
+  entry=$(cfg "$1" "")
   case "$entry" in
-    "{"*) cfg "checks.$1.$2" "$3" ;;
+    "{"*) cfg "$1.$2" "$3" ;;
     *) if [ "$2" = command ]; then printf '%s\n' "$entry"; else printf '%s\n' "$3"; fi ;;
   esac
 }
 
-all_green=yes
-summary=""
+# The stages in order: the affected stage (if configured) first, then the checks.
+names=() commands=() heavies=() patterns=() results=() pids=()
+add_stage() { # add_stage CONFIG_PATH DEFAULT_NAME
+  names+=("$(entry_field "$1" name "$2")")
+  commands+=("$(entry_field "$1" command "")")
+  heavies+=("$(entry_field "$1" heavy true)")
+  patterns+=("$(entry_field "$1" summary "")")
+  results+=("")
+  pids+=("")
+}
+first_check=0
+if [ -n "$(cfg affected "")" ]; then
+  add_stage affected affected
+  first_check=1
+fi
 count=$(cfg_len checks)
-for ((i = 0; i < count; i++)); do
-  name=$(check_field "$i" name "check-$((i + 1))")
-  command=$(check_field "$i" command "")
-  heavy=$(check_field "$i" heavy true)
-  log="$logs/train-${name//[^A-Za-z0-9_.-]/_}.log"
-  if [ "$heavy" = false ]; then
-    bash -c "$command" >"$log" 2>&1
+for ((i = 0; i < count; i++)); do add_stage "checks.$i" "check-$((i + 1))"; done
+stages=${#names[@]}
+parallel=$(cfg parallel false)
+fail_fast=$(cfg fail_fast false)
+grace=${DEV_LOOP_STOP_GRACE_SECONDS:-10}
+failed=""
+
+log_of() { printf '%s/train-%s.log\n' "$logs" "${names[$1]//[^A-Za-z0-9_.-]/_}"; }
+
+# stage_command INDEX: the argv that runs a stage (heavy stages through heavy.sh).
+stage_command() {
+  if [ "${heavies[$1]}" = false ]; then
+    stage_argv=(bash -c "${commands[$1]}")
   else
-    "$scripts_dir/heavy.sh" bash -c "$command" >"$log" 2>&1
+    stage_argv=("$scripts_dir/heavy.sh" bash -c "${commands[$1]}")
   fi
-  rc=$?
-  echo "$name rc=$rc (log: $log)"
-  [ "$rc" -eq 0 ] || all_green=""
-  pattern=$(check_field "$i" summary "")
-  if [ -n "$pattern" ]; then
-    summary+="$(grep -E -- "$pattern" "$log" | tail -n 3)"$'\n'
+}
+
+# result_line INDEX: the line printed for a stage's outcome.
+result_line() {
+  case "${results[$1]}" in
+    skipped) echo "${names[$1]} skipped" ;;
+    stopped) echo "${names[$1]} stopped (log: $(log_of "$1"))" ;;
+    *) echo "${names[$1]} ${results[$1]} (log: $(log_of "$1"))" ;;
+  esac
+}
+
+# record INDEX RC: store a stage's exit status; a failure under fail_fast stops the train.
+record() {
+  results[$1]="rc=$2"
+  if [ "$2" -ne 0 ]; then
+    all_green=""
+    [ "$fail_fast" = true ] && failed=yes
+  fi
+}
+
+# run_sequential FROM TO: run stages FROM..TO-1 one after the other, printing each result as it ends.
+run_sequential() {
+  local i
+  for ((i = $1; i < $2; i++)); do
+    if [ -n "$failed" ]; then
+      results[i]=skipped
+    else
+      stage_command "$i"
+      "${stage_argv[@]}" >"$(log_of "$i")" 2>&1
+      record "$i" $?
+    fi
+    result_line "$i"
+  done
+}
+
+# new_session COMMAND...: replace this (background) shell with the command as the leader of a new session,
+# so its process group id is the background job's pid ($!).
+new_session() {
+  if command -v setsid >/dev/null 2>&1; then
+    exec setsid "$@"
+  else
+    exec perl -MPOSIX -e 'POSIX::setsid() >= 0 or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' -- "$@"
+  fi
+}
+
+# collect INDEX: if the stage's process has ended, record its status (bash keeps it for wait).
+collect() {
+  [ -n "${pids[$1]}" ] || return 1
+  kill -0 "${pids[$1]}" 2>/dev/null && return 1
+  wait "${pids[$1]}"
+  record "$1" $?
+  pids[$1]=""
+}
+
+# stop_running: stop every running stage's process group (TERM, then KILL after the grace period).
+stop_running() {
+  local i deadline alive
+  for ((i = 0; i < stages; i++)); do
+    [ -n "${pids[i]}" ] || continue
+    collect "$i" && continue
+    kill -TERM -- "-${pids[i]}" 2>/dev/null
+    results[i]=stopped
+    all_green=""
+  done
+  deadline=$(($(date +%s) + grace))
+  while true; do
+    alive=""
+    for ((i = 0; i < stages; i++)); do
+      [ "${results[i]}" = stopped ] && kill -0 -- "-${pids[i]}" 2>/dev/null && alive=yes
+    done
+    [ -n "$alive" ] && [ "$(date +%s)" -lt "$deadline" ] || break
+    sleep 0.2
+  done
+  for ((i = 0; i < stages; i++)); do
+    [ "${results[i]}" = stopped ] || continue
+    kill -KILL -- "-${pids[i]}" 2>/dev/null
+    wait "${pids[i]}" 2>/dev/null
+    pids[i]=""
+  done
+}
+
+# run_parallel FROM TO: start stages FROM..TO-1 at once, each in its own process group; wait for all,
+# or stop the rest after the first failure under fail_fast; then print the results in config order.
+run_parallel() {
+  local i running
+  trap 'stop_running; git checkout -q --detach "$DL_REMOTE/$DL_BASE"; echo "TRAIN RED"; exit 1' TERM INT HUP
+  for ((i = $1; i < $2; i++)); do
+    if [ -n "$failed" ]; then
+      results[i]=skipped
+      continue
+    fi
+    stage_command "$i"
+    new_session "${stage_argv[@]}" </dev/null >"$(log_of "$i")" 2>&1 &
+    pids[i]=$!
+  done
+  while true; do
+    running=""
+    for ((i = $1; i < $2; i++)); do
+      collect "$i" || { [ -n "${pids[i]}" ] && running=yes; }
+    done
+    if [ -n "$failed" ] && [ -n "$running" ]; then
+      echo "fail_fast: a check failed, stopping the others"
+      stop_running
+      running=""
+    fi
+    [ -n "$running" ] || break
+    sleep 0.5
+  done
+  trap - TERM INT HUP
+  for ((i = $1; i < $2; i++)); do result_line "$i"; done
+}
+
+all_green=yes
+run_sequential 0 "$first_check"
+if [ "$parallel" = true ]; then
+  run_parallel "$first_check" "$stages"
+else
+  run_sequential "$first_check" "$stages"
+fi
+
+summary=""
+for ((i = 0; i < stages; i++)); do
+  case "${results[i]}" in rc=*) ;; *) continue ;; esac
+  log=$(log_of "$i")
+  if [ -n "${patterns[i]}" ]; then
+    summary+="$(grep -E -- "${patterns[i]}" "$log" | tail -n 3)"$'\n'
   else
     summary+="$(tail -n 2 "$log")"$'\n'
   fi

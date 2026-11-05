@@ -66,23 +66,44 @@ have_memory_cap() {
   command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
 }
 
-# run_in_slot SLOT: run the command with the slot's port, under the memory cap when one is configured.
+# run_in_slot SLOT LOCK_FD COMMAND...: run the command with the slot's port, under the memory cap when one
+# is configured. The command does not inherit the lock descriptor, so a server it leaves behind (or one
+# that escaped into its own session) never keeps the slot once this script is gone.
 run_in_slot() {
-  local slot=$1
-  shift
+  local slot=$1 lock_fd=$2
+  shift 2
   export DEV_LOOP_SLOT=$slot
   if [ -n "$port_env" ]; then
     export "$port_env=$((port_base + slot * port_step))"
   fi
   echo "[heavy.sh] slot $slot/$slots acquired: $*" >&2
   if [ -z "$memory_max" ]; then
-    "$@"
+    without_fd "$lock_fd" "$@"
   elif have_memory_cap; then
-    systemd-run --user --scope --quiet -p MemoryMax="$memory_max" -- "$@"
+    without_fd "$lock_fd" systemd-run --user --scope --quiet -p MemoryMax="$memory_max" -- "$@"
   else
     dl_warn "heavy.sh: no systemd user manager; running without the $memory_max memory cap"
-    "$@"
+    without_fd "$lock_fd" "$@"
   fi
+}
+
+# without_fd FD COMMAND...: run the command with descriptor FD closed (FD empty: nothing to close).
+without_fd() {
+  local fd=$1
+  shift
+  if [ -n "$fd" ]; then "$@" {fd}>&-; else "$@"; fi
+}
+
+# release_on_signal RELEASE: on SIGTERM, SIGINT or SIGHUP run RELEASE and exit 128+signal. Bash runs the
+# trap once the command in the foreground has ended, so the slot is never freed while the command runs;
+# the gate's fail_fast signals the whole process group, so the command ends at the same time.
+release_on_signal() {
+  # shellcheck disable=SC2064  # RELEASE is expanded now on purpose
+  trap "$1; exit 143" TERM
+  # shellcheck disable=SC2064
+  trap "$1; exit 130" INT
+  # shellcheck disable=SC2064
+  trap "$1; exit 129" HUP
 }
 
 # try_slot_flock SLOT COMMAND...: if the slot is free, take it, run the command and set ran=yes.
@@ -93,9 +114,11 @@ try_slot_flock() {
   exec {fd}>"$lock_dir/slot$slot.lock"
   if flock -n "$fd"; then
     ran=yes
-    run_in_slot "$slot" "$@"
+    release_on_signal "flock -u $fd"
+    run_in_slot "$slot" "$fd" "$@"
     rc=$?
     flock -u "$fd"
+    trap - TERM INT HUP
   fi
   exec {fd}>&-
   return "$rc"
@@ -103,16 +126,17 @@ try_slot_flock() {
 
 # try_slot_mkdir SLOT COMMAND...: the same with a lock directory, for systems without flock (macOS).
 try_slot_mkdir() {
-  local slot=$1 rc=0
+  local slot=$1 rc=0 slot_dir="$lock_dir/slot$1.d"
   shift
-  if mkdir "$lock_dir/slot$slot.d" 2>/dev/null; then
+  if mkdir "$slot_dir" 2>/dev/null; then
     ran=yes
-    echo $$ >"$lock_dir/slot$slot.d/pid"
-    trap 'rm -rf -- "$lock_dir/slot$slot.d"' EXIT INT TERM
-    run_in_slot "$slot" "$@"
+    echo $$ >"$slot_dir/pid"
+    trap 'rm -rf -- "$slot_dir"' EXIT
+    release_on_signal "rm -rf -- $(printf '%q' "$slot_dir")"
+    run_in_slot "$slot" "" "$@"
     rc=$?
-    rm -rf -- "$lock_dir/slot$slot.d"
-    trap - EXIT INT TERM
+    rm -rf -- "$slot_dir"
+    trap - EXIT TERM INT HUP
   fi
   return "$rc"
 }
