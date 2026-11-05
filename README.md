@@ -104,7 +104,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
-| hook | role guard | identity mode only: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
+| hook | role guard | with `scenarios`: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 All hooks do nothing in a project without `.dev-loop.json`, so the plugin is safe to install globally.
 
@@ -376,7 +376,8 @@ right ones. It reads evidence, not impressions:
 
 The gate proves that the tests pass, not that the software does what its users need. Holdout scenarios are
 end-to-end user scenarios kept outside the codebase, where the coding agents never see them. This part is
-the **scenario store**: where the scenarios live and what a valid one is. Nothing runs them yet.
+the **scenario store**: where the scenarios live and what a valid one is, and the guard that keeps it from
+the coding agents. Nothing runs the scenarios yet.
 
 ```json
 "scenarios": {
@@ -417,6 +418,29 @@ the **scenario store**: where the scenarios live and what a valid one is. Nothin
   `dl_scenario_problems`, `dl_scenarios_validate`, `dl_scenarios_count`, `dl_scenarios_required_count`,
   `dl_scenarios_share_ok`.
 
+### Isolation: the agent-type guard
+
+The isolation is the role guard hook (PreToolUse), by agent type. With `scenarios` configured, identity
+mode or not, it refuses `Read`, `Grep`, `Glob`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit` and Bash
+calls by the `implementer`, `test-engineer` and `code-reviewer` agents that name a path inside
+`scenarios.dir`: absolute, with `~` or `$HOME`, relative to the working directory (also after a `cd` in
+the same command), through a symlink into the store, or a shell glob that matches a file in it. The main
+session, the `scenario-judge`, the `scenario-writer` and every other agent type are allowed. Without
+`scenarios` it refuses nothing. The guard resolves the store like `paths.sh scenarios`.
+
+There is deliberately no deny rule for the store in `templates/settings.json`: deny rules apply to every
+agent, so they would block the judge too.
+
+Limits, honestly: this is best effort, like the identity-mode guard. It reads the command line, not what
+runs: a script the agent writes that opens the store, a path built from pieces at run time, or a recursive
+search of a directory above the store (`grep -r x ~/.dev-loop`) is not caught. Keep the store outside
+every worktree (the default) so ordinary searches never reach it; for strong isolation run the coding
+agents as an OS user that cannot read the store.
+
+**Identity mode:** keep the scenarios in their own private repository (cloned to `scenarios.dir`). The
+implementer, tester and reviewer apps get no access to the scenarios repository: do not install them on
+it, so their tokens cannot read it even outside the local guard.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -452,7 +476,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
 | `identities` | none (mode off) | per-role identities, see below |
-| `guard.agents` | built in | extra agent-type to roles mapping for the role guard |
+| `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
 | `docs.aspects` | none (docs off) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
 | `docs.planned` | none | the planned list (built and planned are kept apart) |
@@ -583,7 +607,8 @@ reduces this, but does not prevent it:
   code-reviewer: reviewer, test-engineer, verifier, doc-auditor and architect: tester, main session:
   orchestrator).
   It also refuses any direct use of the gate role, any merge, ruleset or auth command, and any mention of
-  the credential paths. This is best effort: it parses shell commands and cannot see inside scripts the agent writes;
+  the credential paths. With `scenarios`, it also keeps the scenario store from the coding
+  agents (see Isolation: the agent-type guard). This is best effort: it parses shell commands and cannot see inside scripts the agent writes;
 - for strong isolation, run each role under its own OS user (or container) that holds only its own
   credentials.
 

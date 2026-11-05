@@ -304,3 +304,27 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a YAML library through python3 (a dependency for five keys); `required` defaulting to
   `false` (a forgotten line would silently demote a scenario); a missing store as MISSING (it would make
   doctor red for a project that has just turned the key on; the dark preset of #2 makes it MISSING there).
+
+## 2026-11-05 — Scenario isolation (#31): what the role guard refuses, and to whom
+
+- **Decision:** the scenario check runs before the identity-mode checks whenever `.dev-loop.json` has a
+  `scenarios` key (the shell wrapper's quick exit now looks for `"scenarios"` as well as `"identities"`),
+  and the identity-mode checks are unchanged. The refused agent types are a fixed set, `implementer`,
+  `test-engineer` and `code-reviewer` (plugin prefixes ignored); every other agent type and the main
+  session are allowed, so `guard.agents` does not affect it. It covers Read, Grep and Glob (the `path`, and
+  for Glob the pattern joined to it), Edit, Write, MultiEdit and NotebookEdit (`file_path`,
+  `notebook_path`), and Bash: a literal spelling of the store (absolute, symlink-resolved, `~`, `$HOME`,
+  `${HOME}`) anywhere in the command, then each word of each simple command, without a redirection prefix
+  and after each `=`, with `~` and `$VARS` expanded, relative to the working directory as changed by `cd`,
+  resolved through symlinks, and glob-expanded. A path that names a directory above the store is allowed.
+  The Python resolution mirrors `dl_scenarios_dir` (including `<repo>`, a non-string `dir` as compact
+  JSON, and the main worktree root from `git rev-parse --show-toplevel` when the common dir is not
+  `.git`, which also changes where the guard looks for the config in that rare layout); a smoke test
+  compares it with `paths.sh scenarios` for five configs from the main and a linked worktree.
+  `guard-role.py --scenarios-dir [DIR]` prints the resolved path for that test. No deny rule in
+  `templates/settings.json`.
+- **Reason:** the smallest change that meets #31: the agent type is the only thing that tells the judge
+  from the implementer in one OS session, and deny rules cannot do that.
+- **Alternatives:** a configurable list of refused agents (no need yet); refusing searches of directories
+  above the store (would refuse ordinary `grep -r` of a home directory); shelling out to `paths.sh` from the
+  hook (a bash start per tool call, and it reads the config again).
