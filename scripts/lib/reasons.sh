@@ -63,8 +63,10 @@ dl_notes_reason() {
 }
 
 # _DL_JSON_PY: the python3 fallback's strict reader, as jq -s reads: load() is the one JSON document on
-# stdin, or exits quietly when there is none, more than one, trailing garbage or NaN/Infinity (jq rejects
-# them too); name(key) is a key as one JSON string, as jq's @json writes it.
+# stdin, or exits quietly when there is none, more than one or trailing garbage. It also exits on NaN and
+# Infinity, which jq (1.7 and later) reads as null and a large number: the file is then unparseable and
+# compared as raw text, so a change is still flagged, never missed. name(key) is a key as one JSON string,
+# as jq's @json writes it.
 _DL_JSON_PY='
 import json, sys
 def load():

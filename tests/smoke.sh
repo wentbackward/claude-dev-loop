@@ -1489,6 +1489,8 @@ expect "trailing garbage makes the file unparseable, with jq and with python3" "
   "$(rules_changed '{"checks": 1}' '{"checks": 1} x')"
 expect "concatenated documents are unparseable, with jq and with python3" "checks|checks" \
   "$(rules_changed '{"checks": 1}' '{"checks": 1}{"deploy": "x"}')"
+expect "a NaN or Infinity in the file never hides a change, with jq and with python3" "yes yes|" \
+  "$(rules_changed '{"a": NaN, "checks": 1}' '{"a": Infinity, "checks": 2}' | awk -F'|' '{print ($1 != "") ? "yes" : "no", ($2 != "") ? "yes" : "no"}')|$(rules_changed '{"a": NaN}' '{"a": NaN}' | tr -d '|')"
 expect "a change to architecture alone is still not named" "|" \
   "$(rules_changed '{"architecture": {"budget": 1}}' '{"architecture": {"budget": 2}}')"
 expect "a first config is not judged by the key comparison" "|" "$(rules_changed - '{"deploy": "x"}')"

@@ -272,8 +272,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   keys with a newline are one line each and compared like any key. A message names a key bare when it is
   a plain name and as its JSON string otherwise (`""`, `"a\nb"`), rather than documenting such keys as
   unsupported. Both readers accept only exactly one JSON document: jq reads with `-s` and keeps a
-  one-element input, python3 rejects extra data and `NaN`/`Infinity`. When neither side parses, the raw
-  texts are compared. The first-config notice is printed by `gate-train.sh` per branch that adds the file,
+  one-element input, python3 rejects extra data. When neither side parses, the raw texts are compared.
+  python3 also treats `NaN` and `Infinity` as unparseable, while jq 1.7 and later reads them as null and a
+  large number: the two paths differ there, but the raw comparison means python3 flags every change jq
+  flags (stricter, never looser); a test pins that both flag such a change and neither flags no change. The first-config notice is printed by `gate-train.sh` per branch that adds the file,
   with the branch name in parentheses after the text the issue asked for.
 - **Reason:** naming them correctly costs one encoding step in the existing pipeline, while "unsupported"
   would leave a silent hole in a check that guards the gate's own rules; slurping is the one jq mode whose
