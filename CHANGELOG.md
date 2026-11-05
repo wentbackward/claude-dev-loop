@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.6.0 — 2026-11-05
 
 - `gate-train.sh` and `merge-train.sh` merge the setup branch with the main checkout on the base: when the
   main checkout has no `.dev-loop.json` yet, they read it from the branch (merge-train: the first branch of
