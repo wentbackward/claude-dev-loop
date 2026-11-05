@@ -5,8 +5,8 @@
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
-export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0
-export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig"
+export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
+export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
 git config --global user.name tester
 git config --global user.email tester@example.invalid
 git config --global init.defaultBranch main
@@ -95,6 +95,16 @@ first_end=$(awk '/^end 1/ {print $3}' "$work/heavy-1.out")
 [ -n "$third_start" ] && [ "$third_start" -ge "$first_end" ] && pass "third heavy command starts only after a slot frees" ||
   fail "third heavy command started at $third_start before the first ended at $first_end"
 echo "heavy: 3 commands of 3 s on 2 slots took $(($(date +%s) - start)) s"
+# A killed heavy command whose server escaped into its own session must not keep the slot.
+setsid "$plugin/scripts/heavy.sh" bash -c \
+  'setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $! >"$SMOKE_WORK/stray.pid"; exec sleep 30' >/dev/null 2>&1 &
+heavy_group=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$work/stray.pid" ] && break; sleep 0.3; done
+kill -TERM -- "-$heavy_group" 2>/dev/null
+wait "$heavy_group" 2>/dev/null
+expect "a killed heavy command's escaped server does not hold its slot" "9110" \
+  "$("$plugin/scripts/heavy.sh" bash -c 'echo $SMOKE_PORT' 2>/dev/null)"
+kill "$(cat "$work/stray.pid")" 2>/dev/null
 
 # 4. gate-train.sh stacks two branches (the second built on the first) and runs the checks once.
 git checkout -q -b feat/1-first
@@ -162,7 +172,110 @@ echo conflict >moved.txt && git add moved.txt && git commit -q -m "feat: conflic
 out=$("$plugin/scripts/gate-train.sh" feat/5-conflict 2>&1)
 expect "gate-train stops on a conflict and names the branch" "3 TRAIN rebase conflict at feat/5-conflict" "$? $(echo "$out" | tail -1)"
 
-# 10. doctor flags the leftovers of a hand-built loop.
+# 10. Gate options (affected, parallel, fail_fast), each with its own config through DEV_LOOP_CONFIG.
+git fetch -q origin
+git checkout -q -B feat/6-fast origin/main
+echo fast >fast.txt && echo "line three" >>src.txt && git add fast.txt src.txt &&
+  git commit -q -m "feat: fast (Refs #6)" && git push -q -u origin feat/6-fast
+# gate_with JSON_MEMBERS: gate feat/6-fast with these config members; sets out, rc and elapsed (seconds).
+gate_with() {
+  printf '{"base_branch": "main", %s, "heavy": {"slots": 2, "port_env": "SMOKE_PORT", "port_base": 9100, "port_step": 10, "poll_seconds": 1}}\n' \
+    "$1" >"$work/gate.json"
+  rm -f "$work"/order.log "$work"/changed.txt "$work"/marker "$work"/slow.pids
+  local start
+  start=$(date +%s)
+  out=$(DEV_LOOP_CONFIG="$work/gate.json" "$plugin/scripts/gate-train.sh" feat/6-fast 2>&1)
+  rc=$?
+  elapsed=$(($(date +%s) - start))
+  echo "$out"
+  echo "(gate took $elapsed s)"
+}
+result_lines() { echo "$out" | grep -E '^[A-Za-z0-9_.-]+ (rc=[0-9]+|stopped|skipped)' | cut -d' ' -f1-2 | paste -sd'|'; }
+alive() { # alive PID...: the PIDs still running, space separated
+  local pid living=""
+  for pid in "$@"; do kill -0 "$pid" 2>/dev/null && living+="$pid "; done
+  printf '%s' "${living% }"
+}
+
+# Defaults: the checks run one after the other, all of them, even after a failure.
+gate_with '"checks": [
+  {"name": "a", "command": "sleep 3; echo a-done"},
+  {"name": "b", "command": "exit 3", "heavy": false},
+  {"name": "c", "command": "sleep 3; echo c-done"}]'
+expect "default gate runs every check in order, even after a failure" "a rc=0|b rc=3|c rc=0" "$(result_lines)"
+expect "default gate is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
+[ "$elapsed" -ge 6 ] && pass "default gate runs the checks sequentially" || fail "default gate took $elapsed s (< 6)"
+
+# affected: runs first (through heavy.sh), gets the changed files, and its summary is printed.
+gate_with '"parallel": true,
+  "affected": {"command": "echo affected >>\"$SMOKE_WORK/order.log\"; cp \"$DL_CHANGED_FILES\" \"$SMOKE_WORK/changed.txt\"; echo \"2 affected passed\"", "summary": "affected passed"},
+  "checks": [{"name": "unit", "command": "sleep 1; echo unit >>\"$SMOKE_WORK/order.log\"", "heavy": false},
+             {"name": "e2e", "command": "sleep 1; echo e2e >>\"$SMOKE_WORK/order.log\""}]'
+expect "affected gate is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -1)"
+expect "affected runs before the checks" "affected" "$(head -1 "$work/order.log" 2>/dev/null)"
+expect "affected gets the files the train changes" "fast.txt|src.txt" "$(sort "$work/changed.txt" 2>/dev/null | paste -sd'|')"
+expect "affected is reported first, then the checks in config order" "affected rc=0|unit rc=0|e2e rc=0" "$(result_lines)"
+echo "$out" | grep -q "^2 affected passed" && pass "affected summary is printed" || fail "no affected summary"
+grep -q '^\[heavy.sh\] slot' "$("$plugin/scripts/paths.sh" logs)/train-affected.log" 2>/dev/null &&
+  pass "affected runs through heavy.sh by default" || fail "affected did not run through heavy.sh"
+
+# affected fails without fail_fast: the checks still run, the train is red.
+gate_with '"affected": "exit 5", "checks": [{"name": "unit", "command": "touch \"$SMOKE_WORK/marker\"", "heavy": false}]'
+expect "failed affected without fail_fast still runs the checks" "1 TRAIN RED yes" \
+  "$rc $(echo "$out" | tail -1) $([ -e "$work/marker" ] && echo yes || echo no)"
+
+# affected fails with fail_fast: nothing else runs.
+gate_with '"fail_fast": true, "affected": {"command": "exit 5", "heavy": false},
+  "checks": [{"name": "unit", "command": "touch \"$SMOKE_WORK/marker\"", "heavy": false}]'
+expect "failed affected with fail_fast is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
+[ ! -e "$work/marker" ] && pass "failed affected with fail_fast stops the train" || fail "a check ran after affected failed"
+expect "failed affected with fail_fast reports the skipped checks" "affected rc=5|unit skipped" "$(result_lines)"
+
+# parallel: the checks overlap, each heavy one in its own slot (own port), every log is written.
+gate_with '"parallel": true, "checks": [
+  {"name": "a", "command": "sleep 3; echo a-done port=$SMOKE_PORT"},
+  {"name": "c", "command": "sleep 3; echo c-done port=$SMOKE_PORT"},
+  {"name": "n", "command": "sleep 3; echo n-done", "heavy": false}]'
+expect "parallel gate is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -1)"
+[ "$elapsed" -lt 6 ] && pass "parallel checks overlap ($elapsed s for three 3 s checks)" ||
+  fail "parallel gate took $elapsed s (>= 6)"
+expect "parallel results are reported in config order" "a rc=0|c rc=0|n rc=0" "$(result_lines)"
+logs=$("$plugin/scripts/paths.sh" logs)
+expect "parallel checks each write their own log" "a-done|c-done|n-done" \
+  "$(cat "$logs/train-a.log" "$logs/train-c.log" "$logs/train-n.log" 2>/dev/null | grep -o '^[acn]-done' | paste -sd'|')"
+ports=$(cat "$logs/train-a.log" "$logs/train-c.log" 2>/dev/null | grep -o 'port=[0-9][0-9]*' | sort -u | wc -l | tr -d ' ')
+expect "parallel heavy checks run in separate slots" 2 "$ports"
+expect "a green parallel train is recorded for merge-train" "feat/6-fast pending" \
+  "$(awk '{print $1, $4}' "$DEV_LOOP_HOME/project/train-green.txt" 2>/dev/null)"
+
+# parallel without fail_fast: a failure does not stop the others.
+gate_with '"parallel": true, "checks": [
+  {"name": "x", "command": "sleep 2; echo x-done", "heavy": false},
+  {"name": "y", "command": "exit 4", "heavy": false}]'
+expect "parallel gate without fail_fast lets the others finish" "1 x rc=0|y rc=4" "$rc $(result_lines)"
+
+# parallel + fail_fast: a failure stops a long sibling, its children (even one ignoring SIGTERM) and heavy.sh.
+gate_with '"parallel": true, "fail_fast": true, "checks": [
+  {"name": "slow", "command": "echo $$ $PPID >\"$SMOKE_WORK/slow.pids\"; (trap \"\" TERM; exec sleep 300) & echo $! >>\"$SMOKE_WORK/slow.pids\"; sleep 300 & echo $! >>\"$SMOKE_WORK/slow.pids\"; wait"},
+  {"name": "bad", "command": "sleep 1; exit 3", "heavy": false}]'
+expect "fail_fast gate is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
+expect "fail_fast reports the failure and the stopped sibling" "slow stopped|bad rc=3" "$(result_lines)"
+[ "$elapsed" -lt 10 ] && pass "fail_fast stops the sibling promptly ($elapsed s)" || fail "fail_fast took $elapsed s"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "fail_fast leaves no process of the stopped check behind" "" "$(alive $(cat "$work/slow.pids" 2>/dev/null))"
+[ -s "$work/slow.pids" ] && pass "the stopped check had started" || fail "the slow check never started"
+expect "fail_fast leaves no heavy slot held" "9110" \
+  "$(DEV_LOOP_CONFIG="$work/gate.json" "$plugin/scripts/heavy.sh" bash -c 'echo $SMOKE_PORT' 2>/dev/null)"
+
+# fail_fast without parallel: the remaining checks are skipped.
+gate_with '"fail_fast": true, "checks": [
+  {"name": "bad", "command": "exit 3", "heavy": false},
+  {"name": "unit", "command": "touch \"$SMOKE_WORK/marker\"", "heavy": false}]'
+expect "sequential fail_fast skips the remaining checks" "1 bad rc=3|unit skipped no" \
+  "$rc $(result_lines) $([ -e "$work/marker" ] && echo yes || echo no)"
+git checkout -q main
+
+# 11. doctor flags the leftovers of a hand-built loop.
 mkdir -p .claude/agents && echo "---" >.claude/agents/code-reviewer.md
 out=$("$plugin/scripts/doctor.sh" 2>&1)
 expect "doctor flags a project agent that shadows the plugin's" yes \
