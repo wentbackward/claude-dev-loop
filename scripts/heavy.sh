@@ -126,13 +126,15 @@ try_slot_flock() {
 
 # try_slot_mkdir SLOT COMMAND...: the same with a lock directory, for systems without flock (macOS).
 try_slot_mkdir() {
-  local slot=$1 rc=0 slot_dir="$lock_dir/slot$1.d"
+  local slot=$1 rc=0 slot_dir="$lock_dir/slot$1.d" release
   shift
   if mkdir "$slot_dir" 2>/dev/null; then
     ran=yes
     echo $$ >"$slot_dir/pid"
-    trap 'rm -rf -- "$slot_dir"' EXIT
-    release_on_signal "rm -rf -- $(printf '%q' "$slot_dir")"
+    release="rm -rf -- $(printf '%q' "$slot_dir")"
+    # shellcheck disable=SC2064  # the path is expanded now on purpose
+    trap "$release" EXIT
+    release_on_signal "$release"
     run_in_slot "$slot" "" "$@"
     rc=$?
     rm -rf -- "$slot_dir"
