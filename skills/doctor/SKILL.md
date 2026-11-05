@@ -22,7 +22,7 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | line | fix |
 |------|-----|
 | `MISSING gh is not logged in` | the user runs `! gh auth login` (interactive; never run it for them) |
-| `MISSING .dev-loop.json` or `CLAUDE.md` | the `setup` skill of this plugin |
+| `MISSING .dev-loop.json` or `CLAUDE.md` (neither `CLAUDE.md` nor `.claude/CLAUDE.md`) | the `setup` skill of this plugin |
 | `MISSING "checks"` | add the full checks to `.dev-loop.json` (see `templates/dev-loop.json`) |
 | `MISSING git remote <name>` | set `remote` in `.dev-loop.json`, or add the remote |
 | `MISSING models.<agent>` | use `inherit`, `haiku`, `sonnet`, `opus` or `fable` |

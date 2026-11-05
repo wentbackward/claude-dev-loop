@@ -14,7 +14,7 @@ absolute paths into their prompts.
 
 ## 0. Start of a session
 
-1. Read `CLAUDE.md`, the spec it names, `.dev-loop.json` and `docs/DECISIONS.md`. If `.dev-loop.json` or
+1. Read `CLAUDE.md` (or `.claude/CLAUDE.md`), the spec it names, `.dev-loop.json` and `docs/DECISIONS.md`. If `.dev-loop.json` or
    `CLAUDE.md` is missing, run the `setup` skill of this plugin first.
 2. `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh`: prerequisites and resolved paths (gate worktree, notes
    directory, heavy slots). Fix what it reports as MISSING, or stop if that is a stop condition.

@@ -2,6 +2,10 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- `doctor.sh` accepts the project instructions at `.claude/CLAUDE.md` as well as `CLAUDE.md`.
+
 ## 0.5.0 — 2026-11-05
 
 - Branch lifecycle: branches are short-lived and the plugin removes what it made.
