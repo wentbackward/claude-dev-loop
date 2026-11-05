@@ -48,6 +48,9 @@ stop conditions. Skip any question whose answer you already have.
      `npx prettier --write {file}`, `rustfmt {file}`, `gofmt -w {file}`), with `format_extensions`.
    - `checks`: the full checks in order (`make check`, `make e2e`, ...), `"heavy": false` for quick ones,
      a `summary` regex that picks the result lines from the log.
+   - `affected`, `parallel`, `fail_fast`: off unless the user wants faster red trains (see the `gate`
+     skill). `affected` needs a project command that maps the changed files (`$DL_CHANGED_FILES`) to
+     the tests they touch; `parallel` needs `heavy.slots` and `memory_max` that fit the checks at once.
    - `heavy`: `slots` 2 and `memory_max` about half the machine's RAM (`free -g`), `port_env` if e2e
      servers read their port from an environment variable.
    - `models`: keep the template's choice per agent unless the user named models; `inherit` means the

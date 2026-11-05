@@ -9,6 +9,9 @@
     { "name": "e2e", "command": "make e2e", "summary": "passed|failed" },
     { "name": "docs", "command": "make docs-check", "heavy": false }
   ],
+  "affected": "",
+  "parallel": false,
+  "fail_fast": false,
   "gate_setup": "",
   "gate_worktree": "",
   "notes_dir": "",

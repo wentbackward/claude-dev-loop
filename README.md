@@ -107,6 +107,10 @@ or the kernel kills processes. The plugin makes "one heavy job at a time, per sl
   and dead locks.
 - **One full run per batch.** `gate-train.sh` runs every heavy check through `heavy.sh`. A train of N ready
   branches costs one full run, not N (or 2N, when each branch is checked before and after its rebase).
+- **Red trains end early (opt-in).** `affected` runs the tests the train's changed files touch before
+  anything else, `parallel` runs the checks side by side (each heavy one in its own slot), and
+  `fail_fast` stops the rest of the train at the first failure, killing the running checks' process
+  groups so their servers and slots are freed. All three are off by default; see the `gate` skill.
 - **Implementers run targeted tests only.** The agent brief and the loop say so: tests for what they
   touched plus the fast check. Anything heavy goes through `heavy.sh` or is left to the gate.
 - **The Stop hook runs only `fast_check`**, which takes seconds. Running the full suite on every stop
@@ -124,6 +128,9 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `format` | none | formats one file; `{file}` is the quoted path (else appended) |
 | `format_extensions` | all | only format files ending in one of these (e.g. `[".py"]`) |
 | `checks` (required for the gate) | — | the full checks, in order: `{"name", "command", "heavy": true, "summary": "<regex>"}` or a plain command string |
+| `affected` | none | a check entry (or plain command) run first, after `gate_setup`; `DL_CHANGED_FILES` names the file listing the paths the train changes against the base |
+| `parallel` | `false` | run the checks at the same time, each in its own process group (heavy ones in their own slot); results print in config order |
+| `fail_fast` | `false` | after the first failure, skip the checks not started and stop the running ones (their whole process group); they print as `<name> skipped` / `<name> stopped` |
 | `gate_setup` | none | command run once in the gate worktree before the checks (e.g. `npm ci`) |
 | `gate_worktree` | `../<repo>-gate` | the gate's own worktree (created on first use) |
 | `notes_dir` | `~/.dev-loop/<repo>/notes` | PR notes files `pr-<branch with / as _>.md`, outside git, shared by all worktrees |
@@ -158,7 +165,8 @@ model. A resumed agent keeps the model it started with. `doctor.sh` prints the r
 reports unknown names. The gate and the heavy-job queue are scripts and use no model.
 
 Environment overrides: `DEV_LOOP_CONFIG` (config path), `DEV_LOOP_HOME` (state, default `~/.dev-loop`),
-`DEV_LOOP_LOCK_DIR`, `DEV_LOOP_HEAVY_SLOTS`, `DEV_LOOP_NO_JQ=1` (read JSON with python3).
+`DEV_LOOP_LOCK_DIR`, `DEV_LOOP_HEAVY_SLOTS`, `DEV_LOOP_NO_JQ=1` (read JSON with python3),
+`DEV_LOOP_STOP_GRACE_SECONDS` (how long `fail_fast` waits after SIGTERM before SIGKILL, default 10).
 
 Script exit codes are documented at the top of each script and in the `gate` and `merge` skills.
 
@@ -279,8 +287,8 @@ make check     # manifests, shellcheck, ruff, then tests/smoke.sh and tests/iden
 ```
 
 `tests/smoke.sh` builds a throwaway repository with a local bare origin and a fake `gh`. It covers the
-hooks, the heavy queue (3 jobs on 2 slots), the gate, the merge, a red train, the tree check, a branch that
-moved and a conflict. `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
+hooks, the heavy queue (3 jobs on 2 slots, a killed job's slot), the gate, the merge, a red train, the
+tree check, a branch that moved, a conflict, and the gate options (affected, parallel, fail_fast). `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
 `as-role.sh`, app JWTs and tokens, the guard, the ruleset plan, the manifest flow and identity-mode merges.
 
 ## License

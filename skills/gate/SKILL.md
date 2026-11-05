@@ -22,11 +22,39 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/gate-train.sh <branch-1> <branch-2> ...
   for one of `heavy.slots` machine-wide slots, run under `heavy.memory_max`, and get their own port in
   `heavy.port_env`. Logs: `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh logs`.
 
+## Faster red trains (opt-in)
+
+By default the checks run one after the other and all of them run, even after a failure. Three options in
+`.dev-loop.json` make a red train show sooner:
+
+```json
+"affected": {"command": "make test-affected", "summary": "passed|failed"},
+"parallel": true,
+"fail_fast": true
+```
+
+- `affected` (a check entry, or a plain command; heavy unless `"heavy": false`): runs first, after
+  `gate_setup`, as `affected`. `DL_CHANGED_FILES` names a file listing the paths the train changes against
+  the base (`git diff --name-only --no-renames`, one per line; deleted paths and both names of a rename included); the project's command picks the
+  tests those paths touch. The variable is set for `gate_setup` and every check too.
+- `parallel`: the checks start at the same time, each in its own process group with its own log; each
+  heavy one takes its own `heavy.sh` slot (and port), so with fewer free slots the rest wait as usual. The
+  result lines print in config order once all have ended.
+- `fail_fast`: after the first failure (affected or a check), checks not started yet print as
+  `<name> skipped`, and running ones are stopped: SIGTERM to their whole process group (heavy.sh, the
+  command and the servers it started in that group), SIGKILL after 10 s (`DEV_LOOP_STOP_GRACE_SECONDS`).
+  They print as `<name> stopped (log: ...)`. heavy.sh frees its slot as soon as its command has ended.
+  A server that daemonizes into its own session escapes the stop: keep e2e servers as children.
+
+A stopped or skipped check is not a result: after fixing the failure, the re-run still has to pass every
+check before the train is green.
+
 ## Read the result (last line)
 
 - `TRAIN GREEN` (exit 0): recorded for the merge. Run the `merge` skill with the same branches in the same
   order, right away.
-- `TRAIN RED` (exit 1): read the failing check's log. **Never merge a red train**, even if it looks like a
+- `TRAIN RED` (exit 1): read the failing check's log (the `rc=` line that is not `rc=0`; `stopped` and
+  `skipped` checks did not finish). **Never merge a red train**, even if it looks like a
   flake. Re-run once. If it is still red, bisect: gate the first half, then the second, until the culprit
   branch is found; send the failing output to its implementer; gate and merge the rest without it. Open an
   issue for a test that is genuinely flaky.

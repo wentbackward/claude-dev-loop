@@ -2,6 +2,21 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Gate options, all off by default (the gate behaves exactly as before without them):
+  - `affected`: a check entry run first, after `gate_setup`, with `DL_CHANGED_FILES` naming a file that
+    lists the paths the train changes against the base.
+  - `parallel`: the checks run at the same time, each in its own process group and heavy ones in their
+    own `heavy.sh` slot; result lines print in config order.
+  - `fail_fast`: after the first failure the remaining checks are skipped and running ones are stopped
+    (SIGTERM to the process group, SIGKILL after `DEV_LOOP_STOP_GRACE_SECONDS`, default 10); they print as
+    `<name> skipped` or `<name> stopped (log: ...)`.
+  - `doctor.sh` validates `parallel`, `fail_fast` and `affected` and prints them.
+- `heavy.sh`: the command no longer inherits the slot lock, so a server that outlives a killed heavy
+  command no longer keeps the slot; SIGTERM, SIGINT and SIGHUP release the slot once the command has
+  ended.
+
 ## 0.3.0 — 2026-11-02
 
 - `doctor` skill: `/dev-loop:doctor` runs `doctor.sh` in any project and explains the fix for each problem.
