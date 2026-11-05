@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
+description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the current-state docs, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
 ---
 
 # Doctor
@@ -31,6 +31,10 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note <n> agent worktrees` | remove the merged ones (same step; ask first, save uncommitted work) |
 | `note ... train/replay refs ..., ... merged branches still local` | `cleanup.sh` (dry run), then `--apply` |
 | `note <n> local branches` | `cleanup.sh` (dry run): it classifies them; delete closed/stale only on the user's OK |
+| `MISSING docs aspect <name>: <path> does not exist` | create the doc (the `setup` skill's step 3b), or fix the path in `docs.aspects` |
+| `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |
+| `note <file> has <n> lines, over docs.max_lines` | split it: an index and one file per area |
+| `note docs map rule <n> (...) matches no tracked file` | fix the globs (`*` also matches `/`), or drop the rule |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's

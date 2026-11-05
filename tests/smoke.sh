@@ -733,6 +733,9 @@ echo "$out" | grep -E "^note .*map rule 1" >/dev/null && fail "doctor noted a ma
   pass "doctor does not note a map rule that matches files"
 expect "doctor without docs prints no docs lines" 0 \
   "$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs aspect\|docs map\|max_lines")"
+expect "the template's empty docs block keeps the docs off" "2 0" \
+  "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD >/dev/null 2>&1
+    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs ")"
 
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

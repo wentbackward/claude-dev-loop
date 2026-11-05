@@ -39,6 +39,12 @@ absolute paths into their prompts.
   work breakdown: the acceptance criteria as a checklist, the dependencies (`Depends on #n`), labels, and
   a milestone if the project uses them. In identity mode:
   `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh orchestrator gh issue create ...`.
+- **Current-state docs** (`docs` in `.dev-loop.json`): each ticket names the doc sections it changes
+  (Features, Architecture, ...). For a feature, write the change to Features first, as the intended new
+  state, and put it in the ticket: it is the ticket's spec. The current-state docs describe only what is
+  built; planned work stays in the tickets and the `docs.planned` list, which links them. When all the
+  work of a spec has merged, archive the spec (move it to an archive folder, linked from the planned list
+  or the decisions log) so it is not kept as a second truth.
 - Keep issues current: comment progress at each step (started, in review, gated, merged, run result) and
   close them through `Closes #n` in the PR.
 
@@ -71,7 +77,9 @@ Implement ticket #<n>: <title>.
 - Worktree: <absolute worktree path>   (branch <branch>, based on <remote>/<base> | stacked on <dependency branch>)
 - Notes file (outside git, do not commit): <absolute notes path>
   First line: a plain title, NO leading "#", e.g. "feat(<scope>): <what> (#<n>)". Then a blank line,
-  ## Summary, "Closes #<n>", ## Decisions, ## Test evidence (commands and pass counts).
+  ## Summary, "Closes #<n>", ## Decisions, ## Docs (the doc changes, or "none: <reason>"),
+  ## Test evidence (commands and pass counts).
+- Docs: update <the doc sections the ticket names> in this branch; describe only what is built.
 - Dependencies: <none | #m merged | stacked on <branch>>. Files other agents are editing now: <list>; avoid them.
 - Tests: write the failing tests first. Run ONLY the tests for what you touch, plus the fast check:
   <fast_check>. Do NOT run the full suite, coverage gate, e2e or long builds: the batch gate runs them
@@ -133,6 +141,8 @@ background. It stacks them on the latest base and runs every configured check on
 the machine-wide heavy-job queue.
 
 - **GREEN**: merge (step 6).
+- **docs-check red for <branch>**: a branch changed mapped code without its docs (or a `none: <reason>`
+  in its notes' `## Docs`), or broke a relative link. Send the lines to its implementer, gate the rest.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for
