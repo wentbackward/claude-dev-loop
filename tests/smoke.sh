@@ -2217,6 +2217,7 @@ grep -qF "scenario-writer" "$plugin/README.md" && grep -qF "models.scenario-writ
   pass "the README documents the scenario writer and its model" || fail "the README lacks the scenario writer"
 awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on' "$plugin/CHANGELOG.md" | grep -qF "scenario-writer" &&
   pass "the changelog names the scenario writer under Unreleased" || fail "no changelog entry for the scenario writer"
+
 # Scenario judge and gate stage (#32): the gate starts scenarios.run, judges each scenario with the judge
 # command (a fake here: it reads its scores from the scenario's own front matter), rejudges a failure once
 # and decides green or red; sealed scenarios are only counted, and no scenario text reaches the output.
@@ -2489,6 +2490,11 @@ DEV_LOOP_CONFIG="$work/judge-model-off.json" "$plugin/scripts/doctor.sh" 2>&1 | 
 printf '{"checks": [{"name": "scenarios", "command": "true"}], "scenarios": {}}\n' >"$work/judge-name.json"
 DEV_LOOP_CONFIG="$work/judge-name.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -qF 'MISSING check name "scenarios" is reserved' &&
   pass "doctor reserves the check name scenarios when scenarios are on" || fail "no reserved-name MISSING for scenarios"
+section_1b=$(awk '/^## 1b\./ { on = 1; next } /^## / { on = 0 } on' "$plugin/skills/dev-loop/SKILL.md")
+printf '%s\n' "$section_1b" | grep -qF "dl_scenario_sealed" && printf '%s\n' "$section_1b" | grep -qiE "sealed scenarios.* only as a count" &&
+  printf '%s\n' "$section_1b" | grep -qF "never by id or title" &&
+  pass "the dev-loop skill lists sealed scenarios on the issue only as a count, told apart by dl_scenario_sealed" ||
+  fail "section 1b does not keep sealed scenarios off the issue"
 judge_agent="$plugin/agents/scenario-judge.md"
 awk 'NR == 1, /^tools:/' "$judge_agent" 2>/dev/null | grep -qE '^name: scenario-judge$' &&
   grep -E '^tools:' "$judge_agent" | grep -vqE 'Write|Edit' && pass "the scenario-judge agent exists and cannot write" ||
