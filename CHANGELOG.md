@@ -8,6 +8,20 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   main checkout has no `.dev-loop.json` yet, they read it from the branch (merge-train: the first branch of
   the recorded train) and say where it came from (#8).
 - `doctor.sh` accepts the project instructions at `.claude/CLAUDE.md` as well as `CLAUDE.md`.
+- Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
+  - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules
+    `{"paths": [globs], "docs": [aspects]}` (`*` also matches `/`) and `max_lines` (default 1000).
+  - `scripts/docs-check.sh <from> <to> [<notes file>]`: red for mapped code changed without one of its
+    docs or a `none: <reason>` in the notes' `## Docs` section, and for broken relative links in changed
+    Markdown files.
+  - `gate-train.sh` runs it per branch on the branch's own commits right after stacking, and ends
+    `TRAIN RED` naming the branch before `gate_setup` and the checks.
+  - `doctor.sh` prints the docs config, reports missing aspect paths, and notes files over `max_lines`
+    and map rules that match no tracked file.
+  - The implementer writes a required `## Docs` notes section; the reviewer makes a false or missing doc
+    change a must fix; the dev-loop and setup skills and the templates (`templates/FEATURES.md`, the
+    "Documentation" section of `templates/CLAUDE.md`, an empty `docs` block in
+    `templates/dev-loop.json`) carry the rules.
 
 ## 0.5.0 — 2026-11-05
 

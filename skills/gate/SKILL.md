@@ -56,6 +56,18 @@ check named `affected`, are a configuration error (`doctor.sh` reports them).
 A stopped or skipped check is not a result: after fixing the failure, the re-run still has to pass every
 check before the train is green.
 
+## Current-state docs (opt-in)
+
+With `docs` configured in `.dev-loop.json` (at least one aspect), the gate runs
+`${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.sh` for each branch right after stacking, on that branch's own
+commits only (from the train ref below it, or the base, to `train-<branch>`), with its notes file. A
+branch is red when it changes code a `docs.map` rule covers without changing one of that rule's docs, and
+its notes' `## Docs` section has no `none: <reason>` line; or when a changed Markdown file has a relative
+link that does not resolve. The gate prints `docs-check red for <branch> (...)` with the problems and ends
+`TRAIN RED` before `gate_setup` and the checks. The rules come from the main checkout's `.dev-loop.json`
+(as every gate setting), so a branch cannot change the rules of its own check. Without `docs` this stage
+does not run.
+
 ## Read the result (last line)
 
 - `TRAIN GREEN` (exit 0): recorded for the merge. Run the `merge` skill with the same branches in the same

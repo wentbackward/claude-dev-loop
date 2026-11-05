@@ -47,7 +47,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    (`feat/<n>-<slug>`). Each one writes the failing tests first, then the code, and runs only targeted
    tests and the fast check. It makes small Conventional Commits (`Refs #n`), pushes its branch and writes
    a PR notes file. That file sits outside git; its first line is a plain title, then a summary,
-   `Closes #n` and the test evidence. Implementers never open or merge PRs.
+   `Closes #n`, the doc changes (`## Docs`) and the test evidence. Implementers never open or merge PRs.
 3. **Review.** The `code-reviewer` agent reviews every branch, independently of the implementer's own
    review. It reproduces suspected bugs as throwaway tests, and applies a deeper checklist on paths that
    touch money, orders, auth or deleting data. Must-fix items go back to the implementer, and the branch is
@@ -79,6 +79,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
+| script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
@@ -158,6 +159,51 @@ restores one (a remote-only branch: `refs/remotes/<remote>/<branch>`). Old gate 
 go after `cleanup.keep_days`; other files in the logs directory are never touched. `doctor.sh` notes
 leftovers it can count without GitHub.
 
+## Current-state docs (optional)
+
+The spec is written once and every ticket after it is a change to it, so nothing says what the system does
+now. With a `docs` block in `.dev-loop.json`, the loop keeps one current-state doc per aspect true on
+every merge:
+
+```json
+"docs": {
+  "aspects": {"features": "docs/features", "architecture": "docs/architecture.md", "operations": "docs/operations.md"},
+  "planned": "docs/planned.md",
+  "map": [
+    {"paths": ["src/api/*", "src/cli.py"], "docs": ["features", "architecture"]},
+    {"paths": ["deploy/*"], "docs": ["operations"]}
+  ],
+  "max_lines": 1000
+}
+```
+
+- **Aspects** name a file or a folder (an index and one file per area). They describe only what is built;
+  planned work stays in the tickets and the `planned` list. `docs/DECISIONS.md` stays the only history.
+- **The map** says which docs describe which code. `paths` are shell globs matched against the whole
+  repository path, where `*` also matches `/` (`src/api/*` covers `src/api/v1/users.py`).
+- **The agents.** Each ticket names the doc sections it changes; for a feature, the change to Features is
+  written first. The implementer updates the docs in the same branch and writes a required `## Docs`
+  section in its notes: the doc changes, or `none: <reason>`. The reviewer treats a false or missing doc
+  change as a must fix. A spec whose work has all merged is archived.
+- **`scripts/docs-check.sh <from> <to> [<notes file>]`** (deterministic; exit 0 green, 1 red, 2 usage or
+  config) is red when a file changed in the range matches a map rule but none of that rule's docs changed
+  and the notes' `## Docs` section has no `none: <reason>` line, or when a changed Markdown file has a
+  relative link (`[x](path)`, `[x](path#anchor)`, `[x](<path with spaces>)`, `%20`) that does not resolve
+  in `<to>`. Links with a scheme, anchors, absolute paths, links in code, reference-style links and
+  targets with nested parentheses are not checked. A `<from>` that is not an ancestor of `<to>` is
+  replaced by their merge base, so `docs-check.sh origin/main HEAD` judges only the branch's own changes.
+  Each message names the file, the rule and its docs.
+- **The gate** runs it for each branch of a train right after stacking, on that branch's own commits with
+  its notes file, and ends `TRAIN RED` naming the branch before `gate_setup` and the checks. It reads
+  `docs` from the main checkout's `.dev-loop.json`, so a branch cannot change the rules of its own check.
+- **`doctor.sh`** prints the aspects, the planned list and the map; reports a missing aspect path as
+  MISSING; and notes files over `max_lines` and map rules that match no tracked file.
+- **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
+  current-state docs once, one aspect at a time, each reviewed by the user. Templates:
+  `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
+
+Without `docs` (or with no aspects, as in `templates/dev-loop.json`) none of this runs.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -194,6 +240,10 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `identities` | none (mode off) | per-role identities, see below |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard |
 | `deploy` | none | the deploy command the orchestrator uses |
+| `docs.aspects` | none (docs off) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
+| `docs.planned` | none | the planned list (built and planned are kept apart) |
+| `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
+| `docs.max_lines` | `1000` | the size budget per current-state file (`doctor.sh` notes bigger ones) |
 
 ### Models per agent
 

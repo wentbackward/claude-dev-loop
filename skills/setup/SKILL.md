@@ -55,6 +55,8 @@ stop conditions. Skip any question whose answer you already have.
      servers read their port from an environment variable.
    - `models`: keep the template's choice per agent unless the user named models; `inherit` means the
      main session's model.
+   - `docs`: the current-state docs layout and map, see step 3b; leave `aspects` empty (docs off) until
+     the user agrees on a layout.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
@@ -97,6 +99,29 @@ The plugin replaces the copies; the project-specific knowledge in them stays.
      the closed and stale lists, then `--apply` (with `--include closed` / `--include stale` as they
      agree). It saves every deleted tip to a bundle first.
 4. Record the migration in `docs/DECISIONS.md`: what was retired, where the project specifics went.
+
+## 3b. Current-state docs (propose; the user decides)
+
+The current-state docs say what the system does now, one source of truth per aspect, kept true by every
+merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only history (why).
+
+1. **Propose the layout** from what the repository already has: one file or folder per aspect, e.g.
+   `features` (`docs/features/`, from `templates/FEATURES.md`), `architecture`, `design`, `security`,
+   `operations`, and `user` docs if the project has them. A folder holds an index and one file per area,
+   each under `docs.max_lines` (default 1000).
+2. **Propose the `map`**: rules `{"paths": [globs], "docs": [aspect names]}` that say which docs describe
+   which code (`"src/api/*"` -> `features`, `architecture`; `"deploy/*"` -> `operations`). Globs are shell
+   globs on the whole path, where `*` also matches `/`.
+3. **Propose the planned list** (`docs.planned`, e.g. `docs/planned.md`): planned work, one line per item
+   linking its ticket, kept apart from the built state.
+4. Write the agreed block into `.dev-loop.json` `docs` and add the "Documentation" section of
+   `templates/CLAUDE.md` to `CLAUDE.md`. With `docs` configured, the gate runs `docs-check.sh` per branch.
+5. **Existing project: a one-time rebuild of the current-state docs**, one aspect at a time (Features
+   first): write it from the specs, the merged tickets and the code, describing only what is built; move
+   what is planned to the planned list; then show it to the user and change it until they confirm it,
+   before starting the next aspect. Commit each aspect on the setup branch (or a `docs/` branch per
+   aspect). Archive specs whose work has all merged. `doctor.sh` must then report no MISSING aspect; its
+   notes name files over the budget and map rules that match nothing.
 
 ## 4. Check and commit
 

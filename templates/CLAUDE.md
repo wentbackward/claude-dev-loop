@@ -47,6 +47,24 @@ The spec is `{{SPEC_PATH}}`. It is the source of truth.
 - Merge in dependency order. Stacked branches are rebased with `--onto`, never carrying foreign commits.
 - Heavy commands (full suite, e2e, long builds) only through the plugin's `heavy.sh` queue.
 
+## Documentation
+
+The current-state docs say what the system does now: {{DOCS_ASPECTS_E_G_FEATURES_ARCHITECTURE_OPERATIONS}}
+(`docs` in `.dev-loop.json`). They are kept true by every merge.
+
+- **Built, not planned.** The current-state docs describe only what is built. Planned work lives in the
+  tickets and the planned list (`{{PLANNED_LIST_PATH}}`), which links them. Specs and the PRD are
+  proposals: as a ticket merges, its part moves into the current-state docs in the same branch; a spec
+  whose work has all merged is archived.
+- **Same branch as the code.** Every branch updates the docs it makes untrue. Each ticket names the doc
+  sections it changes; for a feature, the change to Features is written first, as the intended state.
+- **Notes `## Docs`** (required): the doc changes, or `none: <reason>`. The gate's docs check is red for
+  code a `docs.map` rule covers without one of its docs or a reason, and for broken relative links.
+- **One fact, one place;** other docs link to it. `docs/DECISIONS.md` is the only history (why). This
+  file holds rules for agents, not a description of the system.
+- **Small enough to read:** one folder per aspect with an index and one file per area, each under
+  `docs.max_lines` lines (`doctor.sh` notes the bigger ones).
+
 ## Engineering rules
 
 - {{LANGUAGE_AND_VERSION}}, managed with {{TOOLCHAIN}}. Source under `{{SOURCE_DIR}}`, tests under

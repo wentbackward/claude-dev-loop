@@ -26,6 +26,11 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
    - **Clean code**: small single-purpose functions, clear names, dependencies injected behind interfaces,
      no module state, types complete, no dead or commented-out code, no debug output.
    - **Simplicity**: flag anything more complex than the ticket needs.
+   - **Docs still true**: when the project configures current-state docs (`docs` in `.dev-loop.json`),
+     read every doc the diff affects (the ticket's sections, the docs its `map` rules name, the README and
+     user docs it touches) and check it still describes what the code does: built, not planned; one fact
+     in one place. A false doc, a missing doc change, or a `none: <reason>` in the notes' `## Docs`
+     section that the diff contradicts is a must fix.
 4. **Reproduce, do not speculate.** When you suspect a bug, prove it: write a throwaway test (name it so it
    is obviously temporary, e.g. `test_zz_review_tmp_*`), run it, record the result in your report, then
    delete it. Finish with `git status --porcelain` empty. Never commit.

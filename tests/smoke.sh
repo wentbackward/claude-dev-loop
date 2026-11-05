@@ -588,5 +588,180 @@ expect "doctor counts the leftover train refs" "1 train/replay refs outside a li
   "$("$plugin/scripts/doctor.sh" 2>&1 | sed -n 's/^note    \(.*train\/replay refs.*\)$/\1/p')"
 git branch -q -D train-feat/99-left
 
+# 13. Current-state docs: docs-check.sh, the gate's docs stage and doctor (all only with "docs" configured).
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+mkdir -p docs/architecture lib
+printf '# Features\n\n- one\n' >docs/features.md
+printf '# Architecture\n\n1\n2\n3\n4\n5\n' >docs/architecture/index.md
+echo a >lib/a.sh
+git add docs lib && git commit -q -m "docs: current-state docs" && git push -q origin main
+cat >"$work/docs.json" <<'EOF'
+{
+  "base_branch": "main",
+  "checks": [{"name": "unit", "command": "touch \"$SMOKE_WORK/docs-checks-ran\"; ./check.sh", "heavy": false}],
+  "docs": {
+    "aspects": {"features": "docs/features.md", "architecture": "docs/architecture", "security": "docs/security.md"},
+    "planned": "docs/features.md",
+    "map": [
+      {"paths": ["lib/*"], "docs": ["features", "architecture"]},
+      {"paths": ["nowhere/*.py"], "docs": ["features"]}
+    ],
+    "max_lines": 5
+  }
+}
+EOF
+docs_check() { # docs_check FROM TO [NOTES]: run docs-check.sh with the docs config; sets out and rc
+  out=$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/docs-check.sh" "$@" 2>&1)
+  rc=$?
+  echo "$out"
+}
+commit_files() { # commit_files MESSAGE FILE...: append a line to each FILE and commit
+  local message=$1 file
+  shift
+  for file in "$@"; do mkdir -p "$(dirname "$file")" && echo "change" >>"$file" && git add "$file"; done
+  git commit -q -m "$message"
+}
+c0=$(git rev-parse HEAD)
+git checkout -q -b feat/70-docs
+commit_files "feat: lib change" lib/a.sh
+docs_check "$c0" HEAD
+expect "docs-check is red for mapped code without a doc change" 1 "$rc"
+echo "$out" | grep -F "lib/a.sh" | grep -F "rule 1" | grep -F "lib/*" | grep -F "features" | grep -qF "architecture" &&
+  pass "the docs-check message names the file, the rule and its docs" || fail "docs-check message: $out"
+echo "$out" | grep -qF "nowhere" && fail "docs-check reported a rule that matched nothing" ||
+  pass "docs-check reports only the rules the change matches"
+printf 'feat: x\n\n## Summary\nnone: in the wrong section\n\n## Docs\n- docs/features.md\n' >"$work/notes-wrong.md"
+docs_check "$c0" HEAD "$work/notes-wrong.md"
+expect "a none line outside ## Docs does not count" 1 "$rc"
+printf 'feat: x\n\n## Docs\nnone:   \n\n## Test evidence\nnone: later\n' >"$work/notes-empty.md"
+docs_check "$c0" HEAD "$work/notes-empty.md"
+expect "a none line without a reason does not count" 1 "$rc"
+printf 'feat: x\n\n## Docs\n- NONE: a refactor with unchanged behaviour\n\n## Test evidence\n' >"$work/notes-none.md"
+docs_check "$c0" HEAD "$work/notes-none.md"
+expect "docs-check is green with none: <reason> in ## Docs (any case)" 0 "$rc"
+docs_check "$c0" HEAD "$work/no-such-notes.md"
+expect "a missing notes file gives no exemption" 1 "$rc"
+commit_files "docs: architecture" docs/architecture/index.md
+docs_check "$c0" HEAD
+expect "docs-check is green when a doc of the rule (a folder aspect) changed" 0 "$rc"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: lib and features" lib/a.sh docs/features.md
+docs_check "$c0" HEAD
+expect "docs-check is green when a doc of the rule (a file aspect) changed" 0 "$rc"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: unmapped" other.txt
+docs_check "$c0" HEAD
+expect "docs-check is green for a change no rule maps" 0 "$rc"
+
+# Relative links in changed Markdown files must resolve in <to>.
+git checkout -q -B feat/70-docs "$c0"
+cat >docs/guide.md <<'EOF'
+# Guide
+See [the source](../src.txt), [features](features.md#one) and [the folder](./architecture/).
+[top](#guide), [web](https://example.invalid/x), [mail](mailto:someone@example.invalid), ![logo](architecture/index.md "title")
+Inline `[code](not-checked.md)` is code.
+```
+[fenced](not-checked-either.md)
+```
+EOF
+git add docs/guide.md && git commit -q -m "docs: guide"
+docs_check "$c0" HEAD
+expect "docs-check is green for links that resolve (../, ./, #anchor, title, http, mailto, code)" 0 "$rc"
+printf '# Broken\n[gone](missing.md) and [up](../../outside.md) and [ok](guide.md)\n' >docs/broken.md
+git add docs/broken.md && git commit -q -m "docs: broken"
+docs_check "$c0" HEAD
+expect "docs-check is red for a broken relative link" 1 "$rc"
+echo "$out" | grep -F "docs/broken.md" | grep -qF "missing.md" && pass "the link message names the file and the link" ||
+  fail "link message: $out"
+echo "$out" | grep -qF "outside.md" && pass "a link above the repository root is broken" || fail "outside link not reported"
+echo "$out" | grep -qF "guide.md)" && fail "a valid link was reported" || pass "valid links in a red file are not reported"
+git rm -q docs/broken.md && git commit -q -m "docs: remove broken"
+docs_check "$c0" HEAD
+expect "a Markdown file deleted in the range is not link-checked" 0 "$rc"
+
+# Paths with non-ASCII names, angle-bracket and %20 links, and a from that is not an ancestor of to.
+git checkout -q -B feat/70-docs "$c0"
+printf '# Caf\303\251\n[gone](missing-too.md)\n' >"$(printf 'docs/caf\303\251.md')"
+git add docs && git commit -q -m "docs: non-ascii name"
+docs_check "$c0" HEAD
+expect "a changed Markdown file with a non-ASCII name is link-checked" 1 "$rc"
+echo "$out" | grep -F "missing-too.md" | grep -qF "$(printf 'docs/caf\303\251.md')" &&
+  pass "the link message names the non-ASCII file as it is" || fail "non-ASCII link message: $out"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: non-ascii lib" "$(printf 'lib/\303\251.sh')"
+docs_check "$c0" HEAD
+expect "a mapped file with a non-ASCII name needs its docs" 1 "$rc"
+git checkout -q -B feat/70-docs "$c0"
+mkdir -p "docs/my dir" && echo t >"docs/my dir/t.md"
+printf '# Spaces\n[a](<my dir/t.md>) [b](<my dir/t.md> "title") [c](my%%20dir/t.md#x) [d](features.md "a title")\n' >docs/spaces.md
+git add docs && git commit -q -m "docs: spaces"
+docs_check "$c0" HEAD
+expect "angle-bracket links with spaces and %20 links resolve" 0 "$rc"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: unmapped" other.txt
+branch_head=$(git rev-parse HEAD)
+git checkout -q -B docs-moved-base "$c0" && commit_files "feat: base moved" lib/moved.sh
+docs_check docs-moved-base "$branch_head"
+expect "docs-check compares from the merge base when the base moved on" 0 "$rc"
+echo "$out" | grep -qF "lib/moved.sh" && fail "the base's own change was judged as the branch's" ||
+  pass "the base's own changes are not judged as the branch's"
+git checkout -q main && git branch -q -D docs-moved-base
+
+out=$("$plugin/scripts/docs-check.sh" 2>&1)
+expect "docs-check without arguments is a usage error" 2 "$?"
+docs_check "$c0" no-such-ref
+expect "docs-check with an unknown ref is an error" 2 "$rc"
+out=$(DEV_LOOP_CONFIG="$work/gate.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD 2>&1)
+expect "docs-check without docs in the config is a config error" 2 "$?"
+sed 's/"docs": \["features"\]/"docs": ["nosuch"]/' "$work/docs.json" >"$work/docs-bad.json"
+out=$(DEV_LOOP_CONFIG="$work/docs-bad.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD 2>&1)
+expect "a map rule naming an unknown aspect is a config error" 2 "$?"
+echo "$out" | grep -qF "nosuch" && pass "the config error names the unknown aspect" || fail "unknown aspect: $out"
+
+# The gate checks each branch's own commits, after stacking and before the checks.
+git checkout -q -B feat/72-documented "$c0" && commit_files "feat: b and features" lib/b.sh docs/features.md &&
+  git push -q -u origin feat/72-documented
+git checkout -q -B feat/71-undocumented "$c0" && commit_files "feat: c" lib/c.sh && git push -q -u origin feat/71-undocumented
+git checkout -q main
+rm -f "$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/paths.sh" notes feat/71-undocumented)" "$work/docs-checks-ran"
+out=$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/gate-train.sh" feat/72-documented feat/71-undocumented 2>&1)
+rc=$?
+echo "$out"
+expect "the gate is red when a branch's own commits lack their docs" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "feat/71-undocumented" | grep -qF "docs" && pass "the docs failure names the branch" ||
+  fail "the branch is not named: $out"
+echo "$out" | grep -q "red for feat/72-documented" && fail "the documented branch was reported" ||
+  pass "a branch is judged on its own commits, not the docs of the branch below it"
+[ ! -e "$work/docs-checks-ran" ] && ! echo "$out" | grep -q "^unit " && pass "the docs failure stops the train before the checks" ||
+  fail "the checks ran after a docs failure"
+printf 'feat: c (#71)\n\n## Docs\nnone: internal helper, no behaviour a user sees\n' \
+  >"$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/paths.sh" notes feat/71-undocumented)"
+out=$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/gate-train.sh" feat/72-documented feat/71-undocumented 2>&1)
+rc=$?
+echo "$out"
+expect "the gate reads the branch's notes file for none: <reason>" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+[ -e "$work/docs-checks-ran" ] && pass "the checks run after a green docs stage" || fail "the checks did not run"
+rm -f "$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/paths.sh" notes feat/71-undocumented)"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh", "heavy": false}]}\n' >"$work/nodocs.json"
+out=$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/gate-train.sh" feat/71-undocumented 2>&1)
+rc=$?
+echo "$out"
+expect "without docs in the config the gate does not check docs" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+
+# doctor prints the aspects and reports missing paths, oversized files and rules that match nothing.
+out=$(DEV_LOOP_CONFIG="$work/docs.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out"
+echo "$out" | grep -E "docs aspect +features +docs/features.md" >/dev/null && pass "doctor prints the aspects" ||
+  fail "doctor does not print the aspects"
+echo "$out" | grep -E "^MISSING docs aspect security" | grep -qF "docs/security.md" &&
+  pass "doctor reports a missing aspect path as MISSING" || fail "no MISSING for docs/security.md"
+echo "$out" | grep -E "^note .*docs/architecture/index.md has 7 lines" | grep -qF "max_lines 5" &&
+  pass "doctor notes a current-state file over max_lines" || fail "no note for the oversized file"
+echo "$out" | grep -E "^note .*map rule 2" | grep -qF "nowhere/*.py" && pass "doctor notes a map rule that matches no file" ||
+  fail "no note for the map rule that matches nothing"
+echo "$out" | grep -E "^note .*map rule 1" >/dev/null && fail "doctor noted a map rule that matches files" ||
+  pass "doctor does not note a map rule that matches files"
+expect "doctor without docs prints no docs lines" 0 \
+  "$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs aspect\|docs map\|max_lines")"
+expect "the template's empty docs block keeps the docs off" "2 0" \
+  "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD >/dev/null 2>&1
+    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs ")"
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

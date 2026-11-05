@@ -50,6 +50,11 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    (date, decision, reason, alternatives) and continue. Stop and report only for the project's stop
    conditions (missing credentials, a cost cap, a spec contradiction that changes stored data, anything
    unsafe or irreversible).
+5a. **Docs in the same branch.** When the project configures current-state docs (`docs` in
+   `.dev-loop.json`), update every doc the change makes untrue (the ticket names the sections): describe
+   only what is now built, in the doc that owns the fact, and link instead of repeating. Check with
+   `<plugin>/scripts/docs-check.sh <remote>/<base> HEAD <notes file>`: it is red for mapped code without a
+   doc change and for broken relative links in changed Markdown files.
 6. Self-review your diff (`git diff <remote>/<base>...HEAD`) against the acceptance criteria and CLAUDE.md:
    every criterion tested, no dead or commented-out code, no debug output, no secrets.
 7. Run your targeted tests and the fast check once more; both green.
@@ -60,7 +65,9 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
 9. Write the PR notes file at the path the orchestrator gave you (outside git; do not commit it):
    - line 1: a plain title, no leading `#`, e.g. `feat(scope): what changed (#<n>)`;
    - a blank line, then `## Summary` (what changed and why, in plain words), `Closes #<n>`,
-     `## Decisions` (if any), `## Test evidence` (the exact commands you ran and their pass counts).
+     `## Decisions` (if any), `## Docs` (required: the doc files and sections you changed, or one line
+     `none: <reason>` when no current-state doc is affected), `## Test evidence` (the exact commands you
+     ran and their pass counts).
 
 ## When review findings come back
 
