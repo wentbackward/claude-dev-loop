@@ -323,6 +323,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   compares it with `paths.sh scenarios` for five configs from the main and a linked worktree.
   `guard-role.py --scenarios-dir [DIR]` prints the resolved path for that test. No deny rule in
   `templates/settings.json`.
+  Any error while checking a call by one of the three agent types (a NUL byte in a path, an odd event)
+  refuses it (fail closed), so a crash never lets it through or skips the identity checks after it. When
+  the event's cwd is outside any git repository, the config and the store come from `CLAUDE_PROJECT_DIR`
+  (the scenario check only; the identity checks read the config as before).
 - **Reason:** the smallest change that meets #31: the agent type is the only thing that tells the judge
   from the implementer in one OS session, and deny rules cannot do that.
 - **Alternatives:** a configurable list of refused agents (no need yet); refusing searches of directories
