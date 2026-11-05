@@ -82,6 +82,8 @@ git worktree list --porcelain |
   awk '/^worktree / {p = substr($0, 10)} /^branch refs\/heads\// {print substr($0, 19) "\t" p}' >"$work/worktrees"
 git for-each-ref --merged "$base" --format='%(refname)' refs/heads "refs/remotes/$DL_REMOTE" >"$work/contained"
 now=$(date +%s)
+default_branch=$(git symbolic-ref -q --short "refs/remotes/$DL_REMOTE/HEAD" 2>/dev/null)
+default_branch=${default_branch#"$DL_REMOTE/"}
 
 # loop_branch NAME: a branch the loop creates (github.feature_patterns), read once per run.
 if [ "$(cfg_len github.feature_patterns)" -eq 0 ]; then
@@ -107,8 +109,8 @@ classify() {
   ref=refs/heads/$name
   [ "$scope" = remote ] && ref=refs/remotes/$DL_REMOTE/$name
   out() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$scope" "$name" "$tip" "$2"; }
-  case "$name" in "$DL_BASE" | HEAD)
-    out keep "the base branch"
+  case "$name" in "$DL_BASE" | HEAD | "$default_branch" | main | master | develop | trunk)
+    out keep "the base or a long-lived branch"
     return
     ;;
   esac

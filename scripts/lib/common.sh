@@ -255,7 +255,7 @@ dl_archive_note() {
 # output (merge.rebuildable, default node_modules dist build target .venv and the usual caches).
 dl_unrebuildable_ignored() {
   local keep=" node_modules dist build target out coverage htmlcov .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache .coverage "
-  local count i entry part
+  local count i entry part found
   count=$(cfg_len merge.rebuildable)
   if [ "$count" -gt 0 ]; then
     keep=" "
@@ -264,10 +264,16 @@ dl_unrebuildable_ignored() {
   # A directory listed only because it holds other listed entries (web/ for web/node_modules/) is skipped.
   git -C "$1" ls-files --others --ignored --exclude-standard --directory 2>/dev/null | LC_ALL=C sort -r |
     awk '{ if (index(prev, $0) != 1 || substr($0, length($0)) != "/") print; prev = $0 }' | while read -r entry; do
-    local rebuildable=""
-    IFS=/ read -r -a parts <<<"${entry%/}"
-    for part in "${parts[@]}"; do [[ "$keep" == *" $part "* ]] && rebuildable=yes; done
-    [ -n "$rebuildable" ] || { printf '%s\n' "$entry"; break; }
+    # The entry itself must be build output (build/local.env is not), and a build directory must not hold
+    # secrets or data (a false match only keeps the worktree).
+    part=${entry%/}
+    part=${part##*/}
+    [[ "$keep" == *" $part "* ]] || { printf '%s\n' "$entry"; break; }
+    if [ -d "$1/$entry" ]; then
+      found=$(find "$1/$entry" \( -name '.env' -o -name '.env.*' -o -name '*.env' -o -name '*.pem' -o -name '*.key' \
+        -o -name '*.p12' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \) -print 2>/dev/null | head -n 1)
+      [ -z "$found" ] || { printf '%s\n' "${found#"$1"/}"; break; }
+    fi
   done
 }
 

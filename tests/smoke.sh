@@ -383,21 +383,28 @@ branch_on feat/49-env w49.txt && note_for feat/49-env
 git worktree add -q "$work/wt48" feat/48-locked && git worktree lock "$work/wt48"
 git worktree add -q "$work/wt49" feat/49-env && printf '.env\nnode_modules/\n' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
   echo SECRET=x >"$work/wt49/.env"
+branch_on feat/52-output w52.txt && note_for feat/52-output
+git worktree add -q "$work/wt52" feat/52-output && printf 'build/\n' >>"$(git rev-parse --git-common-dir)/info/exclude" &&
+  mkdir -p "$work/wt52/build" && echo SECRET=x >"$work/wt52/build/local.env" && echo o >"$work/wt52/w52.txt.bak" &&
+  rm "$work/wt52/w52.txt.bak"
 branch_on feat/51-build w51.txt && note_for feat/51-build
 git worktree add -q "$work/wt51" feat/51-build && mkdir -p "$work/wt51/web/node_modules/pkg" && echo x >"$work/wt51/web/node_modules/pkg/i.js"
 git branch -q train-person-work origin/main
-"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build >/dev/null 2>&1
-out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build 2>&1)
+"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output >/dev/null 2>&1
+out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
 echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
   [ -f "$work/wt49/.env" ] && pass "merge-train keeps a worktree holding a .env file" || fail ".env worktree: $out"
 [ ! -d "$work/wt51" ] && [ -z "$(git branch --list feat/51-build)" ] &&
   pass "merge-train removes a worktree whose ignored files are only build output" || fail "build-only worktree kept: $out"
+[ -f "$work/wt52/build/local.env" ] && pass "a file inside an ignored build directory that is not all output keeps its worktree" ||
+  fail "wt52 removed: $out"
 [ -n "$(git branch --list train-person-work)" ] && pass "the gate never deletes a person's train-* branch" ||
   fail "the gate deleted train-person-work"
 git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
 git branch -q -D train-person-work
+git worktree remove --force "$work/wt52"
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
@@ -476,6 +483,8 @@ echo CLOSED >"$FAKE_GH_DIR/feat_44-remote-only.state"
 branch_on fix/45-checked-out w45.txt && printf '45\tCLOSED\tNOT_PLANNED\n' >>"$FAKE_GH_DIR/issues.tsv"
 git worktree add -q "$work/wt45" fix/45-checked-out
 git branch -q train-station-fix origin/main                                 # a person's branch, not a gate ref
+git checkout -q -B master origin/main && echo m >m.txt && git add m.txt &&
+  GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" git commit -q -m "old master" && git checkout -q main   # long-lived, old
 git branch -q train-feat/46-live origin/main && printf '%s feat/46-live\n' "$$" >"$DEV_LOOP_HOME/project/train-running.txt"
 branch_on feat/47-old-note w47.txt && gh_pr feat/47-old-note && gh pr merge feat/47-old-note --squash >/dev/null
 note_for feat/47-old-note && touch -t 202001010000 "$("$plugin/scripts/paths.sh" notes feat/47-old-note)"
@@ -486,7 +495,8 @@ out=$(DEV_LOOP_CONFIG="$work/dark.json" "$plugin/scripts/cleanup.sh" --apply 2>&
 echo "$out"
 report=$(echo "$out" | sed -n 's/^report: //p')
 for row in "keep remote develop" "keep remote release-1" "keep local release-1" "closed local fix/42-it's" "keep local feat/43-reopened" \
-  "keep local fix/45-checked-out" "keep local train-station-fix" "keep local train-feat/46-live"; do
+  "keep local fix/45-checked-out" "keep local train-station-fix" "keep local train-feat/46-live" \
+  "keep local master"; do
   read -r want scope name <<<"$row"
   expect "cleanup classifies $scope $name as $want" "$want" "$(class_of "$report" "$scope" "$name")"
 done
