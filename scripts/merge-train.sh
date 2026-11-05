@@ -31,7 +31,7 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$scripts_dir/lib/identity.sh"
 
 [ $# -gt 0 ] || dl_die "usage: merge-train.sh <branch> [<branch> ...]"
-dl_load_config required
+dl_load_train_config --recorded "$1"
 command -v gh >/dev/null 2>&1 || dl_die "gh (GitHub CLI) is not installed"
 gate=$(dl_gate_dir)
 [ -d "$gate" ] || dl_die "no gate worktree at $gate (run gate-train.sh first)"

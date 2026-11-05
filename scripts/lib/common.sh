@@ -91,6 +91,47 @@ dl_load_config() {
   DL_BASE=$(cfg base_branch main)
 }
 
+# dl_load_train_config [--recorded] BRANCH: dl_load_config required, except that when the main checkout has
+# no .dev-loop.json yet and DEV_LOOP_CONFIG is unset (a setup branch on its first merge), the config is read
+# from the branch (with --recorded, the first branch of the recorded green train first), copied to
+# $DL_STATE/branch-config.json and exported as DEV_LOOP_CONFIG for the scripts this one runs.
+dl_load_train_config() {
+  local recorded="" branch ref="" remote copy
+  [ "${1:-}" = --recorded ] && { recorded=yes; shift; }
+  dl_load_config
+  if [ -z "${DEV_LOOP_CONFIG:-}" ] && [ -n "$DL_ROOT" ] && [ ! -f "$DL_CONFIG" ]; then
+    for branch in ${recorded:+"$(awk 'NR == 1 {print $1}' "$(dl_train_file)" 2>/dev/null)"} "${1:-}"; do
+      [ -n "$branch" ] && ref=$(dl_branch_config_ref "$branch" origin) && break
+    done
+    if [ -n "$ref" ]; then
+      remote=$(git -C "$DL_ROOT" show "$ref:.dev-loop.json" | json_get remote)
+      if [ -n "$remote" ] && [ "$remote" != origin ]; then
+        ref=$(dl_branch_config_ref "$branch" "$remote") || ref=""
+      fi
+    fi
+    if [ -n "$ref" ]; then
+      copy=$DL_STATE/branch-config.json
+      { mkdir -p "$DL_STATE" && git -C "$DL_ROOT" show "$ref:.dev-loop.json" >"$copy"; } || dl_die "cannot write $copy"
+      export DEV_LOOP_CONFIG=$copy
+      echo "dev-loop: config read from ${ref#refs/*/}:.dev-loop.json ($DL_ROOT has none yet)"
+    fi
+  fi
+  dl_load_config required
+}
+
+# dl_branch_config_ref BRANCH REMOTE: the full ref of REMOTE/BRANCH, else of the local BRANCH, the first
+# that has a .dev-loop.json.
+dl_branch_config_ref() {
+  local ref
+  for ref in "refs/remotes/$2/$1" "refs/heads/$1"; do
+    if git -C "$DL_ROOT" cat-file -e "$ref:.dev-loop.json" 2>/dev/null; then
+      printf '%s\n' "$ref"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # cfg PATH [DEFAULT]: a value from the project config, or DEFAULT.
 cfg() {
   local value=""
