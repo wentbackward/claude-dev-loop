@@ -1298,6 +1298,17 @@ gate_arch "$work/arch.json" feat/122-config >/dev/null
 expect "a branch that changes the architecture config with a reason is green" "0 TRAIN GREEN" \
   "$rc $(echo "$out" | tail -n 1)"
 rm -f "$notes122"
+
+# A base that arch-check cannot judge stops the gate (exit 2) instead of passing the fixed entries.
+git checkout -q -B main origin/main && git rm -q -r docs/architecture && git commit -q -m "chore: no cards" &&
+  git push -q origin main
+git checkout -q -B feat/124-cards origin/main && git checkout -q origin/main~1 -- docs/architecture &&
+  echo "upward util -> cli" >>docs/architecture/baseline.txt && git add docs && git commit -q -m "docs: cards" &&
+  git push -q -u origin feat/124-cards
+git checkout -q main
+gate_arch "$work/arch.json" feat/124-cards >/dev/null
+echo "$out" | grep -q "arch-check error on the base" && [ "$rc" -eq 2 ] &&
+  pass "an error on the base while judging fixed entries ends the gate with exit 2" || fail "base error: rc $rc: $out"
 expect "no line of the implementer's steps is over 110 characters" "" "$(awk 'FNR > 5 && length > 110' "$plugin/agents/implementer.md")"
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
