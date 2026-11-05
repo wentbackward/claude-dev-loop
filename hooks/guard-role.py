@@ -82,12 +82,13 @@ def load_config(cwd: str) -> dict:
 
 def scenarios_on(config: dict) -> bool:
     """True when scenarios are on, as dl_scenarios_setting in scripts/lib/scenarios.sh: an explicit
-    "scenarios" key decides (null, false and "" are off), else "factory": "dark" turns them on."""
+    "scenarios" key decides (null, false, "" and the string "false", which cfg prints alike, are off),
+    else "factory": "dark" turns them on."""
     if not isinstance(config, dict):
         return False
     if "scenarios" in config:
         value = config["scenarios"]
-        return not (value is None or value is False or value == "")
+        return not (value is None or value is False or value in ("", "false"))
     return config.get("factory") == "dark"
 
 

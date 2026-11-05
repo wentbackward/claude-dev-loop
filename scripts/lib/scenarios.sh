@@ -8,7 +8,7 @@
 # required (true or false). The body below the front matter must not be empty.
 
 # dl_scenarios_setting: whether scenarios are on and where that came from: `on|off explicit` when the config
-# has "scenarios" (false, null and "" turn them off, anything else on), else `on preset` with "factory":
+# has "scenarios" (false, null, "" and "false" turn them off, anything else on), else `on preset` with "factory":
 # "dark", else `off default`. hooks/guard-role.py applies the same rule.
 dl_scenarios_setting() {
   if cfg_has scenarios; then

@@ -387,7 +387,7 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Decision:** `dl_factory` (in `scripts/lib/common.sh`, next to `cfg`) returns `dark` or `collaborative`;
   any other value counts as collaborative and `doctor.sh` reports it. `dl_scenarios_setting` returns
   whether scenarios are on and the source: `explicit` when the config has a top-level `scenarios` key
-  (`false`, `null` and `""` turn them off, anything else on), else `preset` (on) with `dark`, else
+  (`false`, `null`, `""` and the string `"false"` turn them off, anything else on), else `preset` (on) with `dark`, else
   `default` (off). A new `cfg_has KEY` tells a key set to `null` from a missing one, which `cfg` cannot.
   The dark store requirement is "at least one scenario file with `required: true` and no problems of its
   own" (`dl_scenarios_ready`); it applies whenever the factory is dark and scenarios are on, explicit or
