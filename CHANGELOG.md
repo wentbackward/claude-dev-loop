@@ -5,14 +5,19 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 ## Unreleased
 
 - Gate options, all off by default (the gate behaves exactly as before without them):
-  - `affected`: a check entry run first, after `gate_setup`, with `DL_CHANGED_FILES` naming a file that
-    lists the paths the train changes against the base.
+  - `affected`: a check entry (or plain command) run first, after `gate_setup`, with `DL_CHANGED_FILES`
+    naming a file that lists the paths the train changes against the base (`train-changed-files.txt` in
+    the logs directory, kept until the next train). Without `affected` the list is not made.
   - `parallel`: the checks run at the same time, each in its own process group and heavy ones in their
     own `heavy.sh` slot; result lines print in config order.
   - `fail_fast`: after the first failure the remaining checks are skipped and running ones are stopped
     (SIGTERM to the process group, SIGKILL after `DEV_LOOP_STOP_GRACE_SECONDS`, default 10); they print as
-    `<name> skipped` or `<name> stopped (log: ...)`.
-  - `doctor.sh` validates `parallel`, `fail_fast` and `affected` and prints them.
+    `<name> skipped` or `<name> stopped (log: ...)`; a check that had already ended with 0 keeps its
+    `rc=0`.
+  - A SIGTERM, SIGINT or SIGHUP to the gate in parallel mode stops the running checks the same way and
+    ends `TRAIN RED`. Without `setsid` (macOS) the process groups are made with `perl`.
+  - `doctor.sh` validates `parallel`, `fail_fast` and `affected`, prints them, and rejects duplicate
+    check names and a check named `affected` (each name is a log file).
 - `heavy.sh`: the command no longer inherits the slot lock, so a server that outlives a killed heavy
   command no longer keeps the slot; SIGTERM, SIGINT and SIGHUP release the slot once the command has
   ended.

@@ -127,8 +127,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `fast_check` | none | seconds-long check (format + lint), run by the Stop hook |
 | `format` | none | formats one file; `{file}` is the quoted path (else appended) |
 | `format_extensions` | all | only format files ending in one of these (e.g. `[".py"]`) |
-| `checks` (required for the gate) | — | the full checks, in order: `{"name", "command", "heavy": true, "summary": "<regex>"}` or a plain command string |
-| `affected` | none | a check entry (or plain command) run first, after `gate_setup`; `DL_CHANGED_FILES` names the file listing the paths the train changes against the base |
+| `checks` (required for the gate) | — | the full checks, in order: `{"name", "command", "heavy": true, "summary": "<regex>"}` or a plain command string; names are unique (each is its log file) and `affected` is reserved |
+| `affected` | none | a check entry (or plain command) run first, after `gate_setup`; `DL_CHANGED_FILES` names the file listing the paths the train changes against the base (made only when `affected` is set) |
 | `parallel` | `false` | run the checks at the same time, each in its own process group (heavy ones in their own slot); results print in config order |
 | `fail_fast` | `false` | after the first failure, skip the checks not started and stop the running ones (their whole process group); they print as `<name> skipped` / `<name> stopped` |
 | `gate_setup` | none | command run once in the gate worktree before the checks (e.g. `npm ci`) |

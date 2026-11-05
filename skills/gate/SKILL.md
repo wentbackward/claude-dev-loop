@@ -36,15 +36,22 @@ By default the checks run one after the other and all of them run, even after a 
 - `affected` (a check entry, or a plain command; heavy unless `"heavy": false`): runs first, after
   `gate_setup`, as `affected`. `DL_CHANGED_FILES` names a file listing the paths the train changes against
   the base (`git diff --name-only --no-renames`, one per line; deleted paths and both names of a rename included); the project's command picks the
-  tests those paths touch. The variable is set for `gate_setup` and every check too.
+  tests those paths touch. The variable is set for `gate_setup` and every check too. The list is
+  `train-changed-files.txt` in the logs directory and stays there until the next train. Without
+  `affected` no list is made and the variable is not set.
 - `parallel`: the checks start at the same time, each in its own process group with its own log; each
   heavy one takes its own `heavy.sh` slot (and port), so with fewer free slots the rest wait as usual. The
   result lines print in config order once all have ended.
 - `fail_fast`: after the first failure (affected or a check), checks not started yet print as
   `<name> skipped`, and running ones are stopped: SIGTERM to their whole process group (heavy.sh, the
   command and the servers it started in that group), SIGKILL after 10 s (`DEV_LOOP_STOP_GRACE_SECONDS`).
-  They print as `<name> stopped (log: ...)`. heavy.sh frees its slot as soon as its command has ended.
+  They print as `<name> stopped (log: ...)`; one that had already ended with 0 prints its `rc=0`.
+  heavy.sh frees its slot as soon as its command has ended. Stopping the gate itself (SIGTERM, SIGINT or
+  SIGHUP) while parallel checks run stops them the same way and ends `TRAIN RED`.
   A server that daemonizes into its own session escapes the stop: keep e2e servers as children.
+
+Every stage needs its own name, because the name is its log file: two checks with the same name, or a
+check named `affected`, are a configuration error (`doctor.sh` reports them).
 
 A stopped or skipped check is not a result: after fixing the failure, the re-run still has to pass every
 check before the train is green.
