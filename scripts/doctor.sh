@@ -80,7 +80,9 @@ else
     esac
   done
   echo "        models        $models"
-  if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; else missing "CLAUDE.md (run the setup skill)"; fi
+  if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
+    ok ".claude/CLAUDE.md"
+  else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
   # Leftovers of a hand-built loop (the setup skill's "Migrate" step removes them).
   for agent in implementer code-reviewer test-engineer verifier; do

@@ -529,6 +529,12 @@ expect "a note archived twice under one name keeps both" "first second" \
 expect "the JSON of a branch name with quotes and backslashes parses" 'a"b\c' \
   "$(bash -c '. "$1/scripts/lib/common.sh"; dl_json_string "a\"b\\c"' _ "$plugin" | jq -r .)"
 
+expect "doctor reports a missing CLAUDE.md" "MISSING CLAUDE.md or .claude/CLAUDE.md (run the setup skill)" \
+  "$([ ! -e CLAUDE.md ] && "$plugin/scripts/doctor.sh" 2>&1 | grep -F 'MISSING CLAUDE.md')"
+mkdir -p .claude && echo "# rules" >.claude/CLAUDE.md
+expect "doctor accepts .claude/CLAUDE.md" "ok      .claude/CLAUDE.md" \
+  "$("$plugin/scripts/doctor.sh" 2>&1 | grep -F '.claude/CLAUDE.md')"
+rm .claude/CLAUDE.md
 git branch -q train-feat/99-left origin/main
 expect "doctor counts the leftover train refs" "1 train/replay refs outside a live train, 0 merged branches still local (cleanup.sh)" \
   "$("$plugin/scripts/doctor.sh" 2>&1 | sed -n 's/^note    \(.*train\/replay refs.*\)$/\1/p')"
