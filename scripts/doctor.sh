@@ -247,7 +247,12 @@ else
   echo "        heavy slots   $(cfg heavy.slots 2), memory cap $(cfg heavy.memory_max none)"
   echo "        gate options  affected $([ -n "$affected" ] && echo on || echo off), parallel $(cfg parallel false), fail_fast $(cfg fail_fast false)"
   models=""
-  for agent in implementer code-reviewer test-engineer verifier doc-auditor architect; do
+  agents="implementer code-reviewer test-engineer verifier doc-auditor architect"
+  # The scenario agents are listed when scenarios are on or their model is set, so the line is unchanged without.
+  for agent in scenario-writer; do
+    { dl_scenarios_on || [ -n "$(cfg "models.$agent" "")" ]; } && agents="$agents $agent"
+  done
+  for agent in $agents; do
     model=$(cfg "models.$agent" inherit)
     case $model in
       inherit | haiku | sonnet | opus | fable) models="${models:+$models }$agent=$model" ;;
