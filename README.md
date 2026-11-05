@@ -392,10 +392,12 @@ the **scenario store**: where the scenarios live and what a valid one is. Nothin
   defaults.
 - **`scenarios.dir`** is the store, default `~/.dev-loop/<repo>/scenarios` (the state directory, outside
   every worktree); `~` and `<repo>` are expanded, a relative path is taken from the repository root.
-  `paths.sh scenarios` prints the resolved directory. `run`, `pass`, `min_satisfaction` and `sealed` are
-  settings for a scenario judge that is not built yet (the command that starts the system, the share a required scenario
-  must reach, the mean the train must reach, the share of scenarios never reported in detail).
-- **One Markdown file per scenario** (`*.md` at any depth of the store, not under `.git`), with front
+  `paths.sh scenarios` prints the resolved directory.
+- **`run`, `pass`, `min_satisfaction`, `sealed`** are settings for a scenario judge that is not built yet:
+  the command that starts the system, the share a required scenario must reach, the mean the train must
+  reach, and the share of scenarios never reported in detail.
+- **One Markdown file per scenario** (`*.md` at any depth of the store, not under `.git`; a symlink to a
+  file counts, a UTF-8 byte order mark is ignored), with front
   matter between two `---` lines: `id` (unique in the store), `title`, `spec` (the spec sections it
   covers), `tags`, `required: true|false` (required scenarios must pass, the rest are scored). The body
   describes the user and their goal, the preconditions and fixtures, the steps, and what "satisfied"
@@ -411,8 +413,9 @@ the **scenario store**: where the scenarios live and what a valid one is. Nothin
   that is not a number from 0 to 1. It notes a store that does not exist yet, or one inside the
   repository (the coding agents can read it there).
 - The functions (`scripts/lib/scenarios.sh`): `dl_scenarios_on`, `dl_scenarios_dir`,
-  `dl_scenarios_files`, `dl_scenario_field`, `dl_scenario_list`, `dl_scenario_problems`,
-  `dl_scenarios_validate`, `dl_scenarios_count`, `dl_scenarios_required_count`.
+  `dl_scenarios_files`, `dl_scenario_front`, `dl_scenario_field`, `dl_scenario_list`,
+  `dl_scenario_problems`, `dl_scenarios_validate`, `dl_scenarios_count`, `dl_scenarios_required_count`,
+  `dl_scenarios_share_ok`.
 
 ## Configuration: `.dev-loop.json`
 
