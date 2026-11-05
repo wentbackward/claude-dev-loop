@@ -1919,7 +1919,7 @@ required: false
 ---
 body
 EOF
-scenario dup.md <<'EOF'
+scenario same-id.md <<'EOF'
 ---
 id: login
 title: Same id as login.md
@@ -1978,7 +1978,7 @@ expect "paths.sh scenarios expands ~ and <repo> in scenarios.dir" "$HOME/stores/
 expect "the library knows when scenarios are configured" "on off" \
   "$(scenlib 'dl_scenarios_on && echo on || echo off') $(scen_config="$work/scen-none.json" scenlib 'dl_scenarios_on && echo on || echo off')"
 expect "the library lists the Markdown files of the store, sorted, subfolders included, .git left out" \
-  "billing/invoice.md crlf.md dup.md empty.md login.md maybe.md no-id.md no-required.md no-title.md open.md plain.md" \
+  "billing/invoice.md crlf.md empty.md login.md maybe.md no-id.md no-required.md no-title.md open.md plain.md same-id.md" \
   "$(scenlib 'dl_scenarios_files "$(dl_scenarios_dir)"' | sed "s#^$scen/##" | paste -sd' ' -)"
 expect "a store that does not exist lists no files" "" "$(scenlib 'dl_scenarios_files /nonexistent/store')"
 expect "the library reads front-matter fields, without quotes or comments" "login|A returning user logs in|true" \
@@ -1997,7 +1997,7 @@ invalid() { # invalid FILE REASON: the validation names FILE with REASON
 }
 invalid no-id.md "missing id"
 invalid no-title.md "missing title"
-invalid dup.md "duplicate id login (also in login.md)"
+invalid same-id.md "duplicate id login (also in login.md)"
 invalid maybe.md 'required: "yes" is not true or false'
 invalid no-required.md 'required: "" is not true or false'
 invalid crlf.md 'required: "TRUE" is not true or false'
@@ -2005,7 +2005,7 @@ invalid empty.md "empty body"
 invalid plain.md "no front matter"
 invalid open.md "front matter is not closed"
 for good in login.md billing/invoice.md; do
-  printf '%s\n' "$out" | grep -qF "$good" && fail "validation reports the valid $good" || pass "validation accepts the valid $good"
+  printf '%s\n' "$out" | awk -F'\t' -v f="$good" '$1 == f { found = 1 } END { exit !found }' && fail "validation reports the valid $good" || pass "validation accepts the valid $good"
 done
 expect "validation fails when a file is invalid" "rc=1" "$(printf '%s\n' "$out" | tail -n 1)"
 expect "validation prints one line per problem, file then reason" 9 "$(printf '%s\n' "$out" | grep -c $'^[^\t]*\.md\t')"
@@ -2019,7 +2019,7 @@ echo "$out" | grep -E "^ +scenarios +$scen\$" >/dev/null && pass "doctor prints 
 echo "$out" | grep -E "^ +scenarios +11 files, 2 required" >/dev/null && pass "doctor prints the count and the required count" ||
   fail "no count line: $out"
 expect "doctor reports each invalid scenario file as MISSING" 9 "$(echo "$out" | grep -c "^MISSING scenario ")"
-echo "$out" | grep -qF "MISSING scenario dup.md: duplicate id login" && pass "doctor names the file and the reason" ||
+echo "$out" | grep -qF "MISSING scenario same-id.md: duplicate id login" && pass "doctor names the file and the reason" ||
   fail "no reason in doctor: $out"
 printf '{"checks": ["true"], "scenarios": {"dir": "%s", "pass": 2, "min_satisfaction": "high", "sealed": 0.2}}\n' "$scen" >"$work/scen-bad.json"
 out=$(DEV_LOOP_CONFIG="$work/scen-bad.json" "$plugin/scripts/doctor.sh" 2>&1)
@@ -2042,8 +2042,8 @@ expect "doctor's output without scenarios is unchanged by an empty store directo
 rmdir "$DEV_LOOP_HOME/project/scenarios"
 example="$plugin/templates/scenario.md"
 mkdir -p "$work/scen-example" && cp "$example" "$work/scen-example/"
-expect "the example scenario in templates/ is valid" "rc=0" \
-  "$(scenlib 'dl_scenarios_validate "$1"; echo "rc=$?"' "$work/scen-example")"
+expect "the example scenario in templates/ is valid" "1 rc=0" \
+  "$(scenlib 'echo "$(dl_scenarios_count "$1") $(dl_scenarios_validate "$1"; echo "rc=$?")"' "$work/scen-example")"
 grep -qF "scenarios.dir" "$plugin/README.md" && grep -qF "min_satisfaction" "$plugin/README.md" &&
   grep -qF "templates/scenario.md" "$plugin/README.md" && pass "the README documents the scenario keys and the example" ||
   fail "the README lacks the scenario keys"
