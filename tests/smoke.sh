@@ -2163,5 +2163,60 @@ grep -qi "scenario" "$plugin/templates/settings.json" && fail "templates/setting
 grep -qF "agent-type guard" "$plugin/README.md" && grep -qF "no access to the scenarios repository" "$plugin/README.md" &&
   pass "the README explains the agent-type guard and the identity-mode note" || fail "the README lacks the isolation section"
 
+# Scenario writer and the orchestrator's scenario steps (#33): the writer brief writes only to the
+# store, from the spec; no implementer, test-engineer or code-reviewer brief or prompt names the store;
+# doctor's models line gains scenario-writer only when scenarios are on (or it is set).
+writer="$plugin/agents/scenario-writer.md"
+skill="$plugin/skills/dev-loop/SKILL.md"
+if [ -f "$writer" ]; then pass "the scenario-writer agent exists"; else fail "no agents/scenario-writer.md"; fi
+grep -qE '^tools: Read, Grep, Glob, Write, Edit, Bash$' "$writer" 2>/dev/null && pass "the writer has the file tools and Bash" ||
+  fail "the writer's tools line is not Read, Grep, Glob, Write, Edit, Bash"
+grep -qF "paths.sh scenarios" "$writer" 2>/dev/null && pass "the writer finds the store with paths.sh scenarios" ||
+  fail "the writer brief does not name paths.sh scenarios"
+grep -qF "You write only inside the scenario store" "$writer" 2>/dev/null && pass "the writer brief says it writes only to the store" ||
+  fail "the writer brief does not limit its writes to the store"
+grep -qF "never from the code" "$writer" 2>/dev/null && grep -qF "never implement" "$writer" 2>/dev/null &&
+  pass "the writer brief writes from the spec, never from the code, and never implements" ||
+  fail "the writer brief lacks 'never from the code' or 'never implement'"
+for brief in implementer test-engineer code-reviewer; do
+  if grep -qiE 'scenarios\.dir|paths\.sh scenarios|scenario store|holdout' "$plugin/agents/$brief.md"; then
+    fail "the $brief brief names the scenario store"
+  else pass "the $brief brief never names the scenario store"; fi
+done
+# The prompt templates the skill fills for the coding agents (fenced blocks opening with these words).
+coder_prompts=$(awk '/^```/ { if (inblock) { inblock = 0; keep = 0 } else { inblock = 1; first = 1 }; next }
+  inblock && first { first = 0; keep = ($0 ~ /^(Implement ticket|Review branch|Write the failing tests)/) }
+  inblock && keep' "$skill")
+[ -n "$coder_prompts" ] && pass "the skill's implementer and reviewer prompt templates are found" || fail "no prompt templates found"
+if printf '%s\n' "$coder_prompts" | grep -qiE 'scenario'; then fail "a coding agent's prompt template mentions scenarios"
+else pass "no implementer or reviewer prompt template mentions scenarios"; fi
+section=$(awk '/^## / { on = ($0 ~ /^## [0-9a-z]*\.? ?Scenarios/) } on' "$skill")
+[ -n "$section" ] && pass "the dev-loop skill has a Scenarios section" || fail "no Scenarios section in the dev-loop skill"
+for phrase in "scenario-writer" "models.scenario-writer" "at ticket creation" "titles only" "missing behaviour" \
+  "never put the store path"; do
+  printf '%s\n' "$section" | grep -qiF "$phrase" && pass "the Scenarios section covers: $phrase" ||
+    fail "the Scenarios section lacks: $phrase"
+done
+writer_model() { # writer_model CONFIG: the models line of doctor.sh
+  DEV_LOOP_CONFIG="$1" "$plugin/scripts/doctor.sh" 2>&1 | grep -E '^ +models +'
+}
+printf '{"checks": ["true"], "scenarios": {}, "models": {"scenario-writer": "sonnet"}}\n' >"$work/writer-on.json"
+writer_model "$work/writer-on.json" | grep -qF "scenario-writer=sonnet" && pass "doctor's models line lists scenario-writer" ||
+  fail "no scenario-writer in the models line: $(writer_model "$work/writer-on.json")"
+printf '{"checks": ["true"], "scenarios": {}}\n' >"$work/writer-default.json"
+writer_model "$work/writer-default.json" | grep -qF "scenario-writer=inherit" &&
+  pass "doctor lists scenario-writer=inherit when scenarios are on and no model is set" || fail "no scenario-writer=inherit"
+printf '{"checks": ["true"]}\n' >"$work/writer-off.json"
+writer_model "$work/writer-off.json" | grep -qF "scenario-writer" && fail "doctor lists scenario-writer without scenarios" ||
+  pass "doctor's models line is unchanged without scenarios"
+printf '{"checks": ["true"], "models": {"scenario-writer": "gpt"}}\n' >"$work/writer-bad.json"
+DEV_LOOP_CONFIG="$work/writer-bad.json" "$plugin/scripts/doctor.sh" 2>&1 |
+  grep -qF 'MISSING models.scenario-writer: "gpt"' && pass "doctor reports an unknown scenario-writer model, also without scenarios" ||
+  fail "no MISSING for models.scenario-writer"
+grep -qF "scenario-writer" "$plugin/README.md" && grep -qF "models.scenario-writer" "$plugin/README.md" &&
+  pass "the README documents the scenario writer and its model" || fail "the README lacks the scenario writer"
+awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on' "$plugin/CHANGELOG.md" | grep -qF "scenario-writer" &&
+  pass "the changelog names the scenario writer under Unreleased" || fail "no changelog entry for the scenario writer"
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
