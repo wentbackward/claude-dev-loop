@@ -32,14 +32,17 @@
     "implementer": "inherit",
     "code-reviewer": "sonnet",
     "test-engineer": "sonnet",
-    "verifier": "haiku"
+    "verifier": "haiku",
+    "doc-auditor": "sonnet"
   },
   "deploy": "",
   "docs": {
     "aspects": {},
     "planned": "",
     "map": [],
-    "max_lines": 1000
+    "max_lines": 1000,
+    "prd": [],
+    "audit_every": 10
   },
   "architecture": {
     "cards": "docs/architecture/",
