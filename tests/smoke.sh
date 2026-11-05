@@ -2148,6 +2148,16 @@ for dir in '' '~/stores/<repo>/scen' 'rel/<repo>' "$iso/abs" number; do
   done
 done
 expect "isolation: the guard resolves scenarios.dir exactly like paths.sh scenarios" 10 "$same"
+nul_event='{"tool_name": "Read", "cwd": "'"$iso/guardproj-1"'", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "/x\u0000y"}}'
+expect "isolation: a NUL byte in a Read path is refused" 2 \
+  "$(printf '%s' "$nul_event" | HOME="$iso_home" CLAUDE_PROJECT_DIR="$iso/guardproj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+nul_event='{"tool_name": "Bash", "cwd": "'"$iso/guardproj-1"'", "agent_type": "dev-loop:test-engineer", "tool_input": {"command": "cat /x\u0000y"}}'
+expect "isolation: a NUL byte in a Bash command is refused" 2 \
+  "$(printf '%s' "$nul_event" | HOME="$iso_home" CLAUDE_PROJECT_DIR="$iso/guardproj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+outside_event='{"tool_name": "Bash", "cwd": "'"$iso_home"'", "agent_type": "dev-loop:implementer", "tool_input": {"command": "cat .dev-loop/guardproj/holdout/a.md"}}'
+expect "isolation: from a cwd outside any repository the store comes from the project directory" 2 \
+  "$(printf '%s' "$outside_event" | HOME="$iso_home" DEV_LOOP_HOME="$iso_home/.dev-loop" CLAUDE_PROJECT_DIR="$iso/guardproj-1" \
+    "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
 grep -qi "scenario" "$plugin/templates/settings.json" && fail "templates/settings.json has a scenario deny rule (it would block the judge)" ||
   pass "templates/settings.json has no deny rule that would block the scenario-judge"
 grep -qF "agent-type guard" "$plugin/README.md" && grep -qF "no access to the scenarios repository" "$plugin/README.md" &&
