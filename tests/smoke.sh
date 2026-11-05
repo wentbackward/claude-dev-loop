@@ -1223,6 +1223,12 @@ $(reason_of "- n/a") $(reason_of "* TODO") $(reason_of -) $(reason_of "TBD") $(r
 $(reason_of "N/A" "- none") $(reason_of "none: no architecture change")"
 expect "a sentence is a reason, also next to a placeholder" "yes yes" \
   "$(reason_of "- core reads the ui theme until #95 moves it down") $(reason_of "none" "core needs util for dates")"
+expect "reworded placeholders are not reasons" "no no no no no no no no no no" "$(reason_of "none (not configured)") \
+$(reason_of "n/a (not applicable)") $(reason_of "none, n/a") $(reason_of "- none needed") $(reason_of "nothing to report") \
+$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, core must read the ui theme") \
+$(reason_of "no changes") $(reason_of "TODO; later")"
+expect "sentences that start with a placeholder word are reasons" "yes yes" \
+  "$(reason_of "- no-op rename of the util glob") $(reason_of "None of the edges cross a layer; store reads ui types")"
 
 # The gate: a loosening edit without a reason is red, with a placeholder red, with a reason green.
 git push -q -u origin feat/110-depends 2>/dev/null
@@ -1265,6 +1271,33 @@ git checkout -q feat/119-fixes && : >docs/architecture/baseline.txt && git commi
   git push -q origin feat/119-fixes && git checkout -q main
 gate_arch "$work/arch.json" feat/119-fixes >/dev/null
 expect "a branch that fixes baseline entries and removes them is green" "0 TRAIN GREEN" "$rc $(echo "$out" | tail -n 1)"
+
+# A renamed component's old violations show as hidden, and the message says so.
+sed 's/^component: store$/component: storage/' docs/architecture/store.md >store.new && mv store.new docs/architecture/store.md
+sed 's/^depends_on: store$/depends_on: storage/' docs/architecture/core.md >core.new && mv core.new docs/architecture/core.md
+loosen feat/121-rename
+echo "$out" | grep -q "renamed or removed component" && pass "hidden violations may be a renamed component's, the message says" ||
+  fail "rename message: $out"
+
+# A branch that changes "architecture" in .dev-loop.json needs a reason too.
+git checkout -q -B feat/122-config origin/main
+jq '. + {"architecture": {"check": "true"}}' .dev-loop.json >cfg.new && mv cfg.new .dev-loop.json
+git commit -q -am "chore: switch the architecture check off" && git push -q -u origin feat/122-config
+git checkout -q main
+notes122=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" notes feat/122-config)
+rm -f "$notes122" "$work/arch-checks-ran"
+gate_arch "$work/arch.json" feat/122-config >/dev/null
+expect "a branch that changes the architecture config without a reason is red" "1 TRAIN RED" \
+  "$rc $(echo "$out" | tail -n 1)"
+echo "$out" | grep "arch-check red for feat/122-config" | grep -F ".dev-loop.json" | grep -qF "## Architecture" &&
+  pass "the message names the branch, the config and the notes section" || fail "config message: $out"
+[ ! -e "$work/arch-checks-ran" ] && pass "an architecture config change stops the train before the checks" ||
+  fail "the checks ran after an architecture config change"
+printf 'feat: x (#122)\n\n## Architecture\n- the edge scan moves to the new tool in #123\n' >"$notes122"
+gate_arch "$work/arch.json" feat/122-config >/dev/null
+expect "a branch that changes the architecture config with a reason is green" "0 TRAIN GREEN" \
+  "$rc $(echo "$out" | tail -n 1)"
+rm -f "$notes122"
 expect "no line of the implementer's steps is over 110 characters" "" "$(awk 'FNR > 5 && length > 110' "$plugin/agents/implementer.md")"
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
