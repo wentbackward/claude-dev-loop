@@ -21,6 +21,9 @@
 #                       DEV_LOOP_STOP_GRACE_SECONDS, default 10); they print as "<name> stopped", or
 #                       with their rc when they had ended with 0. A SIGTERM, SIGINT or SIGHUP to this
 #                       script in parallel mode stops the running checks the same way (TRAIN RED).
+#   "docs": {"aspects", "map", ...}  right after stacking, run docs-check.sh for each branch on its own
+#                       commits (from the train ref below it, or the base) with its notes file; a red branch
+#                       is named and the train ends TRAIN RED before gate_setup and the checks.
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
 # longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
@@ -90,6 +93,33 @@ for branch in "$@"; do
   records+="$branch $source_head $(git rev-parse HEAD) pending"$'\n'
   echo "stacked $branch -> $(git rev-parse --short HEAD)"
 done
+
+# shellcheck source=lib/docs.sh
+. "$scripts_dir/lib/docs.sh"
+
+# check_docs: with "docs" configured, docs-check.sh on each branch's own commits (from the train ref below
+# it, or the base, to its train ref) with its notes file; a red branch ends the train before the checks.
+check_docs() {
+  local branch from="$DL_REMOTE/$DL_BASE" out rc red=""
+  for branch in "$@"; do
+    out=$("$scripts_dir/docs-check.sh" "$from" "train-$branch" "$(dl_note_file "$branch")" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "docs-check red for $branch ($(git rev-parse --short "$from")..$(git rev-parse --short "train-$branch")):"
+      printf '%s\n' "$out" | sed 's/^/  /'
+      [ "$rc" -eq 1 ] || { git checkout -q --detach "$DL_REMOTE/$DL_BASE"; exit 2; }
+      red=yes
+    fi
+    from="train-$branch"
+  done
+  if [ -n "$red" ]; then
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    echo "TRAIN RED"
+    exit 1
+  fi
+  echo "docs-check green for $# branch(es)"
+}
+dl_docs_on && check_docs "$@"
 
 if [ -n "$(cfg affected "")" ]; then
   DL_CHANGED_FILES="$logs/train-changed-files.txt"

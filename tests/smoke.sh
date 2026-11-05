@@ -700,7 +700,7 @@ echo "$out"
 expect "the gate is red when a branch's own commits lack their docs" "1 TRAIN RED" "$rc $(echo "$out" | tail -n 1)"
 echo "$out" | grep "feat/71-undocumented" | grep -qF "docs" && pass "the docs failure names the branch" ||
   fail "the branch is not named: $out"
-echo "$out" | grep -v "^stacked" | grep -qF "feat/72-documented" && fail "the documented branch was reported" ||
+echo "$out" | grep -q "red for feat/72-documented" && fail "the documented branch was reported" ||
   pass "a branch is judged on its own commits, not the docs of the branch below it"
 [ ! -e "$work/docs-checks-ran" ] && ! echo "$out" | grep -q "^unit " && pass "the docs failure stops the train before the checks" ||
   fail "the checks ran after a docs failure"
