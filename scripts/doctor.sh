@@ -249,9 +249,7 @@ else
   models=""
   agents="implementer code-reviewer test-engineer verifier doc-auditor architect"
   # The scenario agents are listed when scenarios are on or their model is set, so the line is unchanged without.
-  for agent in scenario-writer; do
-    { dl_scenarios_on || [ -n "$(cfg "models.$agent" "")" ]; } && agents="$agents $agent"
-  done
+  { dl_scenarios_on || [ -n "$(cfg models.scenario-writer "")" ]; } && agents="$agents scenario-writer"
   for agent in $agents; do
     model=$(cfg "models.$agent" inherit)
     case $model in

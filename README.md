@@ -98,6 +98,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `verifier` | read-only audit of a real run's outputs |
 | agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift |
 | agent | `architect` | read-only architecture review from the merge evidence; refactoring tickets and extraction-ladder steps |
+| agent | `scenario-writer` | writes the holdout scenarios for a ticket in the scenario store, from the spec (see Holdout scenarios) |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
@@ -376,8 +377,8 @@ right ones. It reads evidence, not impressions:
 
 The gate proves that the tests pass, not that the software does what its users need. Holdout scenarios are
 end-to-end user scenarios kept outside the codebase, where the coding agents never see them. This part is
-the **scenario store**: where the scenarios live and what a valid one is, and the guard that keeps it from
-the coding agents. Nothing runs the scenarios yet.
+the **scenario store** (where the scenarios live and what a valid one is), the guard that keeps it
+from the coding agents, and the **scenario writer**. Nothing runs the scenarios yet.
 
 ```json
 "scenarios": {
@@ -441,6 +442,27 @@ agents as an OS user that cannot read the store.
 implementer, tester and reviewer apps get no access to the scenarios repository: do not install them on
 it, so their tokens cannot read it even outside the local guard.
 
+### Writing scenarios
+
+With `scenarios` configured, the orchestrator (the `dev-loop` skill, section 1b)
+runs the `scenario-writer` agent (`models.scenario-writer`) at ticket creation, before the implementer
+starts:
+
+- **The writer** reads the ticket and the spec sections it cites, never the code, and writes or updates
+  scenario files in the store (`paths.sh scenarios`) in the format above. It writes only inside the store
+  (its brief's rule; its tools include Bash and Write, which could write elsewhere), never implements and
+  never edits the repository. It stops when the store lies inside the repository.
+- **The issue** gets the new and changed scenarios as titles only (`id`, title, `required`, new or
+  changed), never their text. The user reviews and edits the scenarios in the store.
+- **A red scenario** goes back to the implementer as the behaviour that was missing, in one line in user
+  terms, never the scenario's text; a sealed one is only counted.
+- **Isolation:** the role guard refuses the store to the implementer, test-engineer and code-reviewer and
+  allows the `scenario-writer` (see Isolation above). On top of it, the orchestrator never puts the store
+  path or a scenario's text in those agents' prompts, and their briefs never name the store
+  (smoke-tested), so they are not sent looking for it.
+- **`doctor.sh`** lists `scenario-writer` in its models line when `scenarios` is on or
+  `models.scenario-writer` is set; without either the line is unchanged.
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -471,7 +493,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |
 | `cleanup.stale_days`, `cleanup.keep_days` | `14`, `30` | `cleanup.sh`: when a branch without PR or open issue is stale; how long merged notes and old gate logs are kept |
-| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`, `architect`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
+| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`, `architect`, `scenario-writer`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
@@ -501,7 +523,7 @@ to a large one:
 
 ```json
 "models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku",
-            "doc-auditor": "sonnet", "architect": "opus" }
+            "doc-auditor": "sonnet", "architect": "opus", "scenario-writer": "opus" }
 ```
 
 The orchestrator passes the model on every agent launch (the Agent tool's `model` parameter, which takes

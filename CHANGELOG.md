@@ -26,6 +26,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   are allowed. Best effort; the README explains the limits and that in identity mode the coding apps get no
   access to a scenarios repository. `templates/settings.json` has no deny rule for the store (it would block
   the judge).
+- A `scenario-writer` agent (#33, part 4 of #2): with `scenarios` configured, the orchestrator runs it at
+  ticket creation; it writes or updates scenarios in the store from the spec and the ticket, never from
+  the code, and writes only inside the store. The `dev-loop` skill's new section 1b lists the new and
+  changed scenarios in the issue (titles only), sends a red scenario to the implementer as the missing
+  behaviour only, and never puts the store path in an implementer, test-engineer or code-reviewer
+  prompt. `models.scenario-writer`; `doctor.sh` lists it in the models line when `scenarios` is on or the
+  model is set.
 
 ## 0.6.0 — 2026-11-05
 
