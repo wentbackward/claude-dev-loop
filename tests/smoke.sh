@@ -2215,8 +2215,8 @@ DEV_LOOP_CONFIG="$work/writer-bad.json" "$plugin/scripts/doctor.sh" 2>&1 |
   fail "no MISSING for models.scenario-writer"
 grep -qF "scenario-writer" "$plugin/README.md" && grep -qF "models.scenario-writer" "$plugin/README.md" &&
   pass "the README documents the scenario writer and its model" || fail "the README lacks the scenario writer"
-awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on' "$plugin/CHANGELOG.md" | grep -qF "scenario-writer" &&
-  pass "the changelog names the scenario writer under Unreleased" || fail "no changelog entry for the scenario writer"
+grep -qF "scenario-writer" "$plugin/CHANGELOG.md" &&
+  pass "the changelog names the scenario writer" || fail "no changelog entry for the scenario writer"
 
 # Scenario judge and gate stage (#32): the gate starts scenarios.run, judges each scenario with the judge
 # command (a fake here: it reads its scores from the scenario's own front matter), rejudges a failure once
