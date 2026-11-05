@@ -2092,11 +2092,11 @@ expect "isolation: the implementer may not cat the store via ~" 2 \
 expect "isolation: the tester may not list the store via \$HOME" 2 \
   "$(sguard dev-loop:test-engineer Bash command 'ls "$HOME/.dev-loop/guardproj/holdout"')"
 expect "isolation: a relative path into the store is refused" 2 \
-  "$(sguard dev-loop:implementer Bash command 'cat holdout/a.md' "$iso_home/.dev-loop/guardproj")"
+  "$(sguard dev-loop:implementer Bash command 'cat ../../iso-home/.dev-loop/guardproj/holdout/a.md')"
 expect "isolation: a relative path after cd into the store's parent is refused" 2 \
   "$(sguard dev-loop:implementer Bash command "cd $iso_home/.dev-loop/guardproj && grep -r x holdout")"
 expect "isolation: a relative Read path into the store is refused" 2 \
-  "$(sguard dev-loop:code-reviewer Read file_path 'holdout/a.md' "$iso_home/.dev-loop/guardproj")"
+  "$(sguard dev-loop:code-reviewer Read file_path '../../iso-home/.dev-loop/guardproj/holdout/a.md')"
 expect "isolation: a Read through a symlink to the store is refused" 2 "$(sguard dev-loop:implementer Read file_path "$iso/peek/a.md")"
 expect "isolation: a cat of a symlink to a scenario file is refused" 2 \
   "$(sguard dev-loop:implementer Bash command "cat $iso/peek-file")"
@@ -2135,8 +2135,9 @@ expect "isolation: a relative scenarios.dir is the main worktree's, also from a 
 expect "isolation: a relative scenarios.dir does not cover the linked worktree's copy" 0 \
   "$(sguard dev-loop:implementer Read file_path "$iso/guardproj-1/holdout/x.md" "" "$iso/relative.json")"
 same=0
-for dir in '' '~/stores/<repo>/scen' 'rel/<repo>' "$iso/abs" '"x"'; do
-  if [ "$dir" = '"x"' ]; then printf '{"scenarios": {"dir": 7}}\n'; elif [ -z "$dir" ]; then printf '{"scenarios": {}}\n'
+# shellcheck disable=SC2088  # the literal ~ is the config value under test
+for dir in '' '~/stores/<repo>/scen' 'rel/<repo>' "$iso/abs" number; do
+  if [ "$dir" = number ]; then printf '{"scenarios": {"dir": 7}}\n'; elif [ -z "$dir" ]; then printf '{"scenarios": {}}\n'
   else printf '{"scenarios": {"dir": "%s"}}\n' "$dir"; fi >"$iso/sync.json"
   for at in "$iso/guardproj" "$iso/guardproj-1"; do
     from_bash=$(cd "$at" && HOME="$iso_home" DEV_LOOP_HOME="$iso_home/dlh" DEV_LOOP_CONFIG="$iso/sync.json" "$plugin/scripts/paths.sh" scenarios)
