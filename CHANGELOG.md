@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.4.0 — 2026-11-05
 
 - Gate options, all off by default (the gate behaves exactly as before without them):
   - `affected`: a check entry (or plain command) run first, after `gate_setup`, with `DL_CHANGED_FILES`
