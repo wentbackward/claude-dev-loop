@@ -48,3 +48,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** preferring the local branch when it is ahead (would read a config the gate does not
   check, from unpushed commits); falling back to the local branch when the other remote lacks it (the
   gate then fails later with a less clear message).
+
+## 2026-11-05 — Self-ignoring caches (#11): which folders may be judged file by file
+
+- **Decision:** a new key `merge.rebuildable_caches` (default `node_modules .venv venv __pycache__
+  .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache`) names the folders whose files
+  count as build output one by one, when git lists them individually (a cache with its own `.gitignore`).
+  A name counts that way only when it is also in `merge.rebuildable`, which keeps its meaning (whole
+  entries, default the output folders plus the caches); output folders (`dist build target out coverage
+  htmlcov .coverage`) count only as a whole entry, as before. Secret and data names are one list
+  (`DL_SECRET_PATTERNS` in `scripts/lib/common.sh`), matched without regard to case both on a listed entry
+  and by the scan inside a rebuildable directory.
+- **Reason:** results in an output folder that ignores itself (`out/results.csv`) are not rebuildable,
+  while a tool cache's files always are; a separate key leaves existing `merge.rebuildable` settings
+  meaning what they did, and requiring both keys means removing a name from `merge.rebuildable` always
+  keeps its files.
+- **Alternatives:** one list with the ancestor rule for every name (deletes results under `build/`); a
+  fixed cache list without a key (no way to add a project's own cache); a marker per entry in
+  `merge.rebuildable` (changes the shape of an existing key).
