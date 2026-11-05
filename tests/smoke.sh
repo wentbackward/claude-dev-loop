@@ -498,9 +498,21 @@ git worktree add -q "$work/wt52" feat/52-output && printf 'build/\n' >>"$(git re
   rm "$work/wt52/w52.txt.bak"
 branch_on feat/51-build w51.txt && note_for feat/51-build
 git worktree add -q "$work/wt51" feat/51-build && mkdir -p "$work/wt51/web/node_modules/pkg" && echo x >"$work/wt51/web/node_modules/pkg/i.js"
+# Self-ignoring caches (their own .gitignore with *) list their files one by one; they are build output too.
+branch_on feat/53-caches w53.txt && note_for feat/53-caches
+git worktree add -q "$work/wt53" feat/53-caches && mkdir -p "$work/wt53/.ruff_cache/0.1" "$work/wt53/.pytest_cache/v" \
+  "$work/wt53/node_modules/pkg" && echo '*' >"$work/wt53/.ruff_cache/.gitignore" &&
+  echo 'Signature: 8a477f597d28d172789f06886806bc55' >"$work/wt53/.ruff_cache/CACHEDIR.TAG" &&
+  echo x >"$work/wt53/.ruff_cache/0.1/123" && echo '*' >"$work/wt53/.pytest_cache/.gitignore" &&
+  echo x >"$work/wt53/.pytest_cache/v/lastfailed" && echo x >"$work/wt53/node_modules/pkg/i.js"
+branch_on feat/54-cache-key w54.txt && note_for feat/54-cache-key
+git worktree add -q "$work/wt54" feat/54-cache-key && mkdir -p "$work/wt54/.ruff_cache" &&
+  echo '*' >"$work/wt54/.ruff_cache/.gitignore" && echo KEY >"$work/wt54/.ruff_cache/x.pem"
 git branch -q train-person-work origin/main
-"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output >/dev/null 2>&1
-out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output 2>&1)
+"$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
+  feat/54-cache-key >/dev/null 2>&1
+out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
+  feat/54-cache-key 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
 echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
@@ -509,11 +521,17 @@ echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ign
   pass "merge-train removes a worktree whose ignored files are only build output" || fail "build-only worktree kept: $out"
 [ -f "$work/wt52/build/local.env" ] && pass "a file inside an ignored build directory that is not all output keeps its worktree" ||
   fail "wt52 removed: $out"
+[ ! -d "$work/wt53" ] && [ -z "$(git branch --list feat/53-caches)" ] &&
+  pass "merge-train removes a worktree holding only self-ignoring caches, .pytest_cache and node_modules" ||
+  fail "cache-only worktree kept: $out"
+echo "$out" | grep -q "kept local feat/54-cache-key: its worktree $work/wt54 holds ignored files that are not build output (.ruff_cache/x.pem)" &&
+  [ -f "$work/wt54/.ruff_cache/x.pem" ] && pass "a key inside a self-ignoring cache keeps its worktree" ||
+  fail "wt54: $out"
 [ -n "$(git branch --list train-person-work)" ] && pass "the gate never deletes a person's train-* branch" ||
   fail "the gate deleted train-person-work"
 git worktree unlock "$work/wt48" && git worktree remove --force "$work/wt48" && git worktree remove --force "$work/wt49"
 git branch -q -D train-person-work
-git worktree remove --force "$work/wt52"
+git worktree remove --force "$work/wt52" && git worktree remove --force "$work/wt54"
 
 # Leftovers from before the ledger: merged by PR, replayed, moved on, closed, not planned, open, stale.
 gh_pr() { gh pr create --head "$1" --title "$1" --body-file /dev/null >/dev/null; }
