@@ -22,13 +22,14 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`, `doc-auditor`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   `verifier`, `doc-auditor`, `architect`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
    agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
 5. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
    written, agents to resume) before starting new work. With `docs.prd`, slice the next part of the gap
-   into tickets (section 1a).
+   into tickets (section 1a). With `architecture`, run `${CLAUDE_PLUGIN_ROOT}/scripts/arch-evidence.sh`
+   and start the architect when it exits 1 (section 7b).
 6. `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run): when it reports merged or helper branches, run
    it with `--apply`. Show the user the "closed" and "stale" lists and delete those (`--apply --include
    closed`, `--include stale`) only on their OK, unless `factory` is `dark`. It never touches kept
@@ -130,7 +131,7 @@ context. Agents are disposable:
   latest must-fix list, after 3 review rounds, or when it reports that its context was compacted or it has
   lost track of the work.
 - **Code-reviewer: a fresh agent for every review round.** Never resume a reviewer.
-- **Test-engineer, verifier and doc-auditor: a fresh agent for every task.**
+- **Test-engineer, verifier, doc-auditor and architect: a fresh agent for every task.**
 
 ## 4. Review loop (every branch, before the gate)
 
@@ -196,6 +197,8 @@ approve again, then re-run merge-train with the remaining branches.
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
 line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
 notes `doc audit due`, run the doc audit (section 7a); when the planned list runs low, slice (section 1a).
+With `architecture`, when `doctor.sh` notes `architect due` (every `architecture.cadence` merges, or a
+signal over its threshold), run the architecture review (section 7b).
 A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
 user's OK.
 
@@ -228,7 +231,34 @@ Report: what you checked, the tickets you opened, what you could not check.
   `date -u +%Y-%m-%dT%H:%M:%SZ >"$(${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh doc-audit)"`. Its tickets join
   the queue like any other.
 
-## 7b. Before a release
+## 7b. Architecture review (`architecture` in `.dev-loop.json`)
+
+- Run `${CLAUDE_PLUGIN_ROOT}/scripts/arch-evidence.sh` (read-only; by default over the merges since the
+  architect last ran) at the start of a session and after every `architecture.cadence` merges (default
+  20; `doctor.sh` prints the merges since the last run and the signals over their thresholds, and notes
+  `architect due`). Start the architect when it exits 1 (a signal over its threshold), when the cadence is
+  reached, or when the user asks.
+- Launch a fresh `architect` agent (`model` from `models.architect`) with:
+
+```text
+Review the architecture of <absolute path of the main checkout> (on the latest <remote>/<base>).
+Evidence (arch-evidence.sh, merges since your last run): <its output, verbatim>. Factory mode: <factory>.
+Propose small refactoring tickets (behaviour unchanged, one finding each, the existing tests as the safety
+net) and extraction-ladder steps; step 3 (a separate repository or service) only as a question for the
+user. <Identity mode: open tickets as the tester, <plugin>/scripts/as-role.sh tester gh issue create ...>.
+Never edit files, merge or close tickets.
+Report: the signals and what they mean, the tickets you opened, the ladder steps, what you could not judge.
+```
+
+- After its report, record the run:
+  `date -u +%Y-%m-%dT%H:%M:%SZ >"$(${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh architect)"`.
+- File its tickets with the others. Refactoring tickets are scheduled next to feature work, not ahead of
+  it, unless a signal is red (a new cycle, a component far over budget, a ticket that keeps reopening).
+  Its card and Architecture doc changes go through the loop as a docs ticket.
+- **The extraction ladder's last step needs the user's go in every mode**, `factory: dark` included: ask
+  the user before filing or starting a ticket that moves a component to a separate repository or service.
+
+## 7c. Before a release
 
 The release itself (version, tag, GitHub release) happens only on the user's go. Before it:
 

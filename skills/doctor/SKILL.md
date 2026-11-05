@@ -45,6 +45,9 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note component over its line budget` | split the component, or raise its `max_lines` with a reason in the decisions log |
 | `note no component: <path>` | add the path to a card's `paths`, or leave it out of `architecture.check` |
 | `note architecture baseline: <n> entries` | known violations; each ticket that fixes one removes it |
+| `note architect due` | run the architecture review (the `dev-loop` skill's section 7b), then record the run as the note says |
+| `MISSING architecture.<threshold>: ...` | a whole number (`cadence` at least 1); the defaults are in the README |
+| `MISSING architect marker ...` | write one UTC time to it: `date -u +%Y-%m-%dT%H:%M:%SZ >"$(paths.sh architect)"` |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
