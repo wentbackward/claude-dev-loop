@@ -523,6 +523,10 @@ git worktree add -q "$work/wt57" feat/57-vendored && mkdir -p "$work/wt57/node_m
 branch_on feat/58-dep-env w58.txt && note_for feat/58-dep-env
 git worktree add -q "$work/wt58" feat/58-dep-env && mkdir -p "$work/wt58/node_modules/pkg" &&
   echo x >"$work/wt58/node_modules/pkg/credentials.js" && echo SECRET=x >"$work/wt58/node_modules/.env"
+# A .venv with its own .gitignore lists its folders one by one; vendored names in them are output too.
+branch_on feat/61-venv w61.txt && note_for feat/61-venv
+git worktree add -q "$work/wt61" feat/61-venv && mkdir -p "$work/wt61/.venv/lib/site/pkg" &&
+  echo '*' >"$work/wt61/.venv/.gitignore" && echo x >"$work/wt61/.venv/lib/site/pkg/credentials.py"
 # In an output folder ignored as a whole, broad names still keep the worktree (a false negative deletes).
 branch_on feat/59-build-creds w59.txt && note_for feat/59-build-creds
 git worktree add -q "$work/wt59" feat/59-build-creds && mkdir -p "$work/wt59/build" &&
@@ -533,10 +537,10 @@ git worktree add -q "$work/wt60" feat/60-dist-secrets && printf 'dist/\n' >>"$(g
 git branch -q train-person-work origin/main
 "$plugin/scripts/gate-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
   feat/54-cache-key feat/55-results feat/56-deep-key feat/57-vendored feat/58-dep-env \
-  feat/59-build-creds feat/60-dist-secrets >/dev/null 2>&1
+  feat/59-build-creds feat/60-dist-secrets feat/61-venv >/dev/null 2>&1
 out=$("$plugin/scripts/merge-train.sh" feat/48-locked feat/49-env feat/51-build feat/52-output feat/53-caches \
   feat/54-cache-key feat/55-results feat/56-deep-key feat/57-vendored feat/58-dep-env \
-  feat/59-build-creds feat/60-dist-secrets 2>&1)
+  feat/59-build-creds feat/60-dist-secrets feat/61-venv 2>&1)
 echo "$out" | grep -q "kept local feat/48-locked: its worktree $work/wt48 is locked" &&
   pass "merge-train keeps a branch whose worktree is locked" || fail "locked worktree: $out"
 echo "$out" | grep -q "kept local feat/49-env: its worktree $work/wt49 holds ignored files that are not build output (.env)" &&
@@ -562,6 +566,9 @@ echo "$out" | grep -q "kept local feat/56-deep-key: its worktree $work/wt56 hold
   fail "wt57 kept: $out"
 echo "$out" | grep -q "kept local feat/58-dep-env: its worktree $work/wt58 holds ignored files that are not build output (node_modules/.env)" &&
   [ -f "$work/wt58/node_modules/.env" ] && pass "a .env inside node_modules keeps its worktree" || fail "wt58: $out"
+[ ! -d "$work/wt61" ] && [ -z "$(git branch --list feat/61-venv)" ] &&
+  pass "merge-train removes a worktree whose self-ignoring .venv only holds vendored files named like secrets" ||
+  fail "wt61 kept: $out"
 echo "$out" | grep -q "kept local feat/59-build-creds: its worktree $work/wt59 holds ignored files that are not build output (build/" &&
   [ -f "$work/wt59/build/credentials.json" ] && [ -f "$work/wt59/build/id_rsa" ] &&
   pass "credentials and keys by a broad name in an ignored build folder keep their worktree" || fail "wt59: $out"
