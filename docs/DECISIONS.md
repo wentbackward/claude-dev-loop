@@ -349,3 +349,35 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** always listing `scenario-writer=inherit` (changes every project's doctor output);
   listing nothing in the issue (the user would not know what to review); showing the scenario text in the
   issue (leaks it to the implementer).
+
+## 2026-11-05 — Scenario stage (#32): contracts of run and judge, rejudge, sealed and affected rules
+
+- **Decision:** the stage is its own script, `scripts/scenario-stage.sh`, which `gate-train.sh` adds as
+  the last stage `scenarios` whenever `scenarios` is configured (so `parallel`, `fail_fast`, the log file
+  and the result line come for free); in sequential mode it is skipped when a check failed. `scenarios.run`
+  is started in its own process group; its first non-empty output line is the address
+  (`DL_SCENARIO_TARGET`), it may keep running or exit, it is stopped with a running judge (TERM to both process
+  groups, KILL after 2 s, so it fits in the gate's default 10 s grace period; under a 3 s grace the gate
+  may KILL the stage first and orphan the system's session, a limit we accept) when the stage ends, and ending or a silence of `scenarios.run_seconds` (120) before that line is red. The judge is a
+  shell command run once per scenario with `DL_SCENARIO_FILE`, `DL_SCENARIO_ID`, `DL_SCENARIO_TARGET` in
+  the environment; its verdict is its last stdout line starting with `{`, which must be a JSON object
+  with the scenario's own `id` and `satisfied` from 0 to 1; anything else, a non-zero exit, or a run
+  longer than `scenarios.judge_seconds` (600; its process group is stopped), scores 0.
+  The front matter's `required` counts, not the judge's. A run below `pass` is rejudged once and the better
+  run counts (for the decision and the mean). The mean is over every judged scenario. A scenario is sealed
+  when `cksum(id) mod 1000 < sealed * 1000`. With `affected`, a scenario runs when it is required or a
+  `spec` or `tags` item occurs (ignoring case) as a substring of a changed path. An invalid store is red
+  without naming files; an empty or missing store is green without starting the system. The default
+  judge is `claude -p "<prompt>" --agent dev-loop:scenario-judge [--model <models.scenario-judge>]
+  --no-session-persistence --permission-mode dontAsk --allowedTools=Read,Grep,Glob,Bash
+  --add-dir=<the scenario's folder>`: the prompt right after `-p` and `=` on the variadic options, which
+  would otherwise take the prompt as one more value.
+- **Reason:** the gate decides from plain numbers, so the agent can be replaced by any command and tested
+  with a fake; a per-id hash keeps the sealed set stable as the store grows and across affected subsets;
+  substring matching is the simplest rule that errs on judging more, not less; the stage log and the gate
+  summary are the only text meant for implementers, so they carry only ids, scores and `missing` lines.
+- **Alternatives:** inlining the stage in `gate-train.sh` (a larger script that other tickets edit); a
+  readiness probe or a `scenarios.stop` command (more config for what process groups already do); taking
+  the mean of the last runs (a flaky judge would lower the mean of a passing scenario); sealing the first
+  share in hash order (the set would change with the store's size); matching whole path segments (a
+  `spec: alerts` would miss `alert_rules.py`).

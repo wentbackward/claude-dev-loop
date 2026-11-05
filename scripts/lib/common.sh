@@ -157,6 +157,16 @@ cfg_len() {
   if [ -n "${DL_CONFIG:-}" ] && [ -f "$DL_CONFIG" ]; then json_len "$1" <"$DL_CONFIG"; else echo 0; fi
 }
 
+# dl_new_session COMMAND...: replace this (background) shell with the command as the leader of a new session,
+# so its process group id is the background job's pid ($!) and the whole group can be stopped at once.
+dl_new_session() {
+  if command -v setsid >/dev/null 2>&1; then
+    exec setsid "$@"
+  else
+    exec perl -MPOSIX -e 'POSIX::setsid() >= 0 or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' -- "$@"
+  fi
+}
+
 # dl_resolve PATH: an absolute path; relative paths resolve against the main worktree root.
 dl_resolve() {
   case "$1" in

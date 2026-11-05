@@ -22,7 +22,8 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`, `doc-auditor`, `architect`, `scenario-writer`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   `verifier`, `doc-auditor`, `architect`, `scenario-writer`; `scenario-judge` is used by the gate's scenario
+   stage, not launched by you) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
    agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
@@ -90,7 +91,10 @@ Report: per scenario the file, id, title, required, and new or changed; the open
 
 - **List them in the issue:** comment the new and changed scenarios on the ticket, titles only (`id`,
   title, `required`, new or changed), never a scenario's body, steps or file path: the implementer reads
-  the issue. Scenarios are where the user looks: they may edit them in the store, and their edits win.
+  the issue. Sealed scenarios (`scenarios.sealed`) are listed only as a count ("and 2 sealed scenarios"),
+  never by id or title. Tell them apart per file with `bash -c '. "$1/scripts/lib/common.sh"; .
+  "$1/scripts/lib/scenarios.sh"; dl_load_config; dl_scenario_sealed "$2"' _ ${CLAUDE_PLUGIN_ROOT} <file>`
+  (exit 0: sealed). Scenarios are where the user looks: they may edit them in the store, and their edits win.
 - **A red scenario goes to the implementer as the missing behaviour only:** one line in user terms
   ("closing a position leaves its alert active"), never the scenario's id, title, text, steps or file. A
   sealed scenario is never described, only counted.
@@ -203,6 +207,9 @@ the machine-wide heavy-job queue.
   cycle, budget), a broken card, baseline entries or card header edits that hide violations without a
   reason under `## Architecture` in its notes, or baseline entries it fixed but kept. Send the lines to
   its implementer, gate the rest.
+- **scenario <id> unsatisfied**: with `scenarios`, the running system missed a holdout scenario. Bisect
+  as for RED, then send the culprit's implementer only the `missing` text after the colon, never the
+  scenario, its id's file or the judge's evidence; sealed scenarios are only a count, never forwarded.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for

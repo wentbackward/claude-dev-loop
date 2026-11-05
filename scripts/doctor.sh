@@ -169,7 +169,7 @@ doctor_scenarios() {
   local dir key value file reason
   dir=$(dl_scenarios_dir)
   echo "        scenarios     $dir"
-  echo "        scenarios     run $(cfg scenarios.run none), pass $(cfg scenarios.pass 0.8), min_satisfaction $(cfg scenarios.min_satisfaction 0.9), sealed $(cfg scenarios.sealed 0)"
+  echo "        scenarios     run $(cfg scenarios.run none), judge $(cfg scenarios.judge "scenario-judge agent"), pass $(cfg scenarios.pass 0.8), min_satisfaction $(cfg scenarios.min_satisfaction 0.9), sealed $(cfg scenarios.sealed 0)"
   for key in pass min_satisfaction sealed; do
     value=$(cfg "scenarios.$key" "")
     [ -z "$value" ] || dl_scenarios_share_ok "$value" ||
@@ -225,8 +225,8 @@ else
       "{"*) name=$(cfg "checks.$i.name" "check-$((i + 1))") ;;
       *) name="check-$((i + 1))" ;;
     esac
-    if [ "$name" = affected ]; then
-      missing "check name \"affected\" is reserved for the affected stage (rename the check)"
+    if [ "$name" = affected ] || { [ "$name" = scenarios ] && dl_scenarios_on; }; then
+      missing "check name \"$name\" is reserved for the $name stage (rename the check)"
       continue
     fi
     log_name=${name//[^A-Za-z0-9_.-]/_}
@@ -250,6 +250,7 @@ else
   agents="implementer code-reviewer test-engineer verifier doc-auditor architect"
   # The scenario agents are listed when scenarios are on or their model is set, so the line is unchanged without.
   { dl_scenarios_on || [ -n "$(cfg models.scenario-writer "")" ]; } && agents="$agents scenario-writer"
+  { dl_scenarios_on || [ -n "$(cfg models.scenario-judge "")" ]; } && agents="$agents scenario-judge"
   for agent in $agents; do
     model=$(cfg "models.$agent" inherit)
     case $model in
@@ -266,7 +267,7 @@ else
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
   # Leftovers of a hand-built loop (the setup skill's "Migrate" step removes them).
-  for agent in implementer code-reviewer test-engineer verifier doc-auditor architect; do
+  for agent in implementer code-reviewer test-engineer verifier doc-auditor architect scenario-judge; do
     [ -f "$DL_ROOT/.claude/agents/$agent.md" ] &&
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done
