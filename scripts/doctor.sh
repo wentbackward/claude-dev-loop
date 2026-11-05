@@ -160,6 +160,34 @@ doctor_architect() {
   fi
 }
 
+# shellcheck source=lib/scenarios.sh
+. "$scripts_dir/lib/scenarios.sh"
+
+# doctor_scenarios: print the scenario store and its settings, the number of scenarios and of required ones;
+# report bad thresholds and each invalid scenario file; note a store inside the repository or not yet made.
+doctor_scenarios() {
+  local dir key value file reason
+  dir=$(dl_scenarios_dir)
+  echo "        scenarios     $dir"
+  echo "        scenarios     run $(cfg scenarios.run none), pass $(cfg scenarios.pass 0.8), min_satisfaction $(cfg scenarios.min_satisfaction 0.9), sealed $(cfg scenarios.sealed 0)"
+  for key in pass min_satisfaction sealed; do
+    value=$(cfg "scenarios.$key" "")
+    [ -z "$value" ] || dl_scenarios_share_ok "$value" ||
+      missing "scenarios.$key: \"$value\" is not a number from 0 to 1"
+  done
+  case "$dir/" in
+    "$DL_ROOT"/*) optional "the scenario store $dir is inside the repository: the coding agents can read it (keep it outside, e.g. ~/.dev-loop/<repo>/scenarios)" ;;
+  esac
+  if [ ! -d "$dir" ]; then
+    optional "scenario store $dir does not exist yet (create it and add scenarios like templates/scenario.md)"
+    return
+  fi
+  echo "        scenarios     $(dl_scenarios_count "$dir") files, $(dl_scenarios_required_count "$dir") required"
+  while IFS=$'\t' read -r file reason; do
+    [ -n "$file" ] && missing "scenario $file: $reason"
+  done < <(dl_scenarios_validate "$dir")
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
@@ -229,6 +257,7 @@ else
   echo "        models        $models"
   dl_docs_on && doctor_docs
   dl_arch_on && doctor_arch
+  dl_scenarios_on && doctor_scenarios
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
     ok ".claude/CLAUDE.md"
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi

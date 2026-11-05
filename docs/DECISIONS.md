@@ -283,3 +283,24 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** NUL-separated key lists (needs the shared NUL helpers another ticket is changing in
   `common.sh`); documenting newline keys as unsupported; `jq --seq` or `input` loops for strict parsing
   (more code, the same verdict).
+
+## 2026-11-05 — Scenario store (#30): format, defaults and what doctor reports
+
+- **Decision:** the store is on when `.dev-loop.json` has a `scenarios` key (`{}` uses the defaults), and
+  it is not in `templates/dev-loop.json`, since its presence turns it on. `scenarios.dir` defaults to the
+  state directory's `scenarios` folder (`~/.dev-loop/<repo>/scenarios`, so `DEV_LOOP_HOME` moves it too);
+  a configured `dir` expands `~` and `<repo>` (the repository's folder name) and resolves a relative path
+  against the main worktree. The store holds every `*.md` file at any depth except under `.git` (it may be
+  a git repository). The front matter is a YAML subset read by awk: `key: value` lines at the start of a
+  line, the first occurrence of a key wins, values in single or double quotes are taken up to the closing
+  quote, ` # comments` after unquoted values are dropped, lists are `[a, b]`, CRLF line ends are accepted.
+  `required` must be exactly `true` or `false`; a missing `required` is invalid too. A duplicate `id` is
+  reported on each later file in path order. The required count counts every file with `required: true`,
+  valid or not. `doctor.sh` reports invalid files and thresholds outside 0..1 as MISSING; a store that
+  does not exist yet or lies inside the repository is a note, since nothing runs the scenarios yet.
+- **Reason:** the smallest parser that reads the documented format without a YAML library (portable
+  bash and awk); a missing `required` is more likely an oversight than a choice, and the judge needs to
+  know which scenarios must pass.
+- **Alternatives:** a YAML library through python3 (a dependency for five keys); `required` defaulting to
+  `false` (a forgotten line would silently demote a scenario); a missing store as MISSING (it would make
+  doctor red for a project that has just turned the key on; the dark preset of #2 makes it MISSING there).

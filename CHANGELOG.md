@@ -13,6 +13,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   that is not a plain name (a newline in it) is named as its JSON string. Two different invalid files are
   flagged (raw text compared when neither side parses), and jq and python3 agree that trailing garbage and
   concatenated documents are unparseable.
+- A holdout scenario store (#30, part 1 of #2; off without `scenarios` in `.dev-loop.json`):
+  `scenarios.dir` (default `~/.dev-loop/<repo>/scenarios`), `run`, `pass`, `min_satisfaction`, `sealed`;
+  one Markdown file per scenario with front matter (`id`, `title`, `spec`, `tags`, `required`) and an
+  example in `templates/scenario.md`. `scripts/lib/scenarios.sh` lists, reads and validates the files;
+  `paths.sh scenarios` prints the store; `doctor.sh` prints the store and the counts and reports each
+  invalid file. Nothing runs the scenarios yet.
 
 ## 0.6.0 — 2026-11-05
 
