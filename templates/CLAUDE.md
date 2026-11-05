@@ -56,8 +56,12 @@ The current-state docs say what the system does now: {{DOCS_ASPECTS_E_G_FEATURES
   tickets and the planned list (`{{PLANNED_LIST_PATH}}`), which links them. Specs and the PRD are
   proposals: as a ticket merges, its part moves into the current-state docs in the same branch; a spec
   whose work has all merged is archived.
-- **Same branch as the code.** Every branch updates the docs it makes untrue. Each ticket names the doc
-  sections it changes; for a feature, the change to Features is written first, as the intended state.
+- **Same branch as the code.** Every branch updates the docs it makes untrue. Each ticket names its doc
+  sections and components (`Docs:` and `Components:` lines); for a feature, the branch's first commit
+  changes Features to the intended state, and the ticket's planned entry moves to Features before it
+  merges.
+- **Audited.** The read-only `doc-auditor` compares the docs with the code every `docs.audit_every` merges
+  and before a release, and opens one ticket per drift.
 - **Notes `## Docs`** (required): the doc changes, or `none: <reason>`. The gate's docs check is red for
   code a `docs.map` rule covers without one of its docs or a reason, and for broken relative links.
 - **One fact, one place;** other docs link to it. `docs/DECISIONS.md` is the only history (why). This
