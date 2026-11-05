@@ -72,7 +72,7 @@ for branch in "$@"; do
 done
 
 DL_CHANGED_FILES="$logs/train-changed-files.txt"
-git diff --name-only "$DL_REMOTE/$DL_BASE" HEAD >"$DL_CHANGED_FILES" || dl_die "cannot list the changed files"
+git diff --name-only --no-renames "$DL_REMOTE/$DL_BASE" HEAD >"$DL_CHANGED_FILES" || dl_die "cannot list the changed files"
 export DL_CHANGED_FILES
 
 setup=$(cfg gate_setup "")
