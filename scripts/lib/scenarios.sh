@@ -23,10 +23,15 @@ dl_scenarios_dir() {
   fi
 }
 
-# dl_scenarios_files DIR: the scenario files (*.md at any depth, not under .git), sorted, one per line.
+# dl_scenarios_files DIR: the scenario files (*.md at any depth, not under .git; a symlink to a file counts),
+# sorted, one per line.
 dl_scenarios_files() {
+  local file
   [ -d "$1" ] || return 0
-  find "${1%/}" -type f -name '*.md' ! -path '*/.git/*' | LC_ALL=C sort
+  find "${1%/}" -name '*.md' \( -type f -o -type l \) ! -path '*/.git/*' | LC_ALL=C sort |
+    while IFS= read -r file; do
+      [ -f "$file" ] && printf '%s\n' "$file"
+    done
 }
 
 # shellcheck disable=SC2016  # an awk program
@@ -46,6 +51,7 @@ function clean(v, q, rest, i) {
   return v
 }
 { sub(/\r$/, "") }
+NR == 1 { sub(/^\357\273\277/, "") }
 NR == 1 { if ($0 ~ /^---[ \t]*$/) { state = 1; next } else exit }
 state == 1 && /^---[ \t]*$/ { state = 2; next }
 state == 1 && match($0, /^[A-Za-z_][A-Za-z0-9_-]*:/) {
@@ -58,9 +64,9 @@ END { print "@shape\t" (state == 0 ? "none" : state == 1 ? "unclosed" : body ? "
 '
 
 # dl_scenario_front FILE: the parsed front matter as `key<TAB>value` lines (first occurrence of a key wins),
-# then `@shape<TAB>ok|empty|unclosed|none` (empty: no body; none: no front matter).
+# then `@shape<TAB>ok|empty|unclosed|none` (empty: no body; none: no front matter). A UTF-8 BOM is ignored.
 dl_scenario_front() {
-  awk "$_dl_scenario_awk" "$1"
+  LC_ALL=C awk "$_dl_scenario_awk" "$1"
 }
 
 # _dl_scenario_value KEY < front: the value of KEY in dl_scenario_front output.
@@ -118,7 +124,7 @@ dl_scenarios_validate() {
     done < <(dl_scenario_problems "$file")
     id=$(dl_scenario_field "$file" id)
     [ -n "$id" ] || continue
-    first=$(printf '%s\n' "$ids" | awk -F'\t' -v id="$id" '$1 == id { print $2; exit }')
+    first=$(printf '%s\n' "$ids" | id=$id awk -F'\t' '$1 == ENVIRON["id"] { print $2; exit }')
     if [ -n "$first" ]; then
       printf '%s\tduplicate id %s (also in %s)\n' "$rel" "$id" "$first"
       bad=1

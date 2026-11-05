@@ -2009,6 +2009,20 @@ for good in login.md billing/invoice.md; do
 done
 expect "validation fails when a file is invalid" "rc=1" "$(printf '%s\n' "$out" | tail -n 1)"
 expect "validation prints one line per problem, file then reason" 9 "$(printf '%s\n' "$out" | grep -c $'^[^\t]*\.md\t')"
+mkdir -p "$work/scen-edge"
+printf -- '---\nid: a\\b\ntitle: Backslash id\nrequired: false\n---\nbody\n' >"$work/scen-edge/one.md"
+printf -- '---\nid: a\\b\ntitle: Same backslash id\nrequired: false\n---\nbody\n' >"$work/scen-edge/two.md"
+printf -- '\357\273\277---\nid: bom\ntitle: Starts with a byte order mark\nrequired: true\n---\nbody\n' >"$work/scen-edge/bom.md"
+mkdir -p "$work/scen-target" && cp "$scen/login.md" "$work/scen-target/linked.md"
+ln -s "$work/scen-target/linked.md" "$work/scen-edge/linked.md"
+ln -s "$work/scen-target" "$work/scen-edge/dir.md"
+out=$(scenlib 'dl_scenarios_validate "$1"; echo "rc=$?"' "$work/scen-edge")
+expect "a duplicate id with a backslash is found, nothing else is invalid" \
+  "two.md	duplicate id a\\b (also in one.md)|rc=1" "$(printf '%s\n' "$out" | paste -sd'|' -)"
+expect "a symlinked scenario file is listed, a symlinked folder named *.md is not" "bom.md linked.md one.md two.md" \
+  "$(scenlib 'dl_scenarios_files "$1"' "$work/scen-edge" | sed "s#^$work/scen-edge/##" | paste -sd' ' -)"
+expect "a UTF-8 byte order mark before the front matter is ignored" "bom true" \
+  "$(scenlib 'echo "$(dl_scenario_field "$1/bom.md" id) $(dl_scenario_field "$1/bom.md" required)"' "$work/scen-edge")"
 mkdir -p "$work/scen-good" && cp "$scen/login.md" "$scen/billing/invoice.md" "$work/scen-good/"
 expect "validation of a store with only valid files passes silently" "rc=0" \
   "$(scenlib 'dl_scenarios_validate "$1"; echo "rc=$?"' "$work/scen-good")"
