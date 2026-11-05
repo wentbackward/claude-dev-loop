@@ -80,6 +80,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
+| agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
@@ -175,7 +176,9 @@ every merge:
     {"paths": ["src/api/*", "src/cli.py"], "docs": ["features", "architecture"]},
     {"paths": ["deploy/*"], "docs": ["operations"]}
   ],
-  "max_lines": 1000
+  "max_lines": 1000,
+  "prd": ["docs/specs/prd.md"],
+  "audit_every": 10
 }
 ```
 
@@ -198,8 +201,24 @@ every merge:
 - **The gate** runs it for each branch of a train right after stacking, on that branch's own commits with
   its notes file, and ends `TRAIN RED` naming the branch before `gate_setup` and the checks. It reads
   `docs` from the main checkout's `.dev-loop.json`, so a branch cannot change the rules of its own check.
-- **`doctor.sh`** prints the aspects, the planned list and the map; reports a missing aspect path as
-  MISSING; and notes files over `max_lines` and map rules that match no tracked file.
+- **The slice loop.** `prd` names the PRD or spec files (optional, one or several): the intent, kept
+  apart from Features, the state. The orchestrator keeps the gap between them in the planned list, each
+  entry linking its ticket, and slices the next part of the gap into tickets at the start of a session
+  and when the list runs low, never the whole PRD upfront. A ticket changes one component where possible
+  (an interface change first, then each consumer), fits one implementer's context, starts with the
+  Features change for a feature, and names its `Docs:` and `Components:` in its body. As it merges, its
+  planned entry moves to Features in the same branch; a PRD section whose work has all merged is marked
+  done or archived.
+- **The `doc-auditor`** (read-only) compares each current-state doc and component card with the code and,
+  where it is safe, the running system (CLI help, endpoints, config keys, jobs), and opens one ticket per
+  drift with the evidence. It runs every `audit_every` merges (default 10), when the user asks, and before
+  a release; before a release the orchestrator also checks the planned list and Features against the
+  tickets merged since the last one. The orchestrator records each audit in
+  `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one UTC time).
+- **`doctor.sh`** prints the aspects, the planned list, the PRD files and the map; reports a missing aspect
+  path or PRD file as MISSING; notes files over `max_lines` and map rules that match no tracked file; and
+  prints the merges since the last audit (from the merge ledger and the audit marker), with a
+  `doc audit due` note at `audit_every`.
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
   current-state docs once, one aspect at a time, each reviewed by the user. Templates:
   `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
@@ -303,7 +322,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |
 | `cleanup.stale_days`, `cleanup.keep_days` | `14`, `30` | `cleanup.sh`: when a branch without PR or open issue is stale; how long merged notes and old gate logs are kept |
-| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
+| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
@@ -314,6 +333,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `docs.planned` | none | the planned list (built and planned are kept apart) |
 | `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
 | `docs.max_lines` | `1000` | the size budget per current-state file (`doctor.sh` notes bigger ones) |
+| `docs.prd` | none | the PRD or spec files, a path or a list: the intent the slice loop cuts into tickets |
+| `docs.audit_every` | `10` | run the `doc-auditor` every this many merges (`doctor.sh` notes when one is due) |
 | `architecture.check` | none (off) | the command printing the dependency edges `<from> <to>` (paths or component names); set, it turns the architecture ratchet on (see Architecture ratchet) |
 | `architecture.cards` | `docs/architecture/` | the folder of the component cards |
 | `architecture.baseline` | `docs/architecture/baseline.txt` | the known violations, one per line, sorted |
@@ -325,7 +346,8 @@ Each agent runs on the model named in `models`, so cheap work can go to a small 
 to a large one:
 
 ```json
-"models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku" }
+"models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku",
+            "doc-auditor": "sonnet" }
 ```
 
 The orchestrator passes the model on every agent launch (the Agent tool's `model` parameter, which takes
@@ -348,7 +370,7 @@ enforced by GitHub token permissions and repository rulesets, not by prompts.
 | role | who | may |
 |------|-----|-----|
 | implementer | `implementer` agent | contents write (feature branches only, by ruleset), pull requests write (open PRs); cannot push the base branch, cannot approve its own PRs |
-| tester | `test-engineer`, `verifier` | issues write, contents read: raise tickets, never push code |
+| tester | `test-engineer`, `verifier`, `doc-auditor` | issues write, contents read: raise tickets, never push code |
 | reviewer | `code-reviewer` | pull requests write (approve / request changes), contents read |
 | gate | `gate-train.sh` / `merge-train.sh` only | statuses write (the required `dev-loop/gate` status), contents write, merges |
 | orchestrator | main session | issues write, read elsewhere |
@@ -428,9 +450,9 @@ reduces this, but does not prevent it:
 - deny rules for the credential directory and the token cache (`templates/settings.json`);
 - a PreToolUse guard that refuses `git push`, `gh pr create/merge/review`, `gh issue ...` and `gh api`
   writes unless they run through `as-role.sh` with a role the agent may use (implementer: implementer,
-  code-reviewer: reviewer, test-engineer and verifier: tester, main session: orchestrator). It also refuses
-  any direct use of the gate role, any merge, ruleset or auth command, and any mention of the credential
-  paths. This is best effort: it parses shell commands and cannot see inside scripts the agent writes;
+  code-reviewer: reviewer, test-engineer, verifier and doc-auditor: tester, main session: orchestrator).
+  It also refuses any direct use of the gate role, any merge, ruleset or auth command, and any mention of
+  the credential paths. This is best effort: it parses shell commands and cannot see inside scripts the agent writes;
 - for strong isolation, run each role under its own OS user (or container) that holds only its own
   credentials.
 

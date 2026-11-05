@@ -35,6 +35,10 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |
 | `note <file> has <n> lines, over docs.max_lines` | split it: an index and one file per area |
 | `note docs map rule <n> (...) matches no tracked file` | fix the globs (`*` also matches `/`), or drop the rule |
+| `MISSING docs.prd: <path> does not exist` | fix the path in `docs.prd`, or drop a PRD that was archived |
+| `MISSING docs.audit_every: ...` | a positive number of merges (default 10) |
+| `MISSING doc audit marker ...` | write one UTC time to it: `date -u +%Y-%m-%dT%H:%M:%SZ >"$(paths.sh doc-audit)"` |
+| `note doc audit due` | run the `doc-auditor` (the `dev-loop` skill's section 7a), then record the audit as the note says |
 | `MISSING architecture: <card>: ...` | fix the card's header (see `templates/COMPONENT.md`) |
 | `MISSING architecture: architecture.check failed ...` | run the command by hand in the project and fix it |
 | `MISSING architecture.cards: ... does not exist` or `no component cards` | the `setup` skill's step 3c, or fix `architecture.cards` |
