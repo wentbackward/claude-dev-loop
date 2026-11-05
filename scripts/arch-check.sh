@@ -87,6 +87,7 @@ if [ "$mode" = loosened ]; then
   fi
   printf '%s\n' "$hidden" | sed 's/^/arch-check: hidden by a card edit: /'
   echo "arch-check: $(printf '%s\n' "$hidden" | wc -l | tr -d ' ') violation(s) hidden by card header edits between $from and $ref"
+  echo "arch-check: (a renamed or removed component's violations show here under its old name)"
   exit 1
 fi
 

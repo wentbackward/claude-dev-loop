@@ -25,8 +25,8 @@
 #                       commits (from the train ref below it, or the base) with its notes file; a red branch
 #                       is named and the train ends TRAIN RED before gate_setup and the checks.
 #   "architecture": {"check", "cards", "baseline", "budget"}  after gate_setup and before the checks: a
-#                       branch whose commits add baseline entries, or change card headers so that violations
-#                       disappear, needs a reason under "## Architecture" in its notes; then arch-check.sh
+#                       branch whose commits add baseline entries, change card headers so that violations
+#                       disappear or change "architecture" in .dev-loop.json needs a reason under "## Architecture" in its notes; then arch-check.sh
 #                       on the train's top. With a new violation, or a baseline entry the train fixed but
 #                       kept, each branch's train ref is checked in order and named; TRAIN RED.
 #
@@ -177,29 +177,53 @@ arch_loosened() {
   fi
   echo "arch-check red for $2: its card header edits hide violations, without a reason under \"## Architecture\" in its notes:"
   printf '%s\n' "$hidden" | sed -n 's/^arch-check: hidden by a card edit: /  /p'
+  echo "  (a renamed or removed component's violations show here under its old name)"
+  return 1
+}
+
+# arch_config_changed FROM BRANCH: a branch without a reason in its notes may not change the "architecture"
+# block of its .dev-loop.json (the gate reads the main checkout's, so the change would apply unchecked once
+# merged); red prints why and returns 1.
+arch_config_changed() {
+  local before after
+  before=$(git show "$1:.dev-loop.json" 2>/dev/null | json_get architecture)
+  after=$(git show "train-$2:.dev-loop.json" 2>/dev/null | json_get architecture)
+  [ "$before" = "$after" ] && return 0
+  dl_arch_notes_reason "$(dl_note_file "$2")" && return 0
+  echo "arch-check red for $2: it changes \"architecture\" in .dev-loop.json without a reason under \"## Architecture\" in its notes:"
+  echo "  before: ${before:-none}"
+  echo "  after:  ${after:-none}"
   return 1
 }
 
 # arch_stale TOP_OUTPUT TOP: the baseline entries the top reports as fixed that occurred at the base: the train
 # fixed them, so it must remove them (checks out the base in place, then the train's top again).
 arch_stale() {
-  local fixed base_out gone
+  local fixed base_out gone rc
   fixed=$(arch_entries "$1" fixed)
   [ -n "$fixed" ] || return 0
   git checkout -q --detach "$DL_REMOTE/$DL_BASE" 2>/dev/null
   base_out=$("$scripts_dir/arch-check.sh" "$DL_REMOTE/$DL_BASE" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+    echo "arch-check error on the base, needed to judge the fixed entries at the train's top:"
+    printf '%s\n' "$base_out" | sed 's/^/  /'
+    return 2
+  fi
   git checkout -q "train-$2"
   gone=$(dl_arch_compare <(printf '%s\n' "$fixed") <(arch_entries "$base_out" new known) | dl_arch_tagged fixed)
   printf '%s\n' "$fixed" | grep -vxF -f <(printf '%s\n' "$gone")
+  return 0
 }
 
-# check_arch: with "architecture" configured, a branch may add baseline entries, or change card headers so
-# that violations disappear, only with a reason in its notes' "## Architecture" section; then arch-check.sh
+# check_arch: with "architecture" configured, a branch may add baseline entries, change card headers so
+# that violations disappear, or change "architecture" in .dev-loop.json, only with a reason in its notes' "## Architecture" section; then arch-check.sh
 # on the train's top (HEAD). When the top is red, or reports as fixed baseline entries that occurred at the
 # base (the branch that fixes an entry removes it), each branch's train ref is checked in order and named
 # for the new lines it brings, or the kept fixed entries, first.
 check_arch() {
   local branch from="$DL_REMOTE/$DL_BASE" added out rc red="" top seen="" branch_out fresh stale kept named=""
+  local rc_stale
   for branch in "$@"; do
     added=$(dl_arch_baseline_growth "$from" "train-$branch")
     if [ -n "$added" ] && ! dl_arch_notes_reason "$(dl_note_file "$branch")"; then
@@ -208,6 +232,7 @@ check_arch() {
       red=yes
     fi
     arch_loosened "$from" "$branch" || red=yes
+    arch_config_changed "$from" "$branch" || red=yes
     from="train-$branch"
     top=$branch
   done
@@ -221,6 +246,12 @@ check_arch() {
     exit 2
   fi
   stale=$(arch_stale "$out" "$top")
+  rc_stale=$?
+  if [ "$rc_stale" -ne 0 ]; then
+    printf '%s\n' "$stale"
+    git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+    exit 2
+  fi
   if [ "$rc" -eq 1 ] || [ -n "$stale" ]; then
     for branch in "$@"; do
       if [ "$branch" = "$top" ]; then

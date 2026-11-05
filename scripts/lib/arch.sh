@@ -306,18 +306,31 @@ dl_arch_compare() {
 }
 
 # dl_arch_notes_reason FILE: the notes file's "## Architecture" section has a reason: a line of text that is
-# not a placeholder ("none", "n/a", "TODO", "-" and the like, in any case, also as "none: ...").
+# not a placeholder ("none", "n/a", "TODO", "not applicable" and the like, in any case, also followed by
+# punctuation and more, as in "none: ..." or "n/a (...)"); "none of the edges ..." is a reason.
 dl_arch_notes_reason() {
   [ -n "$1" ] && [ -f "$1" ] || return 1
   awk '
-    function placeholder(text,   word) {
+    BEGIN {
+      count = split("none|nothing|n/a|na|n.a|todo|tbd|tba|fixme|xxx|nil|null|no|empty|later|not applicable|" \
+        "not needed|none needed|no change|no changes|nothing to report|nothing to add|nothing to say", words, "|")
+    }
+    # placeholder TEXT: TEXT is a placeholder word or phrase, alone or followed by a non-word character
+    # (after spaces); a hyphen right after it joins a word ("no-op").
+    function placeholder(text,   i, rest) {
       text = tolower(text)
       gsub(/[`*_"]/, "", text)
       sub(/^[ \t]*([-+*>]|[0-9]+[.)])?[ \t]*/, "", text)
       sub(/[ \t.!?]+$/, "", text)
-      word = text
-      sub(/[ \t]*[:=-].*$/, "", word)
-      return word ~ /^(none|nothing|n\/a|na|n\.a|todo|tbd|tba|fixme|xxx|nil|null|no|empty|later)$/
+      for (i = 1; i <= count; i++) {
+        if (substr(text, 1, length(words[i])) != words[i]) continue
+        rest = substr(text, length(words[i]) + 1)
+        if (rest == "") return 1
+        if (rest ~ /^[-a-z0-9\/.]/) continue
+        sub(/^[ \t]+/, "", rest)
+        if (rest !~ /^[a-z0-9]/) return 1
+      }
+      return 0
     }
     /^#+[ \t]/ { heading = tolower($0); sub(/^#+[ \t]+/, "", heading); sub(/[ \t]+$/, "", heading)
                  in_section = ($0 ~ /^##[ \t]/ && heading == "architecture"); next }
