@@ -2062,5 +2062,95 @@ grep -qF "scenarios.dir" "$plugin/README.md" && grep -qF "min_satisfaction" "$pl
   grep -qF "templates/scenario.md" "$plugin/README.md" && pass "the README documents the scenario keys and the example" ||
   fail "the README lacks the scenario keys"
 
+# Scenario isolation (#31): the role guard keeps the store from the implementer, test-engineer and reviewer.
+iso="$work/iso"
+iso_home="$work/iso-home"
+mkdir -p "$iso_home"
+git init -q "$iso/guardproj"
+printf '{"scenarios": {"dir": "~/.dev-loop/<repo>/holdout"}}\n' >"$iso/guardproj/.dev-loop.json"
+git -C "$iso/guardproj" add . && git -C "$iso/guardproj" commit -q -m "chore: start"
+git -C "$iso/guardproj" worktree add -q -b feat/1-x "$iso/guardproj-1" 2>/dev/null
+store="$iso_home/.dev-loop/guardproj/holdout"
+mkdir -p "$store" "$iso_home/.dev-loop/guardproj/holdout-old" && echo secret >"$store/a.md"
+ln -s "$store" "$iso/peek"
+ln -s "$store/a.md" "$iso/peek-file"
+sguard() { # sguard AGENT TOOL KEY VALUE [CWD] [CONFIG] -> exit status of the guard on that tool call
+  python3 -I -c 'import json, sys; print(json.dumps({"tool_name": sys.argv[2], "cwd": sys.argv[5],
+    "agent_type": sys.argv[1] or None, "tool_input": {sys.argv[3]: sys.argv[4]}}))' \
+    "$1" "$2" "$3" "$4" "${5:-$iso/guardproj-1}" |
+    HOME="$iso_home" DEV_LOOP_HOME="$iso_home/.dev-loop" CLAUDE_PROJECT_DIR="${5:-$iso/guardproj-1}" \
+      DEV_LOOP_CONFIG="${6:-}" "$plugin/hooks/guard-role.sh" 2>/dev/null
+  echo $?
+}
+expect "isolation: the implementer may not Read a scenario" 2 "$(sguard dev-loop:implementer Read file_path "$store/a.md")"
+expect "isolation: the test-engineer may not Grep the store" 2 "$(sguard dev-loop:test-engineer Grep path "$store")"
+expect "isolation: the code-reviewer may not Glob the store" 2 "$(sguard dev-loop:code-reviewer Glob pattern "$store/**/*.md")"
+expect "isolation: the implementer may not Write into the store" 2 "$(sguard dev-loop:implementer Write file_path "$store/new.md")"
+expect "isolation: the implementer may not Edit a scenario" 2 "$(sguard implementer Edit file_path "$store/a.md")"
+expect "isolation: the implementer may not cat the store via ~" 2 \
+  "$(sguard dev-loop:implementer Bash command 'cat ~/.dev-loop/guardproj/holdout/a.md')"
+expect "isolation: the tester may not list the store via \$HOME" 2 \
+  "$(sguard dev-loop:test-engineer Bash command 'ls "$HOME/.dev-loop/guardproj/holdout"')"
+expect "isolation: a relative path into the store is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command 'cat holdout/a.md' "$iso_home/.dev-loop/guardproj")"
+expect "isolation: a relative path after cd into the store's parent is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command "cd $iso_home/.dev-loop/guardproj && grep -r x holdout")"
+expect "isolation: a relative Read path into the store is refused" 2 \
+  "$(sguard dev-loop:code-reviewer Read file_path 'holdout/a.md' "$iso_home/.dev-loop/guardproj")"
+expect "isolation: a Read through a symlink to the store is refused" 2 "$(sguard dev-loop:implementer Read file_path "$iso/peek/a.md")"
+expect "isolation: a cat of a symlink to a scenario file is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command "cat $iso/peek-file")"
+expect "isolation: a glob that matches the store is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command "cat $iso_home/.dev-loop/*/holdout/*.md")"
+expect "isolation: a store path inside a quoted script is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command "python3 -c \"print(open('$store/a.md').read())\"")"
+expect "isolation: a redirect from the store is refused" 2 \
+  "$(sguard dev-loop:implementer Bash command "wc -l <$store/a.md")"
+expect "isolation: the main session may read the store" 0 "$(sguard "" Read file_path "$store/a.md")"
+expect "isolation: the scenario-judge may read the store" 0 "$(sguard dev-loop:scenario-judge Bash command "cat $store/a.md")"
+expect "isolation: the scenario-writer may write into the store" 0 "$(sguard dev-loop:scenario-writer Write file_path "$store/b.md")"
+expect "isolation: the verifier is not refused" 0 "$(sguard dev-loop:verifier Read file_path "$store/a.md")"
+expect "isolation: the implementer may read its worktree" 0 "$(sguard dev-loop:implementer Read file_path "$iso/guardproj-1/.dev-loop.json")"
+expect "isolation: the implementer may run ordinary commands" 0 \
+  "$(sguard dev-loop:implementer Bash command 'git status && grep -r holdout . && cat .dev-loop.json')"
+expect "isolation: a sibling directory with the same prefix is not the store" 0 \
+  "$(sguard dev-loop:implementer Bash command 'ls ~/.dev-loop/guardproj/holdout-old')"
+printf '{"checks": ["true"]}\n' >"$iso/no-scenarios.json"
+expect "isolation: without scenarios nothing is refused" 0 \
+  "$(sguard dev-loop:implementer Read file_path "$iso_home/.dev-loop/guardproj/scenarios/a.md" "" "$iso/no-scenarios.json")"
+python3 -I -c 'import json, sys; json.dump({"scenarios": {}, "identities": {r: {"type": "token", "token_file": "/x/" + r + ".token"}
+  for r in ("implementer", "tester", "reviewer", "gate", "orchestrator")}}, open(sys.argv[1], "w"))' "$iso/identity.json"
+mkdir -p "$iso_home/.dev-loop/guardproj/scenarios"
+expect "isolation: identity mode refuses the default store too" 2 \
+  "$(sguard dev-loop:implementer Read file_path "$iso_home/.dev-loop/guardproj/scenarios/a.md" "" "$iso/identity.json")"
+expect "isolation: identity mode still refuses a raw push" 2 \
+  "$(sguard dev-loop:implementer Bash command 'git push origin HEAD' "" "$iso/identity.json")"
+expect "isolation: identity mode still allows a push as the implementer" 0 \
+  "$(sguard dev-loop:implementer Bash command "$plugin/scripts/as-role.sh implementer git push origin HEAD" "" "$iso/identity.json")"
+expect "isolation: scenarios without identities still allow a raw push" 0 \
+  "$(sguard dev-loop:implementer Bash command 'git push origin HEAD')"
+printf '{"scenarios": {"dir": "holdout"}}\n' >"$iso/relative.json"
+expect "isolation: a relative scenarios.dir is the main worktree's, also from a linked worktree" 2 \
+  "$(sguard dev-loop:implementer Bash command "cat $iso/guardproj/holdout/x.md" "" "$iso/relative.json")"
+expect "isolation: a relative scenarios.dir does not cover the linked worktree's copy" 0 \
+  "$(sguard dev-loop:implementer Read file_path "$iso/guardproj-1/holdout/x.md" "" "$iso/relative.json")"
+same=0
+for dir in '' '~/stores/<repo>/scen' 'rel/<repo>' "$iso/abs" '"x"'; do
+  if [ "$dir" = '"x"' ]; then printf '{"scenarios": {"dir": 7}}\n'; elif [ -z "$dir" ]; then printf '{"scenarios": {}}\n'
+  else printf '{"scenarios": {"dir": "%s"}}\n' "$dir"; fi >"$iso/sync.json"
+  for at in "$iso/guardproj" "$iso/guardproj-1"; do
+    from_bash=$(cd "$at" && HOME="$iso_home" DEV_LOOP_HOME="$iso_home/dlh" DEV_LOOP_CONFIG="$iso/sync.json" "$plugin/scripts/paths.sh" scenarios)
+    from_python=$(HOME="$iso_home" DEV_LOOP_HOME="$iso_home/dlh" DEV_LOOP_CONFIG="$iso/sync.json" \
+      python3 -I "$plugin/hooks/guard-role.py" --scenarios-dir "$at" </dev/null)
+    [ -n "$from_bash" ] && [ "$from_bash" = "$from_python" ] && same=$((same + 1)) ||
+      echo "  store path differs for dir '$dir' at $at: bash '$from_bash', python '$from_python'"
+  done
+done
+expect "isolation: the guard resolves scenarios.dir exactly like paths.sh scenarios" 10 "$same"
+grep -qi "scenario" "$plugin/templates/settings.json" && fail "templates/settings.json has a scenario deny rule (it would block the judge)" ||
+  pass "templates/settings.json has no deny rule that would block the scenario-judge"
+grep -qF "agent-type guard" "$plugin/README.md" && grep -qF "no access to the scenarios repository" "$plugin/README.md" &&
+  pass "the README explains the agent-type guard and the identity-mode note" || fail "the README lacks the isolation section"
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
