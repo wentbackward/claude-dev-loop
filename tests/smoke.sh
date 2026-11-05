@@ -2217,6 +2217,252 @@ grep -qF "scenario-writer" "$plugin/README.md" && grep -qF "models.scenario-writ
   pass "the README documents the scenario writer and its model" || fail "the README lacks the scenario writer"
 awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on' "$plugin/CHANGELOG.md" | grep -qF "scenario-writer" &&
   pass "the changelog names the scenario writer under Unreleased" || fail "no changelog entry for the scenario writer"
+# Scenario judge and gate stage (#32): the gate starts scenarios.run, judges each scenario with the judge
+# command (a fake here: it reads its scores from the scenario's own front matter), rejudges a failure once
+# and decides green or red; sealed scenarios are only counted, and no scenario text reaches the output.
+cd "$work/project" || exit 1
+git fetch -q origin
+git checkout -q -B feat/32-judge origin/main
+mkdir -p billing && echo invoice >billing/invoice.txt && echo "line four" >>src.txt && git add billing src.txt &&
+  git commit -q -m "feat: invoices (Refs #32)" && git push -q -u origin feat/32-judge
+cat >"$work/fake-judge.sh" <<'EOF'
+#!/usr/bin/env bash
+# A fake scenario judge: the score of attempt n is the n-th item of fake_scores (the last one repeats).
+field() { awk -v k="$1" 'NR > 1 && /^---/ { exit } index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "$DL_SCENARIO_FILE"; }
+id=$(field id)
+calls="$SMOKE_WORK/judge-calls.log"
+n=$(($(grep -c "^$id " "$calls" 2>/dev/null) + 1))
+echo "$id $n id=$DL_SCENARIO_ID target=$DL_SCENARIO_TARGET checks=$([ -e "$SMOKE_WORK/checks-done" ] && echo done || echo running)" >>"$calls"
+score=$(field fake_scores | awk -v n="$n" '{ print (n <= NF ? $n : $NF) }')
+case $(field fake_output) in
+  garbage) echo "I could not decide"; exit 0 ;;
+  crash) exit 3 ;;
+  other-id) id=someone-else ;;
+esac
+echo "chatter before the verdict"
+printf '{"id": "%s", "satisfied": %s, "required": true, "evidence": "EVIDENCE-%s seen", "missing": "%s"}\n' \
+  "$id" "$score" "$id" "$(field fake_missing)"
+EOF
+chmod +x "$work/fake-judge.sh"
+jstore="$work/judge-store"
+# jscenario ID REQUIRED SCORES [EXTRA FRONT MATTER]: write a scenario with a secret body into the judge store.
+jscenario() {
+  printf -- '---\nid: %s\ntitle: Scenario %s\nrequired: %s\nfake_scores: %s\n%s---\nSECRET-BODY-%s: the user does the hidden steps.\n' \
+    "$1" "$1" "$2" "$3" "${4:+$4
+}" "$1" >"$jstore/$1.md"
+}
+# jstore_reset: an empty judge store.
+jstore_reset() { rm -rf "$jstore" && mkdir -p "$jstore"; }
+# jgate JSON_MEMBERS [SCENARIO_MEMBERS]: gate feat/32-judge with these config members and a scenarios block
+# (store, fake judge, a run command that records its pid); sets out, rc, stage_log.
+jgate() {
+  local scen=${2-'"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false,
+    "run": "echo $$ >\"$SMOKE_WORK/run.pid\"; echo http://127.0.0.1:9550/; exec sleep 300"}'}
+  printf '{"base_branch": "main", %s%s, "heavy": {"slots": 2, "port_env": "SMOKE_PORT", "port_base": 9500, "port_step": 10, "poll_seconds": 1}}\n' \
+    "$1" "${scen:+, $scen}" >"$work/jgate.json"
+  rm -f "$work/judge-calls.log" "$work/run.pid" "$work/checks-done"
+  out=$(DEV_LOOP_CONFIG="$work/jgate.json" "$plugin/scripts/gate-train.sh" feat/32-judge 2>&1)
+  rc=$?
+  stage_log="$("$plugin/scripts/paths.sh" logs)/train-scenarios.log"
+  echo "$out"
+}
+# judged: the ids the fake judge was called for, with their attempt, sorted.
+judged() { awk '{ print $1 "#" $2 }' "$work/judge-calls.log" 2>/dev/null | LC_ALL=C sort | paste -sd' ' -; }
+# no_leak WHAT: neither the gate output nor the stage log holds a scenario body, evidence or WHAT.
+no_leak() {
+  if printf '%s\n' "$out" | cat - "$stage_log" 2>/dev/null | grep -qE "SECRET-BODY|EVIDENCE-${1:-}"; then
+    fail "scenario text or evidence leaked into the gate output or the stage log"
+  else
+    pass "no scenario text or evidence in the gate output or the stage log${1:+ ($1)}"
+  fi
+}
+done_check='{"name": "unit", "command": "touch \"$SMOKE_WORK/checks-done\"", "heavy": false}'
+
+# Without scenarios the gate is as before: no scenario stage, no scenario line.
+jstore_reset
+jscenario login true 0.9
+jgate '"checks": ['"$done_check"']' ""
+expect "without scenarios the gate runs only the checks" "0 unit rc=0" "$rc $(result_lines)"
+expect "without scenarios the gate prints no scenario line" 0 "$(printf '%s\n' "$out" | grep -ci scenario)"
+expect "without scenarios no judge runs" "" "$(judged)"
+
+# Green: the run starts after the checks, each scenario is judged once against the printed address.
+jstore_reset
+jscenario login true 0.9
+jscenario browse false 1 "spec: [catalog]"
+jgate '"checks": ['"$done_check"']'
+expect "a train whose scenarios are satisfied is green" "0 TRAIN GREEN" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+expect "the scenario stage runs after the checks" "unit rc=0|scenarios rc=0" "$(result_lines)"
+expect "each scenario is judged once" "browse#1 login#1" "$(judged)"
+expect "the judge gets the address scenarios.run printed and the scenario id" \
+  "id=login target=http://127.0.0.1:9550/ checks=done" "$(awk '$1 == "login" { print $3, $4, $5 }' "$work/judge-calls.log")"
+results="$("$plugin/scripts/paths.sh" logs)/train-scenario-results.jsonl"
+expect "each judge result JSON is recorded in the logs" "browse login" \
+  "$(grep -o '"id": "[a-z]*"' "$results" 2>/dev/null | sed 's/.*: "//; s/"//' | LC_ALL=C sort | paste -sd' ' -)"
+run_pid=$(cat "$work/run.pid" 2>/dev/null)
+[ -n "$run_pid" ] && pass "scenarios.run was started" || fail "scenarios.run did not start"
+expect "the system scenarios.run started is stopped after judging" "" "$(alive "$run_pid")"
+printf '%s\n' "$out" | grep -qE '^scenarios green: 2 judged, mean 0\.95' && pass "the gate prints the scenario verdict" ||
+  fail "no scenario verdict line"
+no_leak
+
+# Red: a required scenario below pass is rejudged once and named with the judge's missing behaviour only.
+jstore_reset
+jscenario login true 0.9
+jscenario flaky true "0.3 0.85"
+jscenario alert true "0.2 0.4" 'fake_missing: closing a position leaves its alert active'
+jgate '"checks": ['"$done_check"']'
+expect "a required scenario below pass makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+expect "a failing scenario is rejudged once, a passing one is not" "alert#1 alert#2 flaky#1 flaky#2 login#1" "$(judged)"
+printf '%s\n' "$out" | grep -qxF "scenario alert unsatisfied (0.4, required): closing a position leaves its alert active" &&
+  pass "the red train names the unsatisfied scenario with the missing behaviour" || fail "no unsatisfied line for alert"
+printf '%s\n' "$out" | grep -q "scenario flaky unsatisfied" && fail "a scenario that passed its rejudge is named" ||
+  pass "a scenario that passes its rejudge is satisfied"
+printf '%s\n' "$out" | grep -q "scenario login" && fail "a satisfied scenario is in the summary" ||
+  pass "the summary names only the unsatisfied scenarios"
+expect "every judge run is recorded" 5 "$(grep -c . "$results" 2>/dev/null)"
+no_leak
+
+# Red on the mean: every required scenario passes, the mean is below min_satisfaction.
+jstore_reset
+jscenario login true 0.8
+jscenario extra false "0.5 0.6" 'fake_missing: the export button does nothing'
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false, "min_satisfaction": 0.75}'
+expect "a mean below min_satisfaction makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qE '^scenarios red: .*mean 0\.70 below min_satisfaction 0\.75' &&
+  pass "the red verdict gives the mean and the threshold" || fail "no mean in the red verdict"
+printf '%s\n' "$out" | grep -qxF "scenario extra unsatisfied (0.6, scored): the export button does nothing" &&
+  pass "an unsatisfied scored scenario is named with its best score" || fail "no unsatisfied line for extra"
+expect "without scenarios.run the judge gets no address" "id=login target= checks=done" \
+  "$(awk '$1 == "login" { print $3, $4, $5 }' "$work/judge-calls.log")"
+
+# Invalid judge output (no JSON, a crash, another id) counts as a failure, also on the rejudge.
+jstore_reset
+jscenario talk true 1 "fake_output: garbage"
+jscenario crash true 1 "fake_output: crash"
+jscenario wrong true 1 "fake_output: other-id"
+jgate '"checks": ['"$done_check"']'
+expect "invalid judge output makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+expect "invalid judge output is rejudged once" "crash#1 crash#2 talk#1 talk#2 wrong#1 wrong#2" "$(judged)"
+for id in talk crash wrong; do
+  printf '%s\n' "$out" | grep -qE "^scenario $id unsatisfied \(0, required\): invalid judge output" &&
+    pass "invalid judge output for $id counts as unsatisfied" || fail "no invalid line for $id"
+done
+
+# Sealed: with the whole share sealed, failures are only counted, never named or described.
+jstore_reset
+jscenario login true 0.9
+jscenario alert true "0.2 0.4" 'fake_missing: SEALED-MISSING behaviour'
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false, "sealed": 1}'
+expect "a sealed failure still makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qxF "scenarios sealed: 2 judged, 1 unsatisfied" && pass "sealed scenarios are only counted" ||
+  fail "no sealed count"
+printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "alert|login|SEALED-MISSING" &&
+  fail "a sealed scenario is named or described" || pass "sealed scenarios are never named or described"
+no_leak "sealed"
+expect "the sealed share is chosen by id: none at 0, all at 1, the same every time" "0 20 yes" \
+  "$(scenlib 'n0=0 n1=0; for i in $(seq 20); do dl_scenario_sealed "s$i" 0 && n0=$((n0+1)); dl_scenario_sealed "s$i" 1 && n1=$((n1+1)); done
+same=yes; for i in $(seq 20); do [ "$(dl_scenario_sealed "s$i" 0.5 && echo y)" = "$(dl_scenario_sealed "s$i" 0.5 && echo y)" ] || same=no; done
+echo "$n0 $n1 $same"')"
+share=$(scenlib 'n=0; for i in $(seq 200); do dl_scenario_sealed "scenario-$i" 0.2 && n=$((n+1)); done; echo $n')
+[ "$share" -ge 20 ] && [ "$share" -le 60 ] && pass "a sealed share of 0.2 seals about a fifth ($share of 200)" ||
+  fail "a sealed share of 0.2 sealed $share of 200"
+sealed_id=$(scenlib 'for i in $(seq 50); do dl_scenario_sealed "mixed-$i" 0.5 && { echo "mixed-$i"; break; }; done')
+open_id=$(scenlib 'for i in $(seq 50); do dl_scenario_sealed "mixed-$i" 0.5 || { echo "mixed-$i"; break; }; done')
+jstore_reset
+jscenario "$sealed_id" true 0.1 'fake_missing: SEALED-MISSING behaviour'
+jscenario "$open_id" true 0.1 'fake_missing: the open one fails'
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false, "sealed": 0.5}'
+printf '%s\n' "$out" | grep -qxF "scenario $open_id unsatisfied (0.1, required): the open one fails" &&
+  printf '%s\n' "$out" | grep -qxF "scenarios sealed: 1 judged, 1 unsatisfied" &&
+  pass "a mixed store names the open failure and counts the sealed one" || fail "mixed sealed output"
+printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "$sealed_id|SEALED-MISSING" &&
+  fail "the sealed scenario of a mixed store is named" || pass "the sealed scenario of a mixed store is not named"
+
+# affected: only the scenarios whose spec or tags occur in a changed path run, plus every required one.
+jstore_reset
+jscenario login true 0.9 "spec: [auth]"
+jscenario invoice false 0.9 "spec: [billing]"
+jscenario tagged false 0.9 "tags: [Invoice]"
+jscenario alerts false 0.9 "spec: [alerts]
+tags: [ui]"
+jscenario bare false 0.9
+jgate '"affected": {"command": "true", "heavy": false}, "checks": ['"$done_check"']'
+expect "with affected, only matching and required scenarios are judged" "invoice#1 login#1 tagged#1" "$(judged)"
+expect "with affected the train is green" "0 TRAIN GREEN" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+expect "a scenario matches when a spec or tag item occurs in a changed path, in any case" "invoice tagged" \
+  "$(printf 'billing/invoice.txt\nsrc.txt\n' >"$work/changed-list"; for f in invoice login tagged alerts bare; do
+    scenlib 'dl_scenario_affected "$1" "'"$work"'/changed-list" && basename "$1" .md' "$jstore/$f.md"; done | paste -sd' ' -)"
+
+# Sequential: a failing check skips the scenario stage; nothing is started.
+jstore_reset
+jscenario login true 0.9
+jgate '"checks": [{"name": "bad", "command": "exit 3", "heavy": false}]'
+expect "after a failed check the scenario stage is skipped" "1 bad rc=3|scenarios skipped" "$rc $(result_lines)"
+expect "after a failed check no judge runs and no system starts" "|no" \
+  "$(judged)|$([ -e "$work/run.pid" ] && echo yes || echo no)"
+
+# parallel: the scenarios are judged alongside the checks.
+jgate '"parallel": true, "checks": [{"name": "unit", "command": "sleep 3; touch \"$SMOKE_WORK/checks-done\"", "heavy": false}]'
+expect "with parallel the scenario stage runs alongside the checks" "0 unit rc=0|scenarios rc=0 checks=running" \
+  "$rc $(result_lines) $(awk '{ print $5 }' "$work/judge-calls.log")"
+
+# parallel + fail_fast: a failing check stops the scenario stage and the system it started.
+jstore_reset
+jscenario slow true 0.9
+jgate '"parallel": true, "fail_fast": true, "checks": [{"name": "bad", "command": "sleep 2; exit 3", "heavy": false}]' \
+  '"scenarios": {"dir": "'"$jstore"'", "judge": "sleep 300", "heavy": false,
+    "run": "echo $$ >\"$SMOKE_WORK/run.pid\"; echo http://127.0.0.1:9551/; exec sleep 300"}'
+expect "fail_fast stops the scenario stage" "1 bad rc=3|scenarios stopped" "$rc $(result_lines)"
+run_pid=$(cat "$work/run.pid" 2>/dev/null)
+[ -n "$run_pid" ] && expect "fail_fast stops the system scenarios.run started" "" "$(alive "$run_pid")" ||
+  fail "scenarios.run did not start before fail_fast"
+
+# A run command that ends without printing how to reach the system makes the train red; nothing is judged.
+jstore_reset
+jscenario login true 0.9
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false, "run": "exit 0"}'
+expect "a run command that prints no address is red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qE '^scenarios red: scenarios.run ended before printing how to reach the system' &&
+  pass "the gate says the run command printed no address" || fail "no run failure line"
+expect "nothing is judged when the system did not start" "" "$(judged)"
+
+# An empty store judges nothing and starts nothing; an invalid store is red without naming its files.
+jstore_reset
+jgate '"checks": ['"$done_check"']'
+expect "an empty store is green and starts nothing" "0 TRAIN GREEN no" \
+  "$rc $(printf '%s\n' "$out" | tail -n 1) $([ -e "$work/run.pid" ] && echo yes || echo no)"
+printf -- '---\nid: broken\n---\nSECRET-BODY\n' >"$jstore/broken.md"
+jgate '"checks": ['"$done_check"']'
+expect "an invalid store makes the train red" "1 TRAIN RED" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qE '^scenarios red: 1 invalid scenario file' && pass "the gate counts the invalid files" ||
+  fail "no invalid store line"
+
+# The default judge is headless Claude Code with the scenario-judge agent and models.scenario-judge.
+printf '{"checks": ["true"], "scenarios": {}, "models": {"scenario-judge": "sonnet"}}\n' >"$work/judge-model.json"
+judge_cmd=$(scen_config="$work/judge-model.json" scenlib 'dl_scenarios_judge_command')
+case $judge_cmd in
+  "claude -p --agent dev-loop:scenario-judge --model sonnet "*) pass "the default judge uses the agent and models.scenario-judge" ;;
+  *) fail "default judge command: $judge_cmd" ;;
+esac
+case $(scen_config="$work/scen-default.json" scenlib 'dl_scenarios_judge_command') in
+  *--model*) fail "the default judge passes --model without models.scenario-judge" ;;
+  "claude -p --agent dev-loop:scenario-judge "*) pass "the default judge inherits the model without models.scenario-judge" ;;
+  *) fail "no default judge command" ;;
+esac
+expect "scenarios.judge replaces the default judge" "my-judge --fast" \
+  "$(printf '{"scenarios": {"judge": "my-judge --fast"}}\n' >"$work/judge-own.json"; scen_config="$work/judge-own.json" scenlib 'dl_scenarios_judge_command')"
+out=$(DEV_LOOP_CONFIG="$work/judge-model.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out" | grep -qE '^ +models .*scenario-judge=sonnet' && pass "doctor lists models.scenario-judge" || fail "no scenario-judge model in doctor"
+judge_agent="$plugin/agents/scenario-judge.md"
+awk 'NR == 1, /^tools:/' "$judge_agent" 2>/dev/null | grep -qE '^name: scenario-judge$' &&
+  grep -E '^tools:' "$judge_agent" | grep -vqE 'Write|Edit' && pass "the scenario-judge agent exists and cannot write" ||
+  fail "no read-only scenario-judge agent"
+grep -qF '"missing"' "$judge_agent" && grep -qF '"satisfied"' "$judge_agent" && pass "the judge's brief defines its JSON" ||
+  fail "the judge's brief lacks the JSON"
+grep -qF "scenario-judge" "$plugin/skills/gate/SKILL.md" && grep -qF "scenarios.judge" "$plugin/README.md" &&
+  pass "the gate skill and the README document the scenario stage" || fail "the scenario stage is not documented"
+git checkout -q -f main
 
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
