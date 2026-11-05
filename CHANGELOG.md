@@ -7,6 +7,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - `gate-train.sh` and `merge-train.sh` merge the setup branch with the main checkout on the base: when the
   main checkout has no `.dev-loop.json` yet, they read it from the branch (merge-train: the first branch of
   the recorded train) and say where it came from (#8).
+- The branch-config fallback of #8 fetches the branch before reading its config (a stale
+  `<remote>/<branch>` is no longer read), stops with `the config of <ref> names remote <remote>, but
+  <remote>/<branch> is missing` instead of `no config at`, and names a local-only branch as
+  `refs/heads/<branch>` (#9).
 - `doctor.sh` accepts the project instructions at `.claude/CLAUDE.md` as well as `CLAUDE.md`.
 - Current-state docs, kept true by every merge (off without `docs` in `.dev-loop.json`):
   - `docs` config: `aspects` (name to a file or folder), `planned`, `map` rules

@@ -35,3 +35,16 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   block with example aspects (would turn the check on for projects that copy it unchanged, with paths that
   do not exist); a `none:` per rule (more ceremony than the notes need); stopping at the first red branch
   (hides the others until the next run).
+
+## 2026-11-05 — The branch-config fallback fetches the branch first (#9)
+
+- **Decision:** before reading a branch's `.dev-loop.json`, `dl_load_train_config` fetches that one branch
+  (`+refs/heads/<branch>:refs/remotes/<remote>/<branch>`, a failed fetch only warns, and the scripts' own fetch then stops the run) and then prefers
+  `<remote>/<branch>`, else the local branch. When the config names another remote, only
+  `<remote>/<branch>` counts (after its own fetch); when it is missing the scripts stop with a message
+  naming it, even if a local branch exists, since the gate stacks `<remote>/<branch>`.
+- **Reason:** the gate and the merge check `<remote>/<branch>` right after their own fetch, so the config
+  should come from the same commit; one targeted fetch is cheap and keeps a stale tracking ref out.
+- **Alternatives:** preferring the local branch when it is ahead (would read a config the gate does not
+  check, from unpushed commits); falling back to the local branch when the other remote lacks it (the
+  gate then fails later with a less clear message).
