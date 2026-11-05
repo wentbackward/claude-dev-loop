@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # The holdout scenario store: where the scenarios live (scenarios.dir), what a scenario file holds, and
-# whether it is valid. Source scripts/lib/common.sh first and call dl_load_config.
+# whether it is valid, and the helpers of the gate's scenario stage. Source scripts/lib/common.sh first (and
+# scripts/lib/reasons.sh for dl_scenario_verdict) and call dl_load_config.
 #
 # A scenario is one Markdown file with front matter between two --- lines: `key: value` lines, lists as
 # `[a, b]`, values optionally quoted, ` # comments` after unquoted values. Keys: id, title, spec, tags,
@@ -152,4 +153,70 @@ dl_scenarios_required_count() {
 # dl_scenarios_share_ok VALUE: true when VALUE is a number from 0 to 1 (pass, min_satisfaction, sealed).
 dl_scenarios_share_ok() {
   printf '%s\n' "$1" | grep -Eq '^(0(\.[0-9]*)?|\.[0-9]+|1(\.0*)?)$'
+}
+
+# The gate's scenario stage (scenario-stage.sh) prints these lines into the gate's summary: the unsatisfied
+# scenarios that are not sealed, the sealed count and the verdict.
+# shellcheck disable=SC2034  # read by gate-train.sh
+DL_SCENARIOS_SUMMARY='^scenario .+ unsatisfied \(|^scenarios (sealed|green|red|error):'
+
+# dl_scenarios_judge_command: the command that judges one scenario (scenarios.judge), by default headless
+# Claude Code with the scenario-judge agent and models.scenario-judge. It reads DL_SCENARIO_FILE,
+# DL_SCENARIO_ID and DL_SCENARIO_TARGET and prints one JSON object as its last JSON line.
+dl_scenarios_judge_command() {
+  local judge model
+  judge=$(cfg scenarios.judge "")
+  if [ -n "$judge" ]; then
+    printf '%s\n' "$judge"
+    return
+  fi
+  model=$(cfg models.scenario-judge inherit)
+  [ "$model" = inherit ] && model="" || model="--model $model "
+  # shellcheck disable=SC2016  # expanded by the shell that runs the judge
+  printf 'claude -p --agent dev-loop:scenario-judge %s%s\n' "$model" \
+    '--no-session-persistence --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash" --add-dir "$(dirname "$DL_SCENARIO_FILE")" "Judge the scenario $DL_SCENARIO_ID in $DL_SCENARIO_FILE against the running system: ${DL_SCENARIO_TARGET:-the project in the current directory}. End with the JSON object."'
+}
+
+# dl_scenario_sealed ID SHARE: true when the scenario ID is sealed (only counted, never named) at this share:
+# its id's checksum modulo 1000 is below SHARE * 1000, so the choice depends only on the id.
+dl_scenario_sealed() {
+  local hash
+  hash=$(printf '%s' "$1" | cksum | awk '{ print $1 % 1000 }')
+  awk -v h="$hash" -v s="$2" 'BEGIN { exit !(h < s * 1000) }'
+}
+
+# dl_scenario_affected FILE CHANGED: true when an item of the scenario's spec or tags occurs in a path of the
+# file CHANGED (one path per line), ignoring case.
+dl_scenario_affected() {
+  local items
+  items=$(dl_scenario_list "$1" spec; dl_scenario_list "$1" tags)
+  [ -n "$items" ] && [ -f "$2" ] || return 1
+  awk 'NR == FNR { items[tolower($0)]; next }
+    { path = tolower($0); for (item in items) if (index(path, item)) { found = 1; exit } }
+    END { exit !found }' <(printf '%s\n' "$items") "$2"
+}
+
+# dl_scenario_verdict ID < judge output: the judge's verdict from its last line that starts with "{":
+# `ok<TAB>satisfied<TAB>missing<TAB>result JSON` or `invalid<TAB>reason` (no JSON object, an id other than ID,
+# satisfied not a number from 0 to 1).
+dl_scenario_verdict() {
+  local line result satisfied id missing
+  line=$(awk '/^[ \t]*\{/ { last = $0 } END { print last }')
+  result=$(printf '%s' "$line" | dl_json_normalized "")
+  case $result in
+    "{"*) ;;
+    *) printf 'invalid\tno JSON object in the output\n' && return ;;
+  esac
+  id=$(printf '%s' "$result" | json_get id)
+  [ "$id" = "$1" ] || { printf 'invalid\tthe id is not the scenario'"'"'s id\n' && return; }
+  satisfied=$(printf '%s' "$result" | json_get satisfied)
+  dl_scenarios_share_ok "$satisfied" || { printf 'invalid\tsatisfied is not a number from 0 to 1\n' && return; }
+  missing=$(printf '%s' "$result" | json_get missing)
+  missing=${missing//[$'\t\r\n']/ }
+  printf 'ok\t%s\t%s\t%s\n' "$satisfied" "$missing" "$result"
+}
+
+# dl_scenarios_at_least VALUE THRESHOLD: true when the number VALUE is at least THRESHOLD.
+dl_scenarios_at_least() {
+  awk -v v="$1" -v t="$2" 'BEGIN { exit !(v + 0 >= t + 0) }'
 }
