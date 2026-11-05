@@ -393,7 +393,8 @@ train against them on the running system.
 ```
 
 - **Opt-in:** without a `scenarios` key nothing changes; `"scenarios": {}` turns the store on with the
-  defaults.
+  defaults, and `"scenarios": false` (or `null`) keeps it off. `"factory": "dark"` turns it on by default
+  (see [Factory preset](#factory-preset-collaborative-or-dark)).
 - **`scenarios.dir`** is the store, default `~/.dev-loop/<repo>/scenarios` (the state directory, outside
   every worktree); `~` and `<repo>` are expanded, a relative path is taken from the repository root.
   `paths.sh scenarios` prints the resolved directory. The other keys are the scenario stage's (below).
@@ -510,6 +511,40 @@ starts:
 - **`doctor.sh`** lists `scenario-writer` in its models line when `scenarios` is on or
   `models.scenario-writer` is set; without either the line is unchanged.
 
+## Factory preset: collaborative or dark
+
+One plugin, two operating modes. The core loop is the same in both (tickets, worktree implementers, the
+batch gate, ordered merges, the heavy queue, identity mode, the role guard); dark mode adds the scenario
+stage and moves where the human looks.
+
+```json
+"factory": "dark"
+```
+
+| | `collaborative` (default) | `dark` |
+|---|---|---|
+| `scenarios` | off | on: the gate is red until the store holds at least one valid required scenario |
+| Where the human looks | PRs, spec wording, decisions | scenarios (new and changed, listed in the issue), outcomes, the verifier's reports |
+| PR review | the `code-reviewer` agent; the human may read any PR | the `code-reviewer` agent only; the orchestrator does not ask the human about diffs |
+| Scenario changes | optional | written by the `scenario-writer` at ticket creation; a ticket starts only when its scenarios exist |
+| `cleanup.sh --apply` | deletes closed and stale branches only with `--include` (the user's OK) | deletes them too |
+
+- **The preset only sets defaults.** An explicit option always wins: `"scenarios": false` (or `null`)
+  keeps scenarios off in a dark factory, and a `scenarios` block sets the store and the stage as usual.
+- **The same in every mode:** the stop conditions (credentials, the cost cap, spec contradictions that
+  change stored data or behaviour users rely on, real money or orders, production data, deleting history,
+  security settings) and deploy timing. Dark means nobody reviews the code, not that nobody is responsible.
+- **`doctor.sh`** prints `factory <mode>, scenarios on|off (preset|explicit|default)` when `factory` is
+  set, reports any other value as `MISSING factory: ...`, and reports a dark factory whose store has no
+  valid required scenario as `MISSING factory dark: ...`. The gate's scenario stage then ends red with
+  `scenarios red: factory dark needs a scenario store with at least one valid required scenario`.
+- **The role guard** follows the same rule: in a dark factory it keeps the default store hidden from the
+  coding agents unless `scenarios` is explicitly off.
+- **Going dark** is a normal config change on a branch: the `setup` skill's go-dark step checks the store,
+  runs the `scenario-writer` for the open tickets and records the switch in `docs/DECISIONS.md`.
+- The functions: `dl_factory` and `cfg_has` (`scripts/lib/common.sh`), `dl_scenarios_setting` and
+  `dl_scenarios_ready` (`scripts/lib/scenarios.sh`).
+
 ## Configuration: `.dev-loop.json`
 
 Lives at the repository root and is committed. Every key is optional unless marked.
@@ -559,7 +594,9 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `architecture.budget` | none | the default `max_lines` per component (a card may override it) |
 | `architecture.cadence` | `20` | run the `architect` every this many merges; also `arch-evidence.sh`'s window without an architect run |
 | `architecture.scatter`, `growth`, `co_change`, `co_change_min`, `hotspot`, `cycle`, `fan_out`, `review_rounds` | `3`, `500`, `75`, `3`, `5`, `3`, `5`, `3` | the evidence thresholds (see Merge evidence and the architect) |
-| `scenarios.dir` | `~/.dev-loop/<repo>/scenarios` | the holdout scenario store; the `scenarios` key turns it on (see Holdout scenarios) |
+| `factory` | `collaborative` | the operating mode, `collaborative` or `dark`; dark turns `scenarios` on by default and lets `cleanup.sh --apply` delete closed and stale branches (see Factory preset) |
+| `scenarios` | off (on with `"factory": "dark"`) | a block turns the scenario store and stage on, `false` or `null` keeps them off |
+| `scenarios.dir` | `~/.dev-loop/<repo>/scenarios` | the holdout scenario store (see Holdout scenarios) |
 | `scenarios.run` | none | the command that starts the system for the scenario stage; its first output line is how to reach it |
 | `scenarios.run_seconds` | `120` | how long the stage waits for that first line |
 | `scenarios.judge_seconds` | `600` | how long one judge run may take; a longer one is stopped and counts as invalid |

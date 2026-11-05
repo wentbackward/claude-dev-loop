@@ -52,6 +52,9 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING scenarios.<key>: ... is not a number from 0 to 1` | set `pass`, `min_satisfaction` or `sealed` to a share such as `0.8` |
 | `note scenario store ... does not exist yet` | create the folder (`paths.sh scenarios`) and add scenarios written from the spec |
 | `note the scenario store ... is inside the repository` | move it outside every worktree (the default `~/.dev-loop/<repo>/scenarios`) |
+| `MISSING factory: "<value>" is not collaborative or dark` | set `"factory"` to `collaborative` or `dark`, or remove it (collaborative) |
+| `MISSING factory dark: no scenario store with a valid required scenario` | the `setup` skill's go-dark step: write scenarios from the spec, at least one `required: true`; or set `"scenarios": false` |
+| `factory <mode>, scenarios on\|off (preset\|explicit\|default)` | where the scenarios setting came from: the dark preset, the config, or the default |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
