@@ -19,6 +19,7 @@ DEFAULT_AGENT_ROLES = {
     "test-engineer": ["tester"],
     "verifier": ["tester"],
     "doc-auditor": ["tester"],
+    "architect": ["tester"],
 }
 ROLE_OPERATIONS = {
     "implementer": {"push", "pr-write", "pr-comment", "api-write"},

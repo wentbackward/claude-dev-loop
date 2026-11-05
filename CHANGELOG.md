@@ -80,6 +80,24 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   - A read-only `doc-auditor` agent compares the current-state docs and component cards with the code and
     the running system and opens one ticket per drift; `models.doc-auditor` sets its model (doctor checks
     it) and the role guard lets it act as the tester.
+- Merge evidence and an `architect` agent that reads it (#19):
+  - Each merge-ledger line also records the `files` the merge changed, their `components` through the
+    cards (empty without `architecture`), the `lines` added and deleted, the `review_rounds` (a `Review
+    rounds: <n>` line in the notes file, else one plus a `## Review fixes` heading per round) and the
+    `ticket`; older lines stay valid.
+  - `scripts/arch-evidence.sh [--since <n> | <time>]`, deterministic and read-only: a summary table, then
+    one stable line per finding for size (budget, growth), scatter, co-change, hotspots, cycle size,
+    misplaced shared code, fan-out outside composition roots, loop friction (review rounds, reopened
+    tickets) and run time vs code; exit 1 when a signal is over its threshold. Thresholds:
+    `architecture.cadence` (20), `scatter` (3), `growth` (500), `co_change` (75) and `co_change_min` (3),
+    `hotspot` (5), `cycle` (3), `fan_out` (5), `review_rounds` (3).
+  - Cards may mark run-time components with `kind: service`, `job` or `store`.
+  - A read-only `architect` agent (`models.architect`) proposes refactoring tickets and extraction-ladder
+    steps; the last step (a separate repository or service) needs the user's go in every mode. The
+    `dev-loop` skill runs the evidence at the start of a session and every `architecture.cadence` merges
+    and starts the architect on a signal or the cadence; `paths.sh architect` names its marker; `doctor.sh`
+    prints the merges since its last run and the signals over their thresholds, and checks the model and
+    the thresholds; the role guard lets it act as the tester.
 
 ## 0.5.0 — 2026-11-05
 

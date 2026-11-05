@@ -66,23 +66,30 @@ doctor_prd() {
   done < <(dl_docs_prd)
 }
 
+# doctor_marker_time FILE LABEL: set marker_time to the UTC time in the marker FILE (empty without one);
+# report a marker that holds no such time as MISSING, naming it LABEL.
+doctor_marker_time() {
+  marker_time=""
+  [ -f "$1" ] || return 0
+  marker_time=$(head -n 1 "$1")
+  case $marker_time in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *)
+      missing "$2 $1: \"$marker_time\" is not a UTC time like 2026-01-31T12:00:00Z"
+      marker_time=""
+      ;;
+  esac
+}
+
 # doctor_audit: print the merges since the last doc audit (merge ledger and audit marker), note when an audit
 # is due (docs.audit_every merges, default 10), and report a bad cadence or marker.
 doctor_audit() {
-  local every marker since="" merges
+  local every marker since merges
   every=$(cfg docs.audit_every 10)
   case $every in "" | *[!0-9]* | 0) missing "docs.audit_every: \"$every\" is not a positive number"; every=10 ;; esac
   marker=$(dl_doc_audit_file)
-  if [ -f "$marker" ]; then
-    since=$(head -n 1 "$marker")
-    case $since in
-      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
-      *)
-        missing "doc audit marker $marker: \"$since\" is not a UTC time like 2026-01-31T12:00:00Z"
-        since=""
-        ;;
-    esac
-  fi
+  doctor_marker_time "$marker" "doc audit marker"
+  since=$marker_time
   merges=$(dl_ledger_count_since "$since")
   echo "        docs audit    $merges merges since the last audit (${since:-none recorded}; every $every)"
   [ "$merges" -ge "$every" ] &&
@@ -127,6 +134,29 @@ doctor_arch() {
     optional "architecture baseline: $entries entries ($baseline)"
   else
     optional "architecture baseline: none yet (arch-check.sh --baseline writes $baseline)"
+  fi
+  doctor_architect
+}
+
+# doctor_architect: print the merges since the architect last ran (merge ledger and architect marker) and the
+# evidence signals over their thresholds in that window (arch-evidence.sh); note when the architect is due
+# (architecture.cadence merges, or a signal); report bad thresholds and a bad marker.
+doctor_architect() {
+  local cadence marker since merges signals line
+  while IFS= read -r line; do
+    [ -n "$line" ] && missing "$line"
+  done < <(dl_arch_bad_thresholds)
+  cadence=$(dl_arch_threshold cadence) || cadence=20
+  marker=$(dl_architect_file)
+  doctor_marker_time "$marker" "architect marker"
+  since=$marker_time
+  merges=$(dl_ledger_count_since "$since")
+  echo "        arch architect  $merges merges since the architect last ran (${since:-none recorded}; every $cadence)"
+  signals=$(dl_arch_evidence "$DL_ROOT" "${since:-$cadence}" | dl_arch_tagged F | cut -f1 | uniq -c |
+    awk '{ printf "%s%s %s", sep, $2, $1; sep = ", " }')
+  echo "        arch signals    ${signals:-none over their thresholds}"
+  if [ "$merges" -ge "$cadence" ] || [ -n "$signals" ]; then
+    optional "architect due: $merges merges since its last run, signals: ${signals:-none} (arch-evidence.sh, then the architect agent; record the run: date -u +%Y-%m-%dT%H:%M:%SZ >$marker)"
   fi
 }
 
@@ -189,7 +219,7 @@ else
   echo "        heavy slots   $(cfg heavy.slots 2), memory cap $(cfg heavy.memory_max none)"
   echo "        gate options  affected $([ -n "$affected" ] && echo on || echo off), parallel $(cfg parallel false), fail_fast $(cfg fail_fast false)"
   models=""
-  for agent in implementer code-reviewer test-engineer verifier doc-auditor; do
+  for agent in implementer code-reviewer test-engineer verifier doc-auditor architect; do
     model=$(cfg "models.$agent" inherit)
     case $model in
       inherit | haiku | sonnet | opus | fable) models="${models:+$models }$agent=$model" ;;
@@ -204,7 +234,7 @@ else
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
   # Leftovers of a hand-built loop (the setup skill's "Migrate" step removes them).
-  for agent in implementer code-reviewer test-engineer verifier doc-auditor; do
+  for agent in implementer code-reviewer test-engineer verifier doc-auditor architect; do
     [ -f "$DL_ROOT/.claude/agents/$agent.md" ] &&
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done

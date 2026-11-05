@@ -209,3 +209,40 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   new key needs a decision); judging the direction of each change (tighter or looser), which needs a rule
   per key and is the reviewer's job; requiring both reasons for an `architecture` change; reading the
   config from the branch (then a branch would judge itself).
+
+## 2026-11-05 — Merge evidence and the architect (#19): ledger fields, signals and thresholds
+
+- **Decision:** `merge-train.sh` computes the evidence in the gate worktree right after the replay: `files`
+  and `lines` from `git diff <remote>/<base> <replayed head>` (exactly what the squash commit changes;
+  names read NUL-separated and stored as real paths, JSON-escaped, a byte that is not UTF-8 replaced by
+  U+FFFD so every line stays valid UTF-8 JSON; `arch-evidence.sh` reads a tab or a line break in a name
+  as a space), encoded by jq only when a probe shows it reads NUL-separated input whole (jq 1.6's
+  raw slurp may stop at the first NUL), else by python3; with neither, by bash, which drops names that hold
+  a tab, a line break or another control character and keeps other bytes as they are. The line counts of
+  `dl_arch_line_counts` and of the growth signal still split a path with a tab or a line break, so such a
+  file may be miscounted there: a heuristic for the evidence only, never what the ledger stores, `components` through the cards
+  of the replayed head (empty without `architecture.check`), `ticket` from the notes' first `Closes`,
+  `Fixes` or `Resolves #n`, else the branch's `<type>/<n>-` number, else `null`, and `review_rounds` from a
+  `Review rounds: <n>` line in the notes, else one plus each `Review fixes` heading, `0` without a notes
+  file. The fields are always written, so every new line has the same shape.
+- `arch-evidence.sh` maps the ledger's `files` through today's cards, not the `components` recorded at
+  merge time, so the signals follow renamed and split components; a line without `files` gets them from
+  its merge commit. Its default window is the merges since the architect's marker
+  (`~/.dev-loop/<repo>/architect.txt`, one UTC time, written by the orchestrator after a run, as for the
+  doc audit), else the last `architecture.cadence` merges; doctor uses the same window.
+- Growth is today's lines of a component minus its lines at the parent of the window's first merge commit
+  (`git grep -c` on that commit, mapped by today's cards). Hotspots count the merges that touched a file.
+  Co-change compares the merges in which both components changed with those in which either changed.
+  A reopened ticket is a ticket with more than one merge in the ledger, one of them in the window.
+  Misplaced shared code is an edge into a component of the highest layer from a lower layer. Run time vs
+  code: two cards of kind `service`, `job` or `store` where one reaches the other through the code edges.
+  Every threshold is "more than", except co-change ("at least" a share, over a minimum count); misplaced,
+  runtime, reopened tickets and budgets have none: each finding counts.
+- The architect has no Write or Edit tool and writes nothing itself: card and Architecture doc updates are
+  a docs ticket that goes through the loop like any other. It opens issues, so the role guard maps it to
+  the tester, like the doc-auditor.
+- **Reason:** the simplest deterministic signals that need only the ledger, the cards, the edge command
+  and git; no GitHub call and no extra state besides one marker.
+- **Alternatives:** per-file line counts in the ledger (a bigger ledger for one signal); the recorded
+  `components` (stale after a card change); a window of calendar time (merges per day vary); the architect
+  editing cards on its own branch (an agent that writes, against the read-only brief).

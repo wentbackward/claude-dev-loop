@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Print the dev-loop paths of the current repository, so prompts and notes use absolute paths.
 #
-# Usage: paths.sh notes <branch> | notes-dir | logs | gate | state | doc-audit | config | root
+# Usage: paths.sh notes <branch> | notes-dir | logs | gate | state | doc-audit | architect | config | root
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -23,7 +23,11 @@ case "${1:-}" in
     mkdir -p "$DL_STATE"
     dl_doc_audit_file
     ;;
+  architect)
+    mkdir -p "$DL_STATE"
+    dl_architect_file
+    ;;
   config) printf '%s\n' "$DL_CONFIG" ;;
   root) printf '%s\n' "$DL_ROOT" ;;
-  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | gate | state | doc-audit | config | root" ;;
+  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | gate | state | doc-audit | architect | config | root" ;;
 esac
