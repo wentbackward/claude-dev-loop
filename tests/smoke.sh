@@ -1664,6 +1664,31 @@ expect "with a jq that cuts input at a NUL the ledger still holds every path" '[
   "$(ledger_of feat/134-nul-jq .files)"
 expect "without jq or python3 able to read NULs, names are kept except those with a tab or line break" \
   '["a\"b\\c","d.py"]' "$(printf 'a"b\\c\0t\tb\0d.py\0n\nl\0' | DEV_LOOP_JSON_Z=bash common_fn dl_json_list_z)"
+expect "without jq or python3, the line form drops the names the JSON form drops" "a|c d" \
+  "$(printf 'a\0t\tb\0n\nl\0c d\0x\001y\0' | DEV_LOOP_JSON_Z=bash common_fn dl_z_lines | paste -sd '|' -)"
+expect "with jq the line form keeps every name, a tab or line break as a space" "a|t b|n l" \
+  "$(printf 'a\0t\tb\0n\nl\0' | common_fn dl_z_lines | paste -sd '|' -)"
+# The tool pick probes jq once per process tree: subshells (pipelines, command substitutions) and child
+# scripts reuse it, while DEV_LOOP_NO_JQ, DEV_LOOP_JSON_Z and a changed PATH still pick again.
+mkdir -p "$work/count-jq"
+cat >"$work/count-jq/jq" <<EOF
+#!/usr/bin/env bash
+[ "\${*: -1}" = 'split("\u0000")' ] && echo probe >>"$work/count-jq/probes"
+exec "$(command -v jq)" "\$@"
+EOF
+chmod +x "$work/count-jq/jq"
+: >"$work/count-jq/probes"
+PATH="$work/count-jq:$PATH" bash -c '. "$1/scripts/lib/common.sh"
+  a=$(printf "a\0" | dl_json_list_z); b=$(printf "b\0" | dl_z_lines); c=$(dl_json_string "$(printf "c\td")")
+  printf "d\0" | dl_json_list_z >/dev/null
+  bash -c ". \"\$1/scripts/lib/common.sh\"; printf \"e\0\" | dl_z_lines >/dev/null" _ "$1"' _ "$plugin"
+expect "the jq probe runs once for many calls in subshells and a child script" 1 \
+  "$(grep -c probe "$work/count-jq/probes")"
+expect "an inherited pick yields to DEV_LOOP_NO_JQ, DEV_LOOP_JSON_Z and a changed PATH" "jq python3 bash python3" \
+  "$(bash -c '. "$1/scripts/lib/common.sh"; dl_json_z_tool >/dev/null
+    echo "$(dl_json_z_tool) $(DEV_LOOP_NO_JQ=1 bash -c ". \"\$1/scripts/lib/common.sh\"; dl_json_z_tool" _ "$1")" \
+      "$(DEV_LOOP_JSON_Z=bash bash -c ". \"\$1/scripts/lib/common.sh\"; dl_json_z_tool" _ "$1")" \
+      "$(PATH="$2:$PATH" bash -c ". \"\$1/scripts/lib/common.sh\"; dl_json_z_tool" _ "$1")"' _ "$plugin" "$work/nul-jq")"
 printf '{"branch":"feat/132-raw","source_head":"r\377w","head":"raw2"}\n{"branch":"feat/133-after","head":"after"}\n' \
   >>"$DEV_LOOP_HOME/project/merged.jsonl"
 DEV_LOOP_NO_JQ=1 common_fn dl_ledger_heads 2>/dev/null | grep -qxF "feat/133-after after" &&

@@ -2,6 +2,12 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- The tool that reads NUL-separated file names (jq, python3 or bash) is chosen once per process tree,
+  not again in every pipeline and command substitution. Without jq or python3, the line form
+  (`dl_z_lines`) drops the same names with control characters as the JSON form (`dl_json_list_z`) (#27).
+
 ## 0.6.0 — 2026-11-05
 
 - `gate-train.sh` and `merge-train.sh` merge the setup branch with the main checkout on the base: when the

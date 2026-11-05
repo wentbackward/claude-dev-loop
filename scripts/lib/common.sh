@@ -259,11 +259,16 @@ _dl_json_ascii() {
   printf '"%s"' "${value//\"/\\\"}"
 }
 
-# _dl_json_z_pick: set DL_JSON_Z_TOOL (once per shell) to the tool that encodes NUL-separated names: jq when
-# it reads NULs whole (jq 1.6's raw slurp may cut its input at the first NUL), else python3, else bash.
-# DEV_LOOP_JSON_Z=bash forces the bash fallback (for tests).
+# _dl_json_z_pick: set DL_JSON_Z_TOOL to the tool that encodes NUL-separated names: jq when it reads NULs
+# whole (jq 1.6's raw slurp may cut its input at the first NUL), else python3, else bash. It runs when this
+# library loads, so pipelines and command substitutions inherit the pick, and exports it with the inputs
+# it depends on (DL_JSON_Z_FOR), so child scripts reuse it unless DEV_LOOP_NO_JQ, DEV_LOOP_JSON_Z or PATH
+# differ. DEV_LOOP_JSON_Z=bash forces the bash fallback (for tests).
 _dl_json_z_pick() {
-  [ -z "${DL_JSON_Z_TOOL:-}" ] || return 0
+  local inputs="${DEV_LOOP_NO_JQ:-}|${DEV_LOOP_JSON_Z:-}|$PATH"
+  case ${DL_JSON_Z_TOOL:-} in
+    jq | python3 | bash) [ "${DL_JSON_Z_FOR:-}" = "$inputs" ] && return 0 ;;
+  esac
   if [ "${DEV_LOOP_JSON_Z:-}" = bash ]; then
     DL_JSON_Z_TOOL=bash
   elif dl_have_jq && [ "$(printf 'a\0b\0' | jq -R -s -c 'split("\u0000")' 2>/dev/null)" = '["a","b",""]' ]; then
@@ -273,12 +278,19 @@ _dl_json_z_pick() {
   else
     DL_JSON_Z_TOOL=bash
   fi
+  DL_JSON_Z_FOR=$inputs
+  export DL_JSON_Z_TOOL DL_JSON_Z_FOR
 }
 
 # dl_json_z_tool: the tool dl_json_list_z and dl_z_lines use (jq, python3 or bash).
 dl_json_z_tool() {
   _dl_json_z_pick
   printf '%s\n' "$DL_JSON_Z_TOOL"
+}
+
+# _dl_z_plain NAME: true when NAME is not empty and holds no control character (what the bash fallbacks keep).
+_dl_z_plain() {
+  [ -n "$1" ] && [ "$(printf '%s' "$1" | tr -d '\000-\037\177')" = "$1" ]
 }
 
 # dl_json_list_z < NAMES: the NUL-separated names as a compact JSON array of strings, control characters
@@ -298,8 +310,7 @@ sys.stdout.buffer.write((json.dumps(names, ensure_ascii=False, separators=(",", 
       ;;
     *)
       while IFS= read -r -d '' name; do
-        [ -n "$name" ] && [ "$(printf '%s' "$name" | tr -d '\000-\037\177')" = "$name" ] &&
-          out="${out:+$out,}$(_dl_json_ascii "$name")"
+        if _dl_z_plain "$name"; then out="${out:+$out,}$(_dl_json_ascii "$name")"; fi
       done
       printf '[%s]\n' "$out"
       ;;
@@ -307,7 +318,8 @@ sys.stdout.buffer.write((json.dumps(names, ensure_ascii=False, separators=(",", 
 }
 
 # dl_z_lines < NAMES: the NUL-separated names one per line, as dl_json_list_z stores them (bytes that are
-# not UTF-8 replaced by U+FFFD), with tabs and line breaks as spaces (the form dl_ledger_rows prints).
+# not UTF-8 replaced by U+FFFD), with tabs and line breaks as spaces (the form dl_ledger_rows prints). The
+# bash fallback drops the names dl_json_list_z drops (those with a control character).
 dl_z_lines() {
   local name
   _dl_json_z_pick
@@ -323,9 +335,7 @@ for name in sys.stdin.buffer.read().decode("utf-8", "replace").split("\0"):
       ;;
     *)
       while IFS= read -r -d '' name; do
-        [ -n "$name" ] || continue
-        printf '%s' "$name" | tr '\t\r\n' '   '
-        echo
+        if _dl_z_plain "$name"; then printf '%s\n' "$name"; fi
       done
       ;;
   esac
@@ -641,3 +651,6 @@ dl_remove_merged_local() {
   fi
   git -C "$DL_ROOT" branch -q -D "$branch" >/dev/null 2>&1 || echo "kept local $branch: git branch -D failed"
 }
+
+# Pick the NUL tool at load time on purpose, so subshells and child scripts inherit it (#27).
+_dl_json_z_pick
