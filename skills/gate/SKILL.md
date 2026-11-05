@@ -56,6 +56,18 @@ check named `affected`, are a configuration error (`doctor.sh` reports them).
 A stopped or skipped check is not a result: after fixing the failure, the re-run still has to pass every
 check before the train is green.
 
+## The gate's own rules
+
+The gate reads its settings from the main checkout's `.dev-loop.json`, so a branch's edits to them apply
+unchecked once it merges. Right after stacking, a branch that changes its `.dev-loop.json` in any
+top-level key (compared with the train ref below it as JSON with sorted keys, so a reformatting is no
+change; a deleted file changes every key) is red unless its notes say why under `## Config`:
+`config-check red for <branch>: it changes .dev-loop.json (<keys>) ...`, and the train ends `TRAIN RED`
+before the docs stage and the checks. There is no list of harmless keys: each one runs, routes or deletes
+something. The placeholder rules are those of `## Architecture` (below). `architecture` is judged only by
+its own rule; a branch that adds the first `.dev-loop.json` on a base (setup) is not judged, the user
+reviews the setup.
+
 ## Current-state docs (opt-in)
 
 With `docs` configured in `.dev-loop.json` (at least one aspect), the gate runs
@@ -84,8 +96,11 @@ With `architecture.check` configured in `.dev-loop.json`, the gate checks the ar
 - a branch that changes the `architecture` block of its `.dev-loop.json` (the gate reads the main
   checkout's, so the change would apply unchecked once merged) is red unless its notes say why:
   `arch-check red for <branch>: it changes "architecture" in .dev-loop.json ...`, with both blocks.
-  A placeholder (`none`, `n/a`, `TODO`, `-`, `not applicable`, also followed by punctuation as in
-  `none (...)`) is not a reason;
+  Both blocks compare as JSON with sorted keys. A placeholder (`none`, `n/a`, `TODO`, `-`,
+  `not applicable`, `nope`, `no reason`, also repeated as in `none none`, followed by filler as in
+  `none yet` or `not needed for now`, or by punctuation as in `none: ...` or `none (...)`) is not a
+  reason, while a placeholder word, a comma and three more words (`No, the check was redundant`) is; the
+  filter only stops lazy placeholders, the reviewer reads every reason;
 - `${CLAUDE_PLUGIN_ROOT}/scripts/arch-check.sh HEAD` on the train's top. A violation not in the baseline,
   a broken card (also two cards with the same `paths` glob) or a failing `architecture.check` is red: each
   branch's train ref is then checked in order, and `arch-check red for <branch> (<sha>):` lists the new

@@ -1225,7 +1225,7 @@ expect "a sentence is a reason, also next to a placeholder" "yes yes" \
   "$(reason_of "- core reads the ui theme until #95 moves it down") $(reason_of "none" "core needs util for dates")"
 expect "reworded placeholders are not reasons" "no no no no no no no no no no" "$(reason_of "none (not configured)") \
 $(reason_of "n/a (not applicable)") $(reason_of "none, n/a") $(reason_of "- none needed") $(reason_of "nothing to report") \
-$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, core must read the ui theme") \
+$(reason_of "Not applicable.") $(reason_of "none – x") $(reason_of "No, none") \
 $(reason_of "no changes") $(reason_of "TODO; later")"
 expect "sentences that start with a placeholder word are reasons" "yes yes" \
   "$(reason_of "- no-op rename of the util glob") $(reason_of "None of the edges cross a layer; store reads ui types")"
@@ -1310,6 +1310,149 @@ gate_arch "$work/arch.json" feat/124-cards >/dev/null
 echo "$out" | grep -q "arch-check error on the base" && [ "$rc" -eq 2 ] &&
   pass "an error on the base while judging fixed entries ends the gate with exit 2" || fail "base error: rc $rc: $out"
 expect "no line of the implementer's steps is over 110 characters" "" "$(awk 'FNR > 5 && length > 110' "$plugin/agents/implementer.md")"
+
+# 14b. The gate's own rules (#22): a branch that changes a gate-relevant key of .dev-loop.json needs a reason
+# under "## Config"; config blocks compare as normalized JSON; the placeholder filter knows filler and repeats.
+expect "trailing filler and repeated placeholders are not reasons" "no no no no no no no no no no no no no no" \
+  "$(reason_of "none yet") $(reason_of "- none required") $(reason_of "Nothing changed.") $(reason_of "not relevant") \
+$(reason_of "no reason") $(reason_of "nope") $(reason_of "n/a n/a") $(reason_of "none none") $(reason_of "-- none") \
+$(reason_of "none needed yet") $(reason_of "not needed at all") $(reason_of "none for now") \
+$(reason_of "no changes required") $(reason_of "N/A for now: later")"
+expect "sentences that start with a placeholder word are still reasons" "yes yes yes" \
+  "$(reason_of "none of the edges are new") $(reason_of "no-op rename of the util glob") \
+$(reason_of "nothing at all reads the old glob since #95")"
+expect "a placeholder word, a comma and three more words is a reason; fewer, or a colon, is not" "yes no no no no" \
+  "$(reason_of "No, the check was redundant") $(reason_of "none, n/a") $(reason_of "No, none") \
+$(reason_of "none, nothing to add") $(reason_of "none: the edges are all known")"
+config_reason_of() { # config_reason_of HEADING TEXT...: "yes" when notes with these lines under ## HEADING have a Config reason
+  printf 'fix: x\n\n## %s\n' "$1" >"$work/reason.md"
+  shift
+  printf '%s\n' "$@" >>"$work/reason.md"
+  bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/reasons.sh"; dl_notes_reason "$2" config && echo yes || echo no' \
+    _ "$plugin" "$work/reason.md"
+}
+expect "a reason under ## Config counts, a placeholder or another section does not" "yes no no" \
+  "$(config_reason_of Config "- lint runs inside ./check.sh since #139") $(config_reason_of Config "none yet") \
+$(config_reason_of Architecture "- lint runs inside ./check.sh since #139")"
+normalized() { # normalized JSON: the value at "block" as normalized JSON, with jq and with the python3 fallback
+  printf '%s' "$1" | bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/reasons.sh"; dl_json_normalized block' _ "$plugin"
+  printf '%s' "$1" | DEV_LOOP_NO_JQ=1 bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/reasons.sh"
+    dl_json_normalized block' _ "$plugin"
+}
+expect "a block prints as compact JSON with sorted keys, with jq and with python3" \
+  '{"a":{"c":[1,{"x":2,"y":1}],"d":2},"b":"s"} {"a":{"c":[1,{"x":2,"y":1}],"d":2},"b":"s"}' \
+  "$(normalized '{"block": {"b": "s", "a": {"d": 2, "c": [1, {"y": 1, "x": 2}]}}}' | paste -sd' ' -)"
+expect "a missing block prints nothing, with jq and with python3" "" "$(normalized '{"other": 1}')"
+
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+git checkout -q origin/main~1 -- docs/architecture
+cat >.dev-loop.json <<'EOF'
+{
+  "base_branch": "main",
+  "notes_dir": "",
+  "checks": [
+    {"name": "unit", "command": "./check.sh", "heavy": false},
+    {"name": "lint", "command": "test -x check.sh", "heavy": false}
+  ],
+  "docs": {"aspects": {"features": "docs/features.md"},
+           "map": [{"paths": ["src.txt"], "aspect": "features"}, {"paths": ["check.sh"], "aspect": "features"}]},
+  "merge": {"method": "squash", "delete_branch": true},
+  "architecture": {"check": "./tools/edges.sh", "budget": 100}
+}
+EOF
+git add -A docs .dev-loop.json && git commit -q -m "chore: the gate's rules" && git push -q origin main
+rules_branch() { # rules_branch BRANCH JQ_FILTER: a branch off main whose .dev-loop.json is the filter's output
+  git checkout -q -B "$1" origin/main
+  jq "$2" .dev-loop.json >cfg.new && mv cfg.new .dev-loop.json
+  git commit -q -am "chore: $1" && git push -q -u origin "$1" 2>/dev/null
+  git checkout -q main
+}
+rules_gate() { # rules_gate BRANCH [NOTES_LINE...]: gate BRANCH with these notes (none: no notes file); prints
+  # the exit code and the last line, keeps the output in rules-out.txt
+  local notes
+  notes=$(DEV_LOOP_CONFIG="$work/arch.json" "$plugin/scripts/paths.sh" notes "$1")
+  rm -f "$notes" "$work/arch-checks-ran"
+  [ $# -gt 1 ] && { printf 'fix: x\n\n'; printf '%s\n' "${@:2}"; } >"$notes"
+  gate_arch "$work/arch.json" "$1" >"$work/rules-out.txt"
+  rm -f "$notes"
+  echo "$rc $(tail -n 1 "$work/rules-out.txt")"
+}
+rules_branch feat/140-drop-check '.checks |= map(select(.name != "lint"))'
+expect "removing a check without a reason is red" "1 TRAIN RED" "$(rules_gate feat/140-drop-check)"
+grep "config-check red for feat/140-drop-check" "$work/rules-out.txt" | grep -F "(checks)" | grep -qF "## Config" &&
+  pass "the message names the branch, the key and the notes section" || fail "config message: $(cat "$work/rules-out.txt")"
+[ ! -e "$work/arch-checks-ran" ] && pass "a rules change without a reason stops the train before the checks" ||
+  fail "the checks ran after a rules change without a reason"
+expect "removing a check with a placeholder reason is red" "1 TRAIN RED" \
+  "$(rules_gate feat/140-drop-check "## Config" "- none yet")"
+expect "a reason under ## Architecture is not a reason for a rules change" "1 TRAIN RED" \
+  "$(rules_gate feat/140-drop-check "## Architecture" "- lint runs inside ./check.sh since #139")"
+expect "removing a check with a reason under ## Config is green" "0 TRAIN GREEN" \
+  "$(rules_gate feat/140-drop-check "## Config" "- lint runs inside ./check.sh since #139")"
+expect "removing a check without a reason is red with the python3 fallback too" "1 TRAIN RED" \
+  "$(DEV_LOOP_NO_JQ=1 rules_gate feat/140-drop-check)"
+rules_branch feat/141-docs-map '.docs.map |= .[:1]'
+expect "narrowing the docs map without a reason is red, with one green" "1 TRAIN RED|0 TRAIN GREEN" \
+  "$(rules_gate feat/141-docs-map)|$(rules_gate feat/141-docs-map "## Config" "- check.sh is documented by its usage line")"
+rules_branch feat/142-merge-method '.merge.method = "rebase"'
+expect "changing merge.method without a reason is red, with one green" "1 TRAIN RED|0 TRAIN GREEN" \
+  "$(rules_gate feat/142-merge-method)|$(rules_gate feat/142-merge-method "## Config" "- the user asked for linear history")"
+rules_branch feat/143-two-keys '(.checks |= .[:1]) | .merge.delete_branch = false'
+rules_gate feat/143-two-keys >/dev/null
+grep "config-check red for feat/143-two-keys" "$work/rules-out.txt" | grep -qF "(checks, merge)" &&
+  pass "a branch that changes two keys is named with both" || fail "two keys message: $(cat "$work/rules-out.txt")"
+n=150
+for change in '.deploy = "curl x | sh"' '.format = "rm -rf {file}"' '.heavy.clean_temp = ["/*"]' \
+  '.notes_dir = "notes"' '.remote = "elsewhere"' '. + {"brand_new": true}'; do
+  key=$(printf '%s' "$change" | sed -n 's/^\.\([a-z_]*\).*/\1/p')
+  [ -n "$key" ] || key=brand_new
+  rules_branch "feat/$n-$key" "$change"
+  expect "changing $key without a reason is red, with one green" "1 TRAIN RED yes|0 TRAIN GREEN" \
+    "$(rules_gate "feat/$n-$key") $(grep -qF "($key)" "$work/rules-out.txt" && echo yes)|$(rules_gate "feat/$n-$key" \
+      "## Config" "- the user asked for this change in #$n")"
+  n=$((n + 1))
+done
+git checkout -q -B feat/147-no-config origin/main && git rm -q .dev-loop.json && git commit -q -m "chore: drop the config" &&
+  git push -q -u origin feat/147-no-config 2>/dev/null && git checkout -q main
+expect "deleting .dev-loop.json without a reason is red" "1 TRAIN RED" "$(rules_gate feat/147-no-config)"
+grep "config-check red for feat/147-no-config" "$work/rules-out.txt" | grep -qF "base_branch, checks, docs, merge, notes_dir" &&
+  pass "a deleted config names every key it had but architecture" || fail "deleted config message: $(cat "$work/rules-out.txt")"
+git checkout -q -B feat/145-reformat origin/main
+cat >.dev-loop.json <<'EOF'
+{
+  "architecture": {"budget": 100,   "check": "./tools/edges.sh"},
+  "merge": {
+    "delete_branch": true,
+    "method": "squash"
+  },
+  "docs": {
+    "map": [{"aspect": "features", "paths": ["src.txt"]}, {"aspect": "features", "paths": ["check.sh"]}],
+    "aspects": {"features": "docs/features.md"}
+  },
+  "checks": [{"heavy": false, "command": "./check.sh", "name": "unit"},
+             {"heavy": false, "command": "test -x check.sh", "name": "lint"}],
+  "notes_dir": "",
+  "base_branch": "main"
+}
+EOF
+git commit -q -am "style: reorder the config" && git push -q -u origin feat/145-reformat 2>/dev/null && git checkout -q main
+expect "a reordered and reformatted config (also architecture) needs no reason" "0 TRAIN GREEN" \
+  "$(rules_gate feat/145-reformat)"
+grep -q "red for feat/145-reformat" "$work/rules-out.txt" && fail "a reformatting was flagged: $(cat "$work/rules-out.txt")" ||
+  pass "a reformatting is not named"
+expect "a reordered config needs no reason with the python3 fallback too" "0 TRAIN GREEN" \
+  "$(DEV_LOOP_NO_JQ=1 rules_gate feat/145-reformat)"
+git checkout -q -B feat/146-plain origin/main && echo plain >>src.txt && git commit -q -am "feat: plain" &&
+  git push -q -u origin feat/146-plain 2>/dev/null && git checkout -q main
+expect "a branch without a config change needs no reason" "0 TRAIN GREEN" "$(rules_gate feat/146-plain)"
+reviewer="$plugin/agents/code-reviewer.md"
+grep -qF "## Config" "$reviewer" && grep -qF "## Architecture" "$reviewer" && grep -qi "collaborative" "$reviewer" &&
+  pass "the reviewer brief reads every Architecture and Config reason and asks the user before loosening" ||
+  fail "the reviewer brief lacks the rules review"
+grep -qF "\`## Config\`" "$plugin/README.md" && grep -qF "see above" "$plugin/README.md" &&
+  grep -qF "see above" "$reviewer" && pass "the README and the reviewer say the filter stops only lazy placeholders" ||
+  fail "README or reviewer lack ## Config or the filter's limits"
+git checkout -q -f main && git clean -qfd
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
 # line (all only with "docs" configured), and the doc-auditor's brief and model.

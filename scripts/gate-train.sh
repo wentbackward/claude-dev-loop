@@ -9,6 +9,11 @@
 # of .dev-loop.json "checks" once on the top of the stack; heavy checks run through heavy.sh, so the
 # machine-wide slot limit and memory cap apply.
 #
+# Right after stacking, a branch that changes its .dev-loop.json (any top-level key, compared as normalized JSON
+# with the train ref below it) needs a reason under "## Config" in its notes, else it is named with the keys
+# and the train ends TRAIN RED; "architecture" has its own rule below, and the first .dev-loop.json on a base
+# (the setup branch) is not judged.
+#
 # Options (.dev-loop.json, all off by default):
 #   "affected": {"command", "summary", "heavy"} (or a plain command): run first, after gate_setup, with
 #     DL_CHANGED_FILES naming a file that lists the paths the train changes against the base, one per line
@@ -99,6 +104,30 @@ for branch in "$@"; do
   echo "stacked $branch -> $(git rev-parse --short HEAD)"
 done
 
+# shellcheck source=lib/reasons.sh
+. "$scripts_dir/lib/reasons.sh"
+
+# check_rules: a branch that changes its .dev-loop.json in any key but "architecture" (compared as normalized
+# JSON with the train ref below it, or the base) needs a reason under "## Config" in its notes: the gate reads
+# the main checkout's config, so the change would apply unchecked once merged. A red branch is named with its
+# keys and the train ends before the docs stage and the checks.
+check_rules() {
+  local branch from="$DL_REMOTE/$DL_BASE" keys red=""
+  for branch in "$@"; do
+    keys=$(dl_gate_rules_changed "$from" "train-$branch" | paste -sd, - | sed 's/,/, /g')
+    if [ -n "$keys" ] && ! dl_notes_reason "$(dl_note_file "$branch")" config; then
+      echo "config-check red for $branch: it changes .dev-loop.json ($keys) without a reason under \"## Config\" in its notes"
+      red=yes
+    fi
+    from="train-$branch"
+  done
+  [ -z "$red" ] && return 0
+  git checkout -q --detach "$DL_REMOTE/$DL_BASE"
+  echo "TRAIN RED"
+  exit 1
+}
+check_rules "$@"
+
 # shellcheck source=lib/docs.sh
 . "$scripts_dir/lib/docs.sh"
 
@@ -186,8 +215,8 @@ arch_loosened() {
 # merged); red prints why and returns 1.
 arch_config_changed() {
   local before after
-  before=$(git show "$1:.dev-loop.json" 2>/dev/null | json_get architecture)
-  after=$(git show "train-$2:.dev-loop.json" 2>/dev/null | json_get architecture)
+  before=$(git show "$1:.dev-loop.json" 2>/dev/null | dl_json_normalized architecture)
+  after=$(git show "train-$2:.dev-loop.json" 2>/dev/null | dl_json_normalized architecture)
   [ "$before" = "$after" ] && return 0
   dl_arch_notes_reason "$(dl_note_file "$2")" && return 0
   echo "arch-check red for $2: it changes \"architecture\" in .dev-loop.json without a reason under \"## Architecture\" in its notes:"
