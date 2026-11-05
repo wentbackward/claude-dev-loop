@@ -34,6 +34,9 @@
 #                       disappear or change "architecture" in .dev-loop.json needs a reason under "## Architecture" in its notes; then arch-check.sh
 #                       on the train's top. With a new violation, or a baseline entry the train fixed but
 #                       kept, each branch's train ref is checked in order and named; TRAIN RED.
+#   "scenarios": {"dir", "run", "judge", ...}  the stage "scenarios" (scenario-stage.sh) after the checks
+#                       pass, or alongside them with "parallel": judges the train's top against the holdout
+#                       scenarios; its unsatisfied and sealed lines print in full in the summary.
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
 # longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
@@ -355,6 +358,15 @@ if [ -n "$(cfg affected "")" ]; then
 fi
 count=$(cfg_len checks)
 for ((i = 0; i < count; i++)); do add_stage "checks.$i" "check-$((i + 1))"; done
+checks_end=${#names[@]}
+scenario_stage=""
+# shellcheck source=lib/scenarios.sh
+. "$scripts_dir/lib/scenarios.sh"
+if dl_scenarios_on; then # the scenario stage: after the checks pass, or alongside them with parallel
+  scenario_stage=$checks_end
+  names+=(scenarios) commands+=("$(printf '%q' "$scripts_dir/scenario-stage.sh")")
+  heavies+=("$(cfg scenarios.heavy true)") patterns+=("$DL_SCENARIOS_SUMMARY") results+=("") pids+=("")
+fi
 stages=${#names[@]}
 parallel=$(cfg parallel false)
 fail_fast=$(cfg fail_fast false)
@@ -403,16 +415,6 @@ run_sequential() {
     fi
     result_line "$i"
   done
-}
-
-# new_session COMMAND...: replace this (background) shell with the command as the leader of a new session,
-# so its process group id is the background job's pid ($!).
-new_session() {
-  if command -v setsid >/dev/null 2>&1; then
-    exec setsid "$@"
-  else
-    exec perl -MPOSIX -e 'POSIX::setsid() >= 0 or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' -- "$@"
-  fi
 }
 
 # collect INDEX: if the stage's process has ended, record its status (bash keeps it for wait).
@@ -475,7 +477,7 @@ run_parallel() {
       continue
     fi
     stage_command "$i"
-    new_session "${stage_argv[@]}" </dev/null >"$(log_of "$i")" 2>&1 &
+    dl_new_session "${stage_argv[@]}" </dev/null >"$(log_of "$i")" 2>&1 &
     pids[i]=$!
   done
   while true; do
@@ -500,14 +502,18 @@ run_sequential 0 "$first_check"
 if [ "$parallel" = true ]; then
   run_parallel "$first_check" "$stages"
 else
-  run_sequential "$first_check" "$stages"
+  run_sequential "$first_check" "$checks_end"
+  [ -n "$all_green" ] || failed=yes # the scenario stage runs only after the checks pass
+  run_sequential "$checks_end" "$stages"
 fi
 
 summary=""
 for ((i = 0; i < stages; i++)); do
   case "${results[i]}" in rc=*) ;; *) continue ;; esac
   log=$(log_of "$i")
-  if [ -n "${patterns[i]}" ]; then
+  if [ "$i" = "$scenario_stage" ]; then
+    summary+="$(grep -E -- "${patterns[i]}" "$log")"$'\n'
+  elif [ -n "${patterns[i]}" ]; then
     summary+="$(grep -E -- "${patterns[i]}" "$log" | tail -n 3)"$'\n'
   else
     summary+="$(tail -n 2 "$log")"$'\n'
