@@ -378,12 +378,14 @@ right ones. It reads evidence, not impressions:
 The gate proves that the tests pass, not that the software does what its users need. Holdout scenarios are
 end-to-end user scenarios kept outside the codebase, where the coding agents never see them. This part is
 the **scenario store** (where the scenarios live and what a valid one is), the guard that keeps it
-from the coding agents, and the **scenario writer**. Nothing runs the scenarios yet.
+from the coding agents, the **scenario writer**, and the gate's **scenario stage**, which judges every
+train against them on the running system.
 
 ```json
 "scenarios": {
   "dir": "~/.dev-loop/<repo>/scenarios",
   "run": "make scenario-env",
+  "judge": "<command; default: the scenario-judge agent>",
   "pass": 0.8,
   "min_satisfaction": 0.9,
   "sealed": 0.2
@@ -394,10 +396,7 @@ from the coding agents, and the **scenario writer**. Nothing runs the scenarios 
   defaults.
 - **`scenarios.dir`** is the store, default `~/.dev-loop/<repo>/scenarios` (the state directory, outside
   every worktree); `~` and `<repo>` are expanded, a relative path is taken from the repository root.
-  `paths.sh scenarios` prints the resolved directory.
-- **`run`, `pass`, `min_satisfaction`, `sealed`** are settings for a scenario judge that is not built yet:
-  the command that starts the system, the share a required scenario must reach, the mean the train must
-  reach, and the share of scenarios never reported in detail.
+  `paths.sh scenarios` prints the resolved directory. The other keys are the scenario stage's (below).
 - **One Markdown file per scenario** (`*.md` at any depth of the store, not under `.git`; a symlink to a
   file counts, a UTF-8 byte order mark is ignored), with front
   matter between two `---` lines: `id` (unique in the store), `title`, `spec` (the spec sections it
@@ -417,7 +416,47 @@ from the coding agents, and the **scenario writer**. Nothing runs the scenarios 
 - The functions (`scripts/lib/scenarios.sh`): `dl_scenarios_on`, `dl_scenarios_dir`,
   `dl_scenarios_files`, `dl_scenario_front`, `dl_scenario_field`, `dl_scenario_list`,
   `dl_scenario_problems`, `dl_scenarios_validate`, `dl_scenarios_count`, `dl_scenarios_required_count`,
-  `dl_scenarios_share_ok`.
+  `dl_scenarios_share_ok`, and for the stage
+  `dl_scenarios_judge_command`, `dl_scenario_sealed`, `dl_scenario_affected`, `dl_scenario_verdict`.
+
+**The scenario stage** (`scripts/scenario-stage.sh`, run by `gate-train.sh` as the stage `scenarios`
+whenever `scenarios` is configured):
+
+- **When:** after the checks pass (a failed check prints `scenarios skipped`), or alongside them with
+  `parallel`; `fail_fast` stops it like a check. It runs in the gate worktree on the train's top, heavy
+  unless `"heavy": false` in the `scenarios` block. An empty store judges nothing and starts nothing.
+- **`scenarios.run`** starts the system against fakes in its own process group; the first line it prints
+  is how to reach it (a URL, a command), passed to the judge as `DL_SCENARIO_TARGET`. It may keep running
+  (a server in the foreground) or exit after printing. It is stopped when the stage ends. Ending before it
+  prints a line, or printing nothing in `scenarios.run_seconds` (default 120), is red. Without `run` the
+  target is empty. Keep servers as its children: one that daemonizes into its own session is not stopped.
+- **`scenarios.judge`** judges one scenario, run once per scenario with `DL_SCENARIO_FILE`,
+  `DL_SCENARIO_ID` and `DL_SCENARIO_TARGET`; its last line that starts with `{` is the verdict
+  `{"id", "satisfied": 0..1, "required", "evidence", "missing"}`. The default is headless Claude Code with
+  the [`scenario-judge`](agents/scenario-judge.md) agent on `models.scenario-judge`: `claude -p --agent
+  dev-loop:scenario-judge --model <model> --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash"
+  ...`. Output without a valid verdict (no JSON object, another id, `satisfied` not from 0 to 1, a
+  non-zero exit) counts as 0.
+- **Rejudge:** a scenario below `scenarios.pass` is judged once more; its better run counts, so it fails
+  only when both runs fail.
+- **Green** needs every required scenario at `>= scenarios.pass` and the mean of all judged scenarios at
+  `>= scenarios.min_satisfaction`. Red prints `scenario <id> unsatisfied (<score>, required|scored):
+  <missing>` for each unsatisfied scenario that is not sealed, then `scenarios red: ...` with the mean;
+  `TRAIN RED` follows. The `missing` line is what goes back to the implementer; the scenario text never
+  does, and the stage never prints it.
+- **Sealed:** `scenarios.sealed` is the share of scenarios that are only counted (`scenarios sealed: <n>
+  judged, <k> unsatisfied`), never named and never described, as a check on overfitting to the feedback.
+  A scenario is sealed when the checksum of its id modulo 1000 is below `sealed * 1000`, so the choice
+  depends only on the id.
+- **With `affected`:** only the scenarios with a `spec` or `tags` item that occurs in a path the train
+  changes (`DL_CHANGED_FILES`, ignoring case) run, plus every required one.
+- **Invalid store:** any invalid scenario file makes the stage red (`scenarios red: <n> invalid scenario
+  file(s)`, without naming them; `doctor.sh` does).
+- **Logs** (`paths.sh logs`): `train-scenarios.log` (the stage's lines, safe to forward),
+  `train-scenario-results.jsonl` (one line per judge run: `scenario`, `run`, `sealed`, `valid`, the
+  judge's `result` JSON or the `error`), `train-scenario-judge/` (each judge run's own output) and
+  `train-scenarios-run.log`. The last three hold evidence and sealed results: they are for the human, not
+  for the implementers.
 
 ### Isolation: the agent-type guard
 
@@ -493,7 +532,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |
 | `cleanup.stale_days`, `cleanup.keep_days` | `14`, `30` | `cleanup.sh`: when a branch without PR or open issue is stale; how long merged notes and old gate logs are kept |
-| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`, `architect`, `scenario-writer`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
+| `models.<agent>` | `inherit` | the model per agent (`implementer`, `code-reviewer`, `test-engineer`, `verifier`, `doc-auditor`, `architect`, `scenario-writer`, `scenario-judge`): `haiku`, `sonnet`, `opus`, `fable` or `inherit` (the main session's model), see below |
 | `github.repo` | from the remote URL | `owner/name` |
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
@@ -513,7 +552,10 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `architecture.cadence` | `20` | run the `architect` every this many merges; also `arch-evidence.sh`'s window without an architect run |
 | `architecture.scatter`, `growth`, `co_change`, `co_change_min`, `hotspot`, `cycle`, `fan_out`, `review_rounds` | `3`, `500`, `75`, `3`, `5`, `3`, `5`, `3` | the evidence thresholds (see Merge evidence and the architect) |
 | `scenarios.dir` | `~/.dev-loop/<repo>/scenarios` | the holdout scenario store; the `scenarios` key turns it on (see Holdout scenarios) |
-| `scenarios.run` | none | the command that starts the system for the scenario judge |
+| `scenarios.run` | none | the command that starts the system for the scenario stage; its first output line is how to reach it |
+| `scenarios.run_seconds` | `120` | how long the stage waits for that first line |
+| `scenarios.judge` | the `scenario-judge` agent | the command that judges one scenario and prints its JSON verdict |
+| `scenarios.heavy` | `true` | run the scenario stage through `heavy.sh` |
 | `scenarios.pass`, `scenarios.min_satisfaction`, `scenarios.sealed` | `0.8`, `0.9`, `0` | the share each required scenario must reach, the mean the train must reach, the share never reported in detail |
 
 ### Models per agent
@@ -523,13 +565,15 @@ to a large one:
 
 ```json
 "models": { "implementer": "inherit", "code-reviewer": "sonnet", "test-engineer": "sonnet", "verifier": "haiku",
-            "doc-auditor": "sonnet", "architect": "opus", "scenario-writer": "opus" }
+            "doc-auditor": "sonnet", "architect": "opus", "scenario-writer": "opus",
+            "scenario-judge": "sonnet" }
 ```
 
 The orchestrator passes the model on every agent launch (the Agent tool's `model` parameter, which takes
 precedence over the agent's own `model: inherit`). A missing agent, or `inherit`, uses the main session's
 model. A resumed agent keeps the model it started with. `doctor.sh` prints the resolved models and
-reports unknown names. The gate and the heavy-job queue are scripts and use no model.
+reports unknown names. The gate and the heavy-job queue are scripts and use no model, except the scenario
+stage's default judge, which passes `models.scenario-judge` to `claude --model`.
 
 Environment overrides: `DEV_LOOP_CONFIG` (config path), `DEV_LOOP_HOME` (state, default `~/.dev-loop`),
 `DEV_LOOP_LOCK_DIR`, `DEV_LOOP_HEAVY_SLOTS`, `DEV_LOOP_NO_JQ=1` (read JSON with python3),

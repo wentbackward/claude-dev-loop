@@ -22,7 +22,8 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`, `doc-auditor`, `architect`, `scenario-writer`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   `verifier`, `doc-auditor`, `architect`, `scenario-writer`; `scenario-judge` is used by the gate's scenario
+   stage, not launched by you) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
    agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
@@ -203,6 +204,9 @@ the machine-wide heavy-job queue.
   cycle, budget), a broken card, baseline entries or card header edits that hide violations without a
   reason under `## Architecture` in its notes, or baseline entries it fixed but kept. Send the lines to
   its implementer, gate the rest.
+- **scenario <id> unsatisfied**: with `scenarios`, the running system missed a holdout scenario. Bisect
+  as for RED, then send the culprit's implementer only the `missing` text after the colon, never the
+  scenario, its id's file or the judge's evidence; sealed scenarios are only a count, never forwarded.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for

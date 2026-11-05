@@ -116,6 +116,26 @@ Red ends `TRAIN RED` before the checks; a config error (exit 2 of `arch-check.sh
 exit 2. The config comes from the main checkout; the cards and the baseline from the branch. Without
 `architecture` this stage does not run.
 
+## Holdout scenarios (opt-in)
+
+With `scenarios` in `.dev-loop.json`, the gate adds the stage `scenarios`
+(`${CLAUDE_PLUGIN_ROOT}/scripts/scenario-stage.sh`): after the checks pass (a failed check prints
+`scenarios skipped`), or alongside them with `parallel` (and stopped by `fail_fast` like a check). It
+starts `scenarios.run` in the gate worktree on the train's top, takes the first line it prints as the
+address of the system, and runs the judge (`scenarios.judge`, default the `scenario-judge` agent on
+`models.scenario-judge`) once per scenario; a scenario below `scenarios.pass`, or with invalid judge
+output, is judged once more and its better run counts. With `affected`, only the scenarios whose `spec`
+or `tags` occur in a changed path run, plus every required one. The script decides, not the agent: green
+needs every required scenario at `>= scenarios.pass` and the mean at `>= scenarios.min_satisfaction`.
+
+A red stage prints `scenario <id> unsatisfied (<score>, required|scored): <missing>` for each unsatisfied
+scenario that is not sealed, `scenarios sealed: <n> judged, <k> unsatisfied` for the sealed share
+(`scenarios.sealed`, chosen by id, never named), and `scenarios red: ...` with the mean. Send the
+implementer only the `missing` line of its scenarios: never the scenario file, the judge's evidence or
+anything from `train-scenario-results.jsonl` or `train-scenario-judge/`, which hold the evidence and the
+sealed results for the human. Bisect a red scenario stage like a red check. Without `scenarios` this
+stage does not exist and the gate's output is unchanged; a check may not be named `scenarios` then.
+
 ## Read the result (last line)
 
 - `TRAIN GREEN` (exit 0): recorded for the merge. Run the `merge` skill with the same branches in the same
