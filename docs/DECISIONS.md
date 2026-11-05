@@ -332,3 +332,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a configurable list of refused agents (no need yet); refusing searches of directories
   above the store (would refuse ordinary `grep -r` of a home directory); shelling out to `paths.sh` from the
   hook (a bash start per tool call, and it reads the config again).
+
+## 2026-11-05 — Scenario writer (#33): where its steps sit, what the issue shows, doctor's models line
+
+- **Decision:** the orchestrator's scenario steps are a new section 1b of the `dev-loop` skill (next to
+  ticket creation), not a step inside section 1. The writer runs once per ticket, after the issue exists
+  and before the implementer starts, as a fresh agent. The issue comment lists each new or changed
+  scenario as `id`, title, `required` and new or changed, never its body or file path, since the
+  implementer reads the issue. The writer stops instead of writing when `paths.sh scenarios` points
+  inside the repository. `doctor.sh` adds `scenario-writer` to its models line only when `scenarios` is on
+  or `models.scenario-writer` is set (an unknown value is reported then, also without `scenarios`), so the
+  output of a project without scenarios is unchanged.
+- **Reason:** the store's acceptance criterion says a project without `scenarios` sees no change, and its
+  smoke test checks that doctor prints no scenario lines then; titles are what the user needs to find a
+  scenario in the store to review it, and nothing more should reach the coding agents.
+- **Alternatives:** always listing `scenario-writer=inherit` (changes every project's doctor output);
+  listing nothing in the issue (the user would not know what to review); showing the scenario text in the
+  issue (leaks it to the implementer).

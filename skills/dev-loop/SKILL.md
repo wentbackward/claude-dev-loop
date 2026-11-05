@@ -22,7 +22,7 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`, `doc-auditor`, `architect`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   `verifier`, `doc-auditor`, `architect`, `scenario-writer`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
    agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
@@ -71,6 +71,31 @@ absolute paths into their prompts.
 - **Move to built.** As a ticket merges, its planned entry moves to Features in the same branch. When all
   the work of a PRD section has merged, mark that section done or archive it (move it to an archive
   folder, linked from the planned list or the decisions log), so it is not kept as a second truth.
+
+## 1b. Scenarios (`scenarios` in `.dev-loop.json`)
+
+Holdout scenarios are end-to-end user scenarios kept in the scenario store (`scenarios.dir`), outside
+every worktree, where the coding agents never see them. Without `scenarios` in `.dev-loop.json`, skip
+this section.
+
+- **When:** at ticket creation, after the issue exists and before its implementer starts, launch a fresh
+  `scenario-writer` agent (`model` from `models.scenario-writer`, see step 0) with:
+
+```text
+Write the holdout scenarios for ticket #<n>: <title>, in <absolute path of the main checkout> (on the
+latest <remote>/<base>). Spec sections: <the ticket's spec references>. Find the store with
+<plugin>/scripts/paths.sh scenarios; write only there, from the spec and the ticket, never from the code.
+Report: per scenario the file, id, title, required, and new or changed; the open spec questions.
+```
+
+- **List them in the issue:** comment the new and changed scenarios on the ticket, titles only (`id`,
+  title, `required`, new or changed), never a scenario's body, steps or file path: the implementer reads
+  the issue. Scenarios are where the user looks: they may edit them in the store, and their edits win.
+- **A red scenario goes to the implementer as the missing behaviour only:** one line in user terms
+  ("closing a position leaves its alert active"), never the scenario's id, title, text, steps or file. A
+  sealed scenario is never described, only counted.
+- **Never put the store path** (`scenarios.dir`, the output of `paths.sh scenarios`) or a scenario's text
+  in an implementer, test-engineer or code-reviewer prompt. Only the scenario agents get the store.
 
 ## 2. Scheduling: keep the queue full
 
@@ -131,7 +156,7 @@ context. Agents are disposable:
   latest must-fix list, after 3 review rounds, or when it reports that its context was compacted or it has
   lost track of the work.
 - **Code-reviewer: a fresh agent for every review round.** Never resume a reviewer.
-- **Test-engineer, verifier, doc-auditor and architect: a fresh agent for every task.**
+- **Test-engineer, verifier, doc-auditor, architect and scenario-writer: a fresh agent for every task.**
 
 ## 4. Review loop (every branch, before the gate)
 
