@@ -81,7 +81,7 @@ def load_config(cwd: str) -> dict:
 
 def scenarios_on(config: dict) -> bool:
     """True when the config has a scenarios block (as dl_scenarios_on in scripts/lib/scenarios.sh)."""
-    return config.get("scenarios") not in (None, "")
+    return isinstance(config, dict) and config.get("scenarios") not in (None, "")
 
 
 def scenarios_dir(config: dict, cwd: str) -> str:
@@ -176,17 +176,40 @@ def tool_touches_store(tool: str, tool_input: dict, cwd: str, forms: set[str]) -
     return any(touches_store(path, forms) for path in paths)
 
 
-def check_scenarios(event: dict, config: dict, cwd: str) -> None:
-    """Refuse a tool call by the implementer, test-engineer or code-reviewer that names the scenario store."""
-    agent = (event.get("agent_type") or "").rsplit(":", 1)[-1]
-    if agent not in SCENARIO_BLIND or not scenarios_on(config):
-        return
-    forms = store_forms(scenarios_dir(config, cwd))
+def project_dir(cwd: str) -> str:
+    """cwd when it is inside a git repository, else the session's project directory (CLAUDE_PROJECT_DIR)."""
+    if main_root(cwd):
+        return cwd
+    return os.environ.get("CLAUDE_PROJECT_DIR") or cwd
+
+
+def scenario_hit(event: dict, config: dict, cwd: str) -> bool:
+    """True when the tool call names the scenario store of the project that cwd belongs to."""
+    base = project_dir(cwd)
+    if base != cwd:
+        config = load_config(base)
+    if not scenarios_on(config):
+        return False
+    forms = store_forms(scenarios_dir(config, base))
     tool, tool_input = event.get("tool_name", ""), event.get("tool_input", {}) or {}
     if tool == "Bash":
-        hit = bash_touches_store(str(tool_input.get("command", "")), cwd, forms)
-    else:
-        hit = tool_touches_store(tool, tool_input, cwd, forms)
+        return bash_touches_store(str(tool_input.get("command", "")), cwd, forms)
+    return tool_touches_store(tool, tool_input, cwd, forms)
+
+
+def check_scenarios(event: dict, config: dict, cwd: str) -> None:
+    """Refuse a tool call by the implementer, test-engineer or code-reviewer that names the scenario store.
+
+    Any error while checking (a NUL byte in a path, an odd event) refuses the call for these agents, so
+    a crash can never let it through or skip the identity checks that follow.
+    """
+    agent = str(event.get("agent_type") or "").rsplit(":", 1)[-1]
+    if agent not in SCENARIO_BLIND:
+        return
+    try:
+        hit = scenario_hit(event, config, cwd)
+    except Exception as error:  # fail closed for the blind agent types
+        refuse(f"cannot check the tool call against the scenario store ({type(error).__name__}); refused")
     if hit:
         refuse(
             f"the holdout scenario store is off limits to the {agent} agent"
