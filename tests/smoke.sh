@@ -677,6 +677,32 @@ git rm -q docs/broken.md && git commit -q -m "docs: remove broken"
 docs_check "$c0" HEAD
 expect "a Markdown file deleted in the range is not link-checked" 0 "$rc"
 
+# Paths with non-ASCII names, angle-bracket and %20 links, and a from that is not an ancestor of to.
+git checkout -q -B feat/70-docs "$c0"
+printf '# Caf\303\251\n[gone](missing-too.md)\n' >"docs/caf\303\251.md"
+git add docs && git commit -q -m "docs: non-ascii name"
+docs_check "$c0" HEAD
+expect "a changed Markdown file with a non-ASCII name is link-checked" 1 "$rc"
+echo "$out" | grep -F "missing-too.md" | grep -qF "$(printf 'docs/caf\303\251.md')" &&
+  pass "the link message names the non-ASCII file as it is" || fail "non-ASCII link message: $out"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: non-ascii lib" "$(printf 'lib/\303\251.sh')"
+docs_check "$c0" HEAD
+expect "a mapped file with a non-ASCII name needs its docs" 1 "$rc"
+git checkout -q -B feat/70-docs "$c0"
+mkdir -p "docs/my dir" && echo t >"docs/my dir/t.md"
+printf '# Spaces\n[a](<my dir/t.md>) [b](<my dir/t.md> "title") [c](my%%20dir/t.md#x) [d](features.md "a title")\n' >docs/spaces.md
+git add docs && git commit -q -m "docs: spaces"
+docs_check "$c0" HEAD
+expect "angle-bracket links with spaces and %20 links resolve" 0 "$rc"
+git checkout -q -B feat/70-docs "$c0" && commit_files "feat: unmapped" other.txt
+branch_head=$(git rev-parse HEAD)
+git checkout -q -B docs-moved-base "$c0" && commit_files "feat: base moved" lib/moved.sh
+docs_check docs-moved-base "$branch_head"
+expect "docs-check compares from the merge base when the base moved on" 0 "$rc"
+echo "$out" | grep -qF "lib/moved.sh" && fail "the base's own change was judged as the branch's" ||
+  pass "the base's own changes are not judged as the branch's"
+git checkout -q main && git branch -q -D docs-moved-base
+
 out=$("$plugin/scripts/docs-check.sh" 2>&1)
 expect "docs-check without arguments is a usage error" 2 "$?"
 docs_check "$c0" no-such-ref
