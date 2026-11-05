@@ -1154,5 +1154,99 @@ expect "the template's empty architecture block keeps the check off" "2 0" \
 [ -f "$plugin/templates/COMPONENT.md" ] && grep -q "^kind: component" "$plugin/templates/COMPONENT.md" &&
   pass "the component card template has the header" || fail "no templates/COMPONENT.md"
 
+# 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
+# line (all only with "docs" configured), and the doc-auditor's brief and model.
+git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
+mkdir -p docs/specs
+printf '# Features\n\n- one\n' >docs/features.md
+printf '# PRD\n\n## Part one\n' >docs/specs/prd.md
+audit_home="$work/home-audit"
+audit_doctor() { # audit_doctor CONFIG: doctor's output with its own state directory (ledger and marker)
+  DEV_LOOP_HOME="$audit_home" DEV_LOOP_CONFIG="$1" "$plugin/scripts/doctor.sh" 2>&1
+}
+cat >"$work/audit.json" <<'EOF'
+{
+  "base_branch": "main",
+  "checks": [{"name": "unit", "command": "./check.sh", "heavy": false}],
+  "docs": {"aspects": {"features": "docs/features.md"}, "prd": ["docs/specs/prd.md", "docs/specs/gone.md"],
+           "audit_every": 2},
+  "models": {"doc-auditor": "sonnet"}
+}
+EOF
+marker=$(DEV_LOOP_HOME="$audit_home" DEV_LOOP_CONFIG="$work/audit.json" "$plugin/scripts/paths.sh" doc-audit)
+expect "paths.sh doc-audit names the audit marker in the repository's state directory" \
+  "$audit_home/project/doc-audit.txt" "$marker"
+out=$(audit_doctor "$work/audit.json")
+echo "$out"
+echo "$out" | grep -E "docs prd +docs/specs/prd.md" >/dev/null && pass "doctor prints the PRD files" ||
+  fail "doctor does not print docs.prd"
+echo "$out" | grep -E "^MISSING docs.prd" | grep -qF "docs/specs/gone.md" && pass "doctor reports a missing PRD file" ||
+  fail "no MISSING for docs/specs/gone.md"
+echo "$out" | grep -E "docs audit +0 merges since the last audit" | grep -qF "every 2" &&
+  pass "doctor prints the merges since the last audit, with the cadence" || fail "no docs audit line"
+echo "$out" | grep -qE "^note .*doc audit due" && fail "an audit is due with no merges" ||
+  pass "no audit is due without merges"
+echo "$out" | grep -qF "doc-auditor=sonnet" && pass "doctor prints the doc-auditor's model" ||
+  fail "no doc-auditor in the models line"
+mkdir -p "$audit_home/project"
+for at in 2026-01-01T10:00:00Z 2026-01-02T10:00:00Z 2026-01-03T10:00:00Z; do
+  printf '{"branch":"feat/%s","head":"abc","merged_at":"%s"}\n' "${at%%T*}" "$at" >>"$audit_home/project/merged.jsonl"
+done
+echo 'not json' >>"$audit_home/project/merged.jsonl"
+out=$(audit_doctor "$work/audit.json")
+echo "$out" | grep -E "docs audit +3 merges since the last audit" | grep -qF "none recorded" &&
+  pass "without a marker every merge in the ledger counts" || fail "no count of 3: $out"
+echo "$out" | grep -E "^note .*doc audit due" | grep -qF "$marker" &&
+  pass "doctor notes a due audit and how to record it" || fail "no due note: $out"
+echo 2026-01-01T12:00:00Z >"$marker"
+out=$(audit_doctor "$work/audit.json")
+echo "$out" | grep -E "docs audit +2 merges since the last audit" | grep -qF "2026-01-01T12:00:00Z" &&
+  pass "only merges after the marker count" || fail "no count of 2: $out"
+echo 2026-01-02T12:00:00Z >"$marker"
+out=$(audit_doctor "$work/audit.json")
+echo "$out" | grep -qE "^note .*doc audit due" && fail "an audit is due below docs.audit_every" ||
+  pass "no audit is due below docs.audit_every"
+DEV_LOOP_NO_JQ=1 audit_doctor "$work/audit.json" | grep -qE "docs audit +1 merges since the last audit" &&
+  pass "the count is the same without jq" || fail "python3 count differs"
+echo yesterday >"$marker"
+audit_doctor "$work/audit.json" | grep -E "^MISSING .*doc-audit.txt" >/dev/null &&
+  pass "doctor reports a marker that is not a UTC time" || fail "no MISSING for a bad marker"
+rm -f "$marker"
+sed -e 's/"audit_every": 2/"audit_every": "often"/' -e 's/"sonnet"/"gpt"/' \
+  -e 's/\["docs\/specs\/prd.md", "docs\/specs\/gone.md"\]/"docs\/specs\/prd.md"/' "$work/audit.json" >"$work/audit-bad.json"
+out=$(audit_doctor "$work/audit-bad.json")
+echo "$out" | grep -qE '^MISSING docs.audit_every: "often"' && pass "doctor reports a docs.audit_every that is not a number" ||
+  fail "no MISSING for audit_every"
+echo "$out" | grep -qE '^MISSING models.doc-auditor: "gpt"' && pass "doctor reports an unknown doc-auditor model" ||
+  fail "no MISSING for models.doc-auditor"
+echo "$out" | grep -E "docs prd +docs/specs/prd.md" >/dev/null && ! echo "$out" | grep -q "^MISSING docs.prd" &&
+  pass "docs.prd may be a single path" || fail "a single docs.prd path is not read"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}], "docs": {"aspects": {"features": "docs/features.md"}}}\n' \
+  >"$work/audit-default.json"
+audit_doctor "$work/audit-default.json" | grep -E "docs audit +3 merges" | grep -qF "every 10" &&
+  pass "docs.audit_every defaults to 10" || fail "audit_every default is not 10"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}], "docs": {"prd": ["docs/specs/prd.md"], "audit_every": 1}}\n' \
+  >"$work/audit-prdonly.json"
+expect "without docs aspects doctor prints no audit or PRD lines" 0 \
+  "$(audit_doctor "$work/audit-prdonly.json" | grep -c "docs audit\|docs prd\|doc audit")"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}]}\n' >"$work/audit-nodocs.json"
+expect "without docs doctor prints no audit or PRD lines" 0 \
+  "$(audit_doctor "$work/audit-nodocs.json" | grep -c "docs audit\|docs prd\|doc audit")"
+expect "the template's docs block keeps the audit off" 0 \
+  "$(audit_doctor "$plugin/templates/dev-loop.json" | grep -c "docs ")"
+expect "the template lists docs.prd, docs.audit_every and the doc-auditor's model" "[] 10 sonnet" \
+  "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
+print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"].get("doc-auditor"))' \
+    "$plugin/templates/dev-loop.json" 2>/dev/null)"
+auditor="$plugin/agents/doc-auditor.md"
+grep -q "^name: doc-auditor$" "$auditor" 2>/dev/null && pass "the doc-auditor agent exists" || fail "no agents/doc-auditor.md"
+grep "^tools:" "$auditor" 2>/dev/null | grep -qv "Write\|Edit" && pass "the doc-auditor is read-only (no Write or Edit)" ||
+  fail "the doc-auditor's tools are not read-only"
+skill="$plugin/skills/dev-loop/SKILL.md"
+[ "$(grep -c "doc-auditor" "$skill")" -ge 3 ] && grep -qF "Components:" "$skill" && grep -qF "docs.prd" "$skill" &&
+  pass "the dev-loop skill starts the doc-auditor and names the ticket lines and the PRD" ||
+  fail "the dev-loop skill lacks the slice loop"
+git checkout -q -f main && git clean -qfd
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
