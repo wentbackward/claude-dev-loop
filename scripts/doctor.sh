@@ -13,6 +13,47 @@ missing() {
 }
 optional() { echo "note    $*"; }
 
+# shellcheck source=lib/docs.sh
+. "$scripts_dir/lib/docs.sh"
+
+# doctor_docs: print the current-state docs config; report missing paths, files over docs.max_lines and
+# map rules that match no tracked file.
+doctor_docs() {
+  local name path max file lines i count names tracked
+  max=$(cfg docs.max_lines 1000)
+  case $max in "" | *[!0-9]* | 0) missing "docs.max_lines: \"$max\" is not a positive number"; max=1000 ;; esac
+  while IFS=$'\t' read -r name path; do
+    echo "        docs aspect   $name $path"
+    if [ ! -e "$DL_ROOT/$path" ]; then
+      missing "docs aspect $name: $path does not exist"
+      continue
+    fi
+    while IFS= read -r file; do
+      grep -Iq . "$file" 2>/dev/null || continue
+      lines=$(wc -l <"$file" | tr -d ' ')
+      [ "$lines" -gt "$max" ] &&
+        optional "${file#"$DL_ROOT"/} has $lines lines, over docs.max_lines $max (split it: an index and one file per area)"
+    done < <(find "$DL_ROOT/$path" -type f ! -path '*/.git/*' | LC_ALL=C sort)
+  done < <(dl_docs_aspects)
+  path=$(cfg docs.planned "")
+  if [ -n "$path" ]; then
+    echo "        docs planned  $path"
+    [ -e "$DL_ROOT/$path" ] || missing "docs.planned: $path does not exist"
+  fi
+  echo "        docs budget   max_lines $max"
+  tracked=$(git -C "$DL_ROOT" ls-files)
+  count=$(cfg_len docs.map)
+  for ((i = 0; i < count; i++)); do
+    names=$(dl_docs_rule_docs "$i" | paste -sd' ' -)
+    echo "        docs map      $((i + 1)): $(dl_docs_rule_patterns "$i" | paste -sd' ' -) -> $names"
+    while IFS= read -r name; do
+      dl_docs_aspect_path "$name" >/dev/null || missing "docs.map rule $((i + 1)): \"$name\" is not in docs.aspects"
+    done < <(dl_docs_rule_docs "$i")
+    [ -n "$(printf '%s\n' "$tracked" | dl_docs_rule_matches "$i" | head -n 1)" ] ||
+      optional "docs map rule $((i + 1)) ($(dl_docs_rule_patterns "$i" | paste -sd' ' -)) matches no tracked file"
+  done
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
@@ -80,6 +121,7 @@ else
     esac
   done
   echo "        models        $models"
+  dl_docs_on && doctor_docs
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
     ok ".claude/CLAUDE.md"
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi
