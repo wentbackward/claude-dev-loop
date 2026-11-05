@@ -19,7 +19,10 @@ case "${1:-}" in
   logs) dl_logs_dir ;;
   gate) dl_gate_dir ;;
   state) printf '%s\n' "$DL_STATE" ;;
-  doc-audit) dl_doc_audit_file ;;
+  doc-audit)
+    mkdir -p "$DL_STATE"
+    dl_doc_audit_file
+    ;;
   config) printf '%s\n' "$DL_CONFIG" ;;
   root) printf '%s\n' "$DL_ROOT" ;;
   *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | gate | state | doc-audit | config | root" ;;

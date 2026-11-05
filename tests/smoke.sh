@@ -1176,6 +1176,8 @@ EOF
 marker=$(DEV_LOOP_HOME="$audit_home" DEV_LOOP_CONFIG="$work/audit.json" "$plugin/scripts/paths.sh" doc-audit)
 expect "paths.sh doc-audit names the audit marker in the repository's state directory" \
   "$audit_home/project/doc-audit.txt" "$marker"
+[ -d "$audit_home/project" ] && pass "paths.sh doc-audit creates the state directory, so the marker can be written" ||
+  fail "no state directory for the marker"
 out=$(audit_doctor "$work/audit.json")
 echo "$out"
 echo "$out" | grep -E "docs prd +docs/specs/prd.md" >/dev/null && pass "doctor prints the PRD files" ||
