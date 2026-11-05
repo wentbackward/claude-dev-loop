@@ -66,7 +66,9 @@ change; a deleted file changes every key) is red unless its notes say why under 
 before the docs stage and the checks. There is no list of harmless keys: each one runs, routes or deletes
 something. The placeholder rules are those of `## Architecture` (below). `architecture` is judged only by
 its own rule; a branch that adds the first `.dev-loop.json` on a base (setup) is not judged, the user
-reviews the setup.
+reviews the setup, and the gate prints `first .dev-loop.json on <base>, not judged: the user reviews it
+(<branch>)`. A key that is not a plain name (`""`, a newline in it) is named as its JSON string; two
+different files that are not one JSON document each are named `.dev-loop.json`.
 
 ## Current-state docs (opt-in)
 

@@ -64,7 +64,12 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    change; a deleted file changes every key. Without a reason the gate names the branch and the changed
    top-level keys and ends `TRAIN RED` right after stacking. `architecture` is judged only by its own rule
    (a reason under `## Architecture`, see Architecture ratchet). The first `.dev-loop.json` on a base (the
-   setup branch) is not judged by this check: the user reviews the setup. Reasons follow the placeholder
+   setup branch) is not judged by this check, and the gate says so (`first .dev-loop.json on <base>, not
+   judged: the user reviews it (<branch>)`). Every key is compared, also `""`; a key that is not a plain
+   name (`""`, or one with a quote, a backslash or a control character such as a newline) is named as its
+   JSON string. A file that is not exactly one JSON document (trailing text, two documents) counts as
+   unparseable with jq and with python3 alike; two different unparseable files are a change named
+   `.dev-loop.json`. Reasons follow the placeholder
    rules of `## Architecture`. The filter only stops lazy placeholders (`ok` or `see above` pass it): the
    reviewer reads every `## Architecture` and `## Config` reason and judges it, and loosening the gate's
    rules (a weaker or removed check, a narrower docs map) needs the user's OK in collaborative mode.

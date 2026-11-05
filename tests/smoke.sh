@@ -1473,7 +1473,7 @@ rules_changed() { # rules_changed BEFORE AFTER: the names dl_gate_rules_changed 
   from=$(cfg_commit "$1")
   to=$(cfg_commit "$2")
   for nojq in "" 1; do
-    echo "$(cd "$work/cfgedge" && DEV_LOOP_NO_JQ=$nojq bash -c '. "$1/scripts/lib/common.sh"
+    printf '%s\n' "$(cd "$work/cfgedge" && DEV_LOOP_NO_JQ=$nojq bash -c '. "$1/scripts/lib/common.sh"
       . "$1/scripts/lib/reasons.sh"; dl_gate_rules_changed "$2" "$3"' _ "$plugin" "$from" "$to" | paste -sd, -)"
   done | paste -sd'|' -
 }

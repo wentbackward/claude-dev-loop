@@ -264,3 +264,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   runs per call); keeping such names in the bash line form (then it lists names the ledger lacks). Cost:
   one jq run each time a script that sources the library starts in a fresh environment, also when it
   never reads NUL-separated names.
+
+## 2026-11-05 — Config-check edges (#25): keys as JSON strings, strict single documents
+
+- **Decision:** the config-change check lists top-level keys as JSON strings (`keys[] | @json`, and
+  `json.dumps(key, ensure_ascii=False)` with DEL escaped as jq does in the python3 fallback), so `""` and
+  keys with a newline are one line each and compared like any key. A message names a key bare when it is
+  a plain name and as its JSON string otherwise (`""`, `"a\nb"`), rather than documenting such keys as
+  unsupported. Both readers accept only exactly one JSON document: jq reads with `-s` and keeps a
+  one-element input, python3 rejects extra data and `NaN`/`Infinity`. When neither side parses, the raw
+  texts are compared. The first-config notice is printed by `gate-train.sh` per branch that adds the file,
+  with the branch name in parentheses after the text the issue asked for.
+- **Reason:** naming them correctly costs one encoding step in the existing pipeline, while "unsupported"
+  would leave a silent hole in a check that guards the gate's own rules; slurping is the one jq mode whose
+  verdict python3's `json.loads` can match.
+- **Alternatives:** NUL-separated key lists (needs the shared NUL helpers another ticket is changing in
+  `common.sh`); documenting newline keys as unsupported; `jq --seq` or `input` loops for strict parsing
+  (more code, the same verdict).

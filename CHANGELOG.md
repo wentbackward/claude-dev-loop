@@ -7,6 +7,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - The tool that reads NUL-separated file names (jq, python3 or bash) is chosen once per process tree,
   not again in every pipeline and command substitution. Without jq or python3, the line form
   (`dl_z_lines`) drops the same names with control characters as the JSON form (`dl_json_list_z`) (#27).
+- The gate's config-change check (#25): the gate prints `first .dev-loop.json on <base>, not judged: the
+  user reviews it (<branch>)` for a setup branch instead of saying nothing, and the reviewer reads such a
+  first config with `deploy` or `format` commands line by line. A key named `""` is compared too, and a key
+  that is not a plain name (a newline in it) is named as its JSON string. Two different invalid files are
+  flagged (raw text compared when neither side parses), and jq and python3 agree that trailing garbage and
+  concatenated documents are unparseable.
 
 ## 0.6.0 — 2026-11-05
 
