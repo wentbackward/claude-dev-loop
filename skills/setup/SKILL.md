@@ -57,6 +57,8 @@ stop conditions. Skip any question whose answer you already have.
      main session's model.
    - `docs`: the current-state docs layout and map, see step 3b; leave `aspects` empty (docs off) until
      the user agrees on a layout.
+   - `architecture`: the component cards and the dependency check, see step 3c; leave `check` empty
+     (off) until the user confirms the component map.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
@@ -122,6 +124,31 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
    before starting the next aspect. Commit each aspect on the setup branch (or a `docs/` branch per
    aspect). Archive specs whose work has all merged. `doctor.sh` must then report no MISSING aspect; its
    notes name files over the budget and map rules that match nothing.
+
+## 3c. Component map and architecture ratchet (propose; the user decides)
+
+One card per component says what it owns, its layer and what it may depend on; the gate then keeps every
+new dependency inside those rules, and the known violations only shrink.
+
+1. **Draft the component map from the code:** the top-level packages or directories, and the edges
+   between them from the project's own dependency tool (import-linter or an `ast` scan for Python,
+   dependency-cruiser or madge for JavaScript, `go list -deps`, `cargo metadata`...). Propose the
+   components, a layer for each (0 at the bottom: storage, domain types; higher: services, UI), the
+   composition roots (entry points, the CLI, the job runner, app wiring: `kind: composition-root`) and
+   the healthy core (high fan-in, low fan-out). The run-time map (services, jobs and the protocols between
+   them) is a separate picture: do not draw code boundaries from it.
+2. **Ask the user to confirm the boundaries and the layers**, then write one card per component in
+   `docs/architecture/` from `templates/COMPONENT.md` (`paths`, `layer`, `kind`, `depends_on` where the
+   allowed dependencies are known, `max_lines` where the default budget does not fit).
+3. **The check command** (`architecture.check`): a command, run at the repository root, that prints one
+   edge per line, `<from> <to>`, as repository paths (`src/app/ui/view.py src/app/storage/db.py`) or
+   component names, only between the project's own files. A small script over the project's tool is
+   enough. Set `architecture.budget` (the default `max_lines` per component) if the user wants one.
+4. **Record the baseline:** `${CLAUDE_PLUGIN_ROOT}/scripts/arch-check.sh --baseline`, commit
+   `docs/architecture/baseline.txt` with the cards. Every violation it lists is a known exception; open a
+   ticket per group of them (move misplaced shared code down, invert an upward dependency through an
+   interface the lower layer defines, split a composition root per layer). `doctor.sh` then prints the
+   component map with sizes and budgets.
 
 ## 4. Check and commit
 

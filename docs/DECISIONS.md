@@ -66,3 +66,35 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** one list with the ancestor rule for every name (deletes results under `build/`); a
   fixed cache list without a key (no way to add a project's own cache); a marker per entry in
   `merge.rebuildable` (changes the shape of an existing key).
+
+## 2026-11-05 — Component cards and the architecture ratchet (#13): edges, mapping and the gate stage
+
+- **Decision:** the ratchet is on when `architecture.check` is set (`templates/dev-loop.json` carries an
+  empty one). The check prints `<from> <to>` edges whose ends are repository paths, or component names
+  (an end that matches no card's glob but equals a component's name is that component); a leading `./`
+  is dropped. A path belongs to the card whose matching glob is the longest (the first card file in byte
+  order on a tie); globs support `*` (also matching `/`) and `?` only. A card is a Markdown file of the
+  cards folder whose first line is `---` (other files, an index, are not cards); unknown header keys are
+  ignored, `# comments` after a value are stripped, and a `depends_on` line that is present but empty
+  allows no dependency. A composition root is never flagged as undeclared, but an upward dependency or a
+  cycle is still flagged for it. A component's size is the line count of its tracked text files
+  (`git grep -I -c ''`). A budget entry is identified by its component, so it stays known while the
+  component is no bigger than its baselined size, and an added baseline entry is one with a new key or a
+  bigger budget size. A broken card, a malformed edge line and a failing check command are red (exit 1)
+  and block `--baseline`; a missing config, a bad `budget`, an unknown ref, a missing cards folder or a
+  folder without cards are config errors (exit 2). The checkout is the current worktree when its HEAD is
+  the ref and no tracked file is modified (untracked files do not count, so a gate worktree with build
+  output is used in place), else a temporary worktree. In the gate the stage runs after `gate_setup`, so
+  a dependency tool the project installs there is available; it checks the train's top once, and only
+  when that is red re-checks each train ref in order (checked out in the gate worktree) to name the
+  branches, each for the new lines it brings first. The baseline rule compares each branch's baseline
+  with the one below it in the train and needs any non-blank line under `## Architecture` in its notes.
+  The config is read from the main checkout; the cards and the baseline from the branch.
+- **Reason:** the simplest deterministic rules that fit #13 and stay off by default; paths are what every
+  dependency tool can print, and component names make a component-level tool usable without a mapping.
+  Keying budgets by component keeps the ratchet useful for sizes, which change on every commit.
+- **Alternatives:** module names mapped through a separate table (a second source of truth beside the
+  cards); the first matching card instead of the longest glob (a broad card would swallow nested ones);
+  the stage right after the docs check, before `gate_setup` (the project's tool might not be installed
+  yet); checking every train ref on every run (one run of the tool per branch even when green); comparing
+  budget lines as plain text (every commit that touches a component over budget would be red).
