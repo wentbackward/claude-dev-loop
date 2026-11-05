@@ -41,6 +41,8 @@ doctor_docs() {
     [ -e "$DL_ROOT/$path" ] || missing "docs.planned: $path does not exist"
   fi
   echo "        docs budget   max_lines $max"
+  doctor_prd
+  doctor_audit
   tracked=$(git -C "$DL_ROOT" ls-files)
   count=$(cfg_len docs.map)
   for ((i = 0; i < count; i++)); do
@@ -52,6 +54,39 @@ doctor_docs() {
     [ -n "$(printf '%s\n' "$tracked" | dl_docs_rule_matches "$i" | head -n 1)" ] ||
       optional "docs map rule $((i + 1)) ($(dl_docs_rule_patterns "$i" | paste -sd' ' -)) matches no tracked file"
   done
+}
+
+# doctor_prd: print the PRD or spec files (docs.prd) and report a missing one.
+doctor_prd() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    echo "        docs prd      $path"
+    [ -e "$DL_ROOT/$path" ] || missing "docs.prd: $path does not exist"
+  done < <(dl_docs_prd)
+}
+
+# doctor_audit: print the merges since the last doc audit (merge ledger and audit marker), note when an audit
+# is due (docs.audit_every merges, default 10), and report a bad cadence or marker.
+doctor_audit() {
+  local every marker since="" merges
+  every=$(cfg docs.audit_every 10)
+  case $every in "" | *[!0-9]* | 0) missing "docs.audit_every: \"$every\" is not a positive number"; every=10 ;; esac
+  marker=$(dl_doc_audit_file)
+  if [ -f "$marker" ]; then
+    since=$(head -n 1 "$marker")
+    case $since in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+      *)
+        missing "doc audit marker $marker: \"$since\" is not a UTC time like 2026-01-31T12:00:00Z"
+        since=""
+        ;;
+    esac
+  fi
+  merges=$(dl_ledger_count_since "$since")
+  echo "        docs audit    $merges merges since the last audit (${since:-none recorded}; every $every)"
+  [ "$merges" -ge "$every" ] &&
+    optional "doc audit due: $merges merges since the last audit (run the doc-auditor, then record it: date -u +%Y-%m-%dT%H:%M:%SZ >$marker)"
 }
 
 # shellcheck source=lib/arch.sh
@@ -154,7 +189,7 @@ else
   echo "        heavy slots   $(cfg heavy.slots 2), memory cap $(cfg heavy.memory_max none)"
   echo "        gate options  affected $([ -n "$affected" ] && echo on || echo off), parallel $(cfg parallel false), fail_fast $(cfg fail_fast false)"
   models=""
-  for agent in implementer code-reviewer test-engineer verifier; do
+  for agent in implementer code-reviewer test-engineer verifier doc-auditor; do
     model=$(cfg "models.$agent" inherit)
     case $model in
       inherit | haiku | sonnet | opus | fable) models="${models:+$models }$agent=$model" ;;
@@ -169,7 +204,7 @@ else
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi
   if [ -f "$DL_ROOT/docs/DECISIONS.md" ]; then ok "docs/DECISIONS.md"; else optional "no docs/DECISIONS.md"; fi
   # Leftovers of a hand-built loop (the setup skill's "Migrate" step removes them).
-  for agent in implementer code-reviewer test-engineer verifier; do
+  for agent in implementer code-reviewer test-engineer verifier doc-auditor; do
     [ -f "$DL_ROOT/.claude/agents/$agent.md" ] &&
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done

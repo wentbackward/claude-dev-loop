@@ -52,6 +52,19 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.sqlite`, `*.sqlite3`, `*.sqlite-*`, `*.db`), so
   `node_modules/.env` still keeps its worktree. The broad names (`credentials*`, `secrets*`, `id_*`) still
   count for an entry git lists one by one and inside output folders (`build/credentials.json`) (#15).
+- The slice loop and a doc-auditor (off without `docs` in `.dev-loop.json`) (#21):
+  - `docs.prd`: the PRD or spec files (a path or a list); `docs.audit_every`: the doc-audit cadence in
+    merges (default 10). `doctor.sh` prints the PRD files (MISSING when one is absent) and the merges since
+    the last audit, from the merge ledger and the audit marker (`paths.sh doc-audit`,
+    `~/.dev-loop/<repo>/doc-audit.txt`), and notes `doc audit due` at the cadence.
+  - The `dev-loop` skill keeps the gap between the PRD and Features in the planned list and slices it as it
+    goes: one component and one implementer's context per ticket, the Features change first for a
+    feature, `Docs:` and `Components:` lines in each ticket, and the planned entry moved to Features as the
+    ticket merges. It runs the doc audit on cadence and before a release, and checks the planned list and
+    Features against the merged tickets before a release.
+  - A read-only `doc-auditor` agent compares the current-state docs and component cards with the code and
+    the running system and opens one ticket per drift; `models.doc-auditor` sets its model (doctor checks
+    it) and the role guard lets it act as the tester.
 
 ## 0.5.0 — 2026-11-05
 

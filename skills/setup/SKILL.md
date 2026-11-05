@@ -115,7 +115,9 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
    which code (`"src/api/*"` -> `features`, `architecture`; `"deploy/*"` -> `operations`). Globs are shell
    globs on the whole path, where `*` also matches `/`.
 3. **Propose the planned list** (`docs.planned`, e.g. `docs/planned.md`): planned work, one line per item
-   linking its ticket, kept apart from the built state.
+   linking its ticket, kept apart from the built state. Name the PRD or spec files in `docs.prd` (optional,
+   one or several): the intent the loop slices into tickets. `docs.audit_every` (default 10) sets how many
+   merges pass between doc audits.
 4. Write the agreed block into `.dev-loop.json` `docs` and add the "Documentation" section of
    `templates/CLAUDE.md` to `CLAUDE.md`. With `docs` configured, the gate runs `docs-check.sh` per branch.
 5. **Existing project: a one-time rebuild of the current-state docs**, one aspect at a time (Features

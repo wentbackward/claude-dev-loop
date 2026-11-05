@@ -22,12 +22,13 @@ absolute paths into their prompts.
    `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh <role> ...` (your role: `orchestrator`), and the guard hook
    refuses the rest. Off: use `gh` and `git` as usual.
 4. Models: `models` in `.dev-loop.json` maps each agent (`implementer`, `code-reviewer`, `test-engineer`,
-   `verifier`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these agents, pass that
-   value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
+   `verifier`, `doc-auditor`) to `haiku`, `sonnet`, `opus` or `fable`. On EVERY launch of one of these
+   agents, pass that value as the Agent tool's `model` parameter. Omit `model` when the agent is not listed or the value is
    `inherit`. Do not choose a different model yourself, even for a hard or an easy ticket.
    Agent lifetimes are in section 3a.
 5. `gh issue list --state open` and `git worktree list`: find work in flight (branches pushed, notes files
-   written, agents to resume) before starting new work.
+   written, agents to resume) before starting new work. With `docs.prd`, slice the next part of the gap
+   into tickets (section 1a).
 6. `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run): when it reports merged or helper branches, run
    it with `--apply`. Show the user the "closed" and "stale" lists and delete those (`--apply --include
    closed`, `--include stale`) only on their OK, unless `factory` is `dark`. It never touches kept
@@ -39,19 +40,36 @@ absolute paths into their prompts.
   work breakdown: the acceptance criteria as a checklist, the dependencies (`Depends on #n`), labels, and
   a milestone if the project uses them. In identity mode:
   `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh orchestrator gh issue create ...`.
-- **Current-state docs** (`docs` in `.dev-loop.json`): each ticket names the doc sections it changes
-  (Features, Architecture, ...). For a feature, write the change to Features first, as the intended new
-  state, and put it in the ticket: it is the ticket's spec. The current-state docs describe only what is
-  built; planned work stays in the tickets and the `docs.planned` list, which links them. When all the
-  work of a spec has merged, archive the spec (move it to an archive folder, linked from the planned list
-  or the decisions log) so it is not kept as a second truth.
+- **Current-state docs** (`docs` in `.dev-loop.json`): the current-state docs describe only what is
+  built; planned work stays in the tickets and the `docs.planned` list, which links them. Slice tickets
+  by the rules of section 1a.
 - **Components** (`architecture` in `.dev-loop.json`): each ticket names the components it changes (their
-  cards in `architecture.cards`). Slice a ticket to one component where possible: when a change crosses
-  components, the interface comes first (in the component that owns it, usually the lower layer), then
-  one ticket per consumer. A ticket that needs an upward dependency gets an interface the lower component
-  defines, not a baseline exception.
+  cards in `architecture.cards`). A ticket that needs an upward dependency gets an interface the lower
+  component defines, not a baseline exception.
 - Keep issues current: comment progress at each step (started, in review, gated, merged, run result) and
   close them through `Closes #n` in the PR.
+
+## 1a. The slice loop: from the PRD to small tickets (`docs` in `.dev-loop.json`)
+
+- **Intent and state, kept apart.** `docs.prd` names the PRD or spec files: the intent. Features says
+  what is built. The **gap** is what the PRD requires that Features does not list as built. Keep it
+  explicit in the planned list (`docs.planned`): one line per item, each linking its ticket.
+- **Slice as you go.** At the start of a session, and whenever the planned list runs low (fewer open
+  tickets ready to start than free implementers), slice the next part of the gap into tickets. Never
+  slice the whole PRD upfront.
+- **One component per ticket** where possible. A change across components is sliced into "change the
+  interface" first (in the component that owns it, usually the lower layer), then one ticket per consumer.
+- **Small.** A ticket fits one implementer's context: the component's card and code, its direct
+  dependencies' cards and interfaces, and the doc sections it changes. Split a ticket that does not fit
+  before it starts.
+- **Docs first for features.** The ticket's first commit changes Features to the intended new state. It is
+  the ticket's spec, and the reviewer checks the code against it.
+- **`Docs:` and `Components:` lines.** Each ticket body names its doc sections and components on two short
+  lines, e.g. `Docs: features#export, operations#jobs` and `Components: storage, api`. They say what the
+  branch may change; fill the implementer's and reviewer's prompts from them.
+- **Move to built.** As a ticket merges, its planned entry moves to Features in the same branch. When all
+  the work of a PRD section has merged, mark that section done or archive it (move it to an archive
+  folder, linked from the planned list or the decisions log), so it is not kept as a second truth.
 
 ## 2. Scheduling: keep the queue full
 
@@ -84,8 +102,9 @@ Implement ticket #<n>: <title>.
   First line: a plain title, NO leading "#", e.g. "feat(<scope>): <what> (#<n>)". Then a blank line,
   ## Summary, "Closes #<n>", ## Decisions, ## Docs (the doc changes, or "none: <reason>"),
   ## Test evidence (commands and pass counts).
-- Docs: update <the doc sections the ticket names> in this branch; describe only what is built.
-- Components: <the components the ticket changes>; keep their cards true; a new dependency must be allowed
+- Docs: <the ticket's Docs: line>; update them in this branch; describe only what is built.
+  <Feature: the first commit changes Features; the planned entry moves to Features (the slicing rules).>
+- Components: <the ticket's Components: line>; keep their cards true; a new dependency must be allowed
   by the cards (arch-check.sh HEAD), or say why under ## Architecture in the notes.
 - Dependencies: <none | #m merged | stacked on <branch>>. Files other agents are editing now: <list>; avoid them.
 - Tests: write the failing tests first. Run ONLY the tests for what you touch, plus the fast check:
@@ -111,7 +130,7 @@ context. Agents are disposable:
   latest must-fix list, after 3 review rounds, or when it reports that its context was compacted or it has
   lost track of the work.
 - **Code-reviewer: a fresh agent for every review round.** Never resume a reviewer.
-- **Test-engineer and verifier: a fresh agent for every task.**
+- **Test-engineer, verifier and doc-auditor: a fresh agent for every task.**
 
 ## 4. Review loop (every branch, before the gate)
 
@@ -123,8 +142,9 @@ When an implementer reports green:
 
 ```text
 Review branch <branch> (ticket #<n>: <title>) in <absolute worktree path>, against <remote>/<base>.
-Read CLAUDE.md, the ticket and the spec sections it cites. <This change touches <money|orders|auth|
-data deletion|...>: apply the deeper safety checklist.> Reproduce suspected bugs as throwaway tests, then
+Read CLAUDE.md, the ticket and the spec sections it cites; its Docs: and Components: lines say what the
+branch may change. <This change touches <money|orders|auth|data deletion|...>: apply the deeper safety
+checklist.> Reproduce suspected bugs as throwaway tests, then
 delete them; leave the tree clean. Run only the targeted tests and the fast check (<fast_check>).
 <Identity mode: submit your verdict on the PR as the reviewer:
 <plugin>/scripts/as-role.sh reviewer gh pr review <branch> --approve|--request-changes --body "...">
@@ -170,8 +190,9 @@ means the replay dismissed the approval: have a fresh code-reviewer confirm with
 approve again, then re-run merge-train with the remaining branches.
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
-line it printed, comment on the issues, start the next tickets. A ticket closed without a merge (dropped,
-superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
+line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
+notes `doc audit due`, run the doc audit (section 7a); when the planned list runs low, slice (section 1a).
+A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
 user's OK.
 
 Stacked branches: after the lower branch merges, rebase the upper one with
@@ -184,6 +205,33 @@ Stacked branches: after the lower branch merges, rebase the upper one with
 - Deploy only when the user is not in the middle of using the system (ask, or follow their schedule), with
   the project's deploy command (`deploy` in `.dev-loop.json` or CLAUDE.md), then verify the deployed system
   (status, health, a smoke check) and report it.
+
+## 7a. Doc audit (`docs` in `.dev-loop.json`)
+
+- Run it every `docs.audit_every` merges (default 10; `doctor.sh` prints the merges since the last audit
+  and notes `doc audit due`), when the user asks, and before a release.
+- Launch a fresh `doc-auditor` agent (`model` from `models.doc-auditor`) with:
+
+```text
+Audit the docs of <absolute path of the main checkout> (on the latest <remote>/<base>), against the code
+and, where it is safe and read-only, the running system. Merges since the last audit: <the PRs or tickets>.
+Open one ticket per drift, with the evidence <identity mode: as the tester, <plugin>/scripts/as-role.sh
+tester gh issue create ...>. Never edit files.
+Report: what you checked, the tickets you opened, what you could not check.
+```
+
+- After its report, record the audit:
+  `date -u +%Y-%m-%dT%H:%M:%SZ >"$(${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh doc-audit)"`. Its tickets join
+  the queue like any other.
+
+## 7b. Before a release
+
+The release itself (version, tag, GitHub release) happens only on the user's go. Before it:
+
+- Run the doc audit (section 7a), and fix or ticket what it finds.
+- Check that the planned list and Features agree with the tickets merged since the last release (`git log
+  <last tag>..<remote>/<base>`): each merged ticket's entry is in Features, not in the planned list, and
+  every planned entry links an open ticket.
 
 ## 8. Decisions and stop conditions
 

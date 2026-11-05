@@ -270,6 +270,35 @@ for line in open(sys.argv[1]):
   fi
 }
 
+# dl_ledger_count_since [TIME]: the number of ledger merges after TIME (a UTC time like 2026-01-31T12:00:00Z),
+# or of all merges without TIME; lines that are not JSON do not count.
+dl_ledger_count_since() {
+  local ledger
+  ledger=$(dl_ledger_file)
+  [ -s "$ledger" ] || { echo 0; return 0; }
+  if dl_have_jq; then
+    jq -R --arg t "${1:-}" 'fromjson? | select((.merged_at // "") > $t) | 1' "$ledger" 2>/dev/null | wc -l | tr -d ' '
+  else
+    python3 -I -c '
+import json, sys
+count = 0
+for line in open(sys.argv[1]):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(entry, dict) and str(entry.get("merged_at") or "") > sys.argv[2]:
+        count += 1
+print(count)
+' "$ledger" "${1:-}" 2>/dev/null || echo 0
+  fi
+}
+
+# dl_doc_audit_file: the marker the orchestrator writes after each doc audit (one line: its UTC time).
+dl_doc_audit_file() {
+  printf '%s/doc-audit.txt\n' "$DL_STATE"
+}
+
 # dl_worktree_of BRANCH: the path of the worktree that has BRANCH checked out (nothing if none);
 # with a second line "locked" when that worktree is locked.
 dl_worktree_of() {
