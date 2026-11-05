@@ -26,6 +26,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
     change a must fix; the dev-loop and setup skills and the templates (`templates/FEATURES.md`, the
     "Documentation" section of `templates/CLAUDE.md`, an empty `docs` block in
     `templates/dev-loop.json`) carry the rules.
+- `merge-train.sh` removes merged worktrees that hold self-ignoring caches (`.ruff_cache`, `.pytest_cache`
+  with their own `.gitignore`): a file inside a `merge.rebuildable` directory counts as build output unless
+  it is a secret or data file (`.env`, keys, databases) (#11).
 
 ## 0.5.0 — 2026-11-05
 
