@@ -42,6 +42,24 @@ else
   done
   affected=$(cfg affected "")
   case $affected in "{"*) affected=$(cfg affected.command "") ;; esac
+  # Every stage needs its own name: the name is its log file (train-<name>.log).
+  seen=""
+  [ -n "$(cfg affected "")" ] && seen=$(cfg affected.name affected | sed 's/[^A-Za-z0-9_.-]/_/g')
+  for ((i = 0; i < $(cfg_len checks); i++)); do
+    case $(cfg "checks.$i" "") in
+      "{"*) name=$(cfg "checks.$i.name" "check-$((i + 1))") ;;
+      *) name="check-$((i + 1))" ;;
+    esac
+    if [ "$name" = affected ]; then
+      missing "check name \"affected\" is reserved for the affected stage (rename the check)"
+      continue
+    fi
+    log_name=${name//[^A-Za-z0-9_.-]/_}
+    if printf '%s\n' "$seen" | grep -qxF -- "$log_name"; then
+      missing "check name \"$name\" is used twice (the stages would share train-$log_name.log)"
+    fi
+    seen+=$'\n'"$log_name"
+  done
   [ -n "$(cfg affected "")" ] && [ -z "$affected" ] && missing "affected: no \"command\""
   if [ "$(cfg parallel false)" = true ] && ! command -v setsid >/dev/null 2>&1 && ! command -v perl >/dev/null 2>&1; then
     missing "setsid or perl (\"parallel\": true runs each check in its own process group)"
