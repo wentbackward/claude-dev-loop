@@ -117,3 +117,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** the strong list in every rebuildable folder (deletes `build/credentials.json`); an
   allow-list of vendored file extensions (`*.js`, `*.py`), which grows with every ecosystem; judging only
   the last path component (`.venv/lib/` would be scanned with the broad names again).
+
+## 2026-11-05 — The doc-audit marker and the slice loop's config (#21)
+
+- **Decision:** the last doc audit is a marker file in the repository's state directory,
+  `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`), holding one UTC time
+  (`2026-01-31T12:00:00Z`). The orchestrator writes it after it reads the doc-auditor's report. `doctor.sh`
+  counts the merge ledger's entries whose `merged_at` is later (all of them without a marker), prints
+  `docs audit <n> merges since the last audit`, and notes `doc audit due` at `docs.audit_every` (default
+  10, a positive number). A marker that is not such a time is MISSING. `docs.prd` is a path or a list of
+  paths; doctor prints each and reports a missing one. The audit and PRD lines need `docs.aspects`, like
+  the rest of the docs output. The doc-auditor acts as the tester in identity mode (it opens issues).
+- **Reason:** the ledger already lives in the state directory and records `merged_at`, so a time next to
+  it is all doctor needs; ISO UTC times compare as text in jq and python3. The auditor is read-only, so the
+  orchestrator, which owns the loop's state, records the audit. A file outside git keeps the audit from
+  needing a commit or a merge of its own.
+- **Alternatives:** a tracked file in the repository (each audit would need a branch and a merge); a label
+  or comment on the auditor's tickets (needs GitHub and fails when an audit finds no drift); the ledger's
+  line count at the audit (breaks when the ledger is pruned or rewritten).
