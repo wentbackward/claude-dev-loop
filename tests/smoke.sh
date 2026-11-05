@@ -2634,8 +2634,10 @@ expect "guard: a dark factory with scenarios false lets the implementer read it"
   "$(dguard '{"factory": "dark", "scenarios": false}')"
 expect "guard: scenarios null and a collaborative factory leave the guard off" "0 0" \
   "$(dguard '{"factory": "dark", "scenarios": null}') $(dguard '{"factory": "collaborative"}')"
+fconfig dark-off-text '"factory": "dark", "scenarios": "false"'
+fconfig plain-off-text '"scenarios": "false"'
 same=0
-for name in none collab dark night dark-off dark-null dark-on plain-off plain-null plain-on; do
+for name in none collab dark night dark-off dark-null dark-on plain-off plain-null plain-on dark-off-text plain-off-text; do
   lib=$(factory_lib "$name" 'dl_scenarios_on && echo 2 || echo 0' | cut -d'|' -f1 | tr -d '\n')
   at=$(DEV_LOOP_CONFIG="$work/factory-$name.json" python3 -I "$plugin/hooks/guard-role.py" --scenarios-dir "$work/project")
   hook=$(printf '{"tool_name": "Read", "cwd": "%s", "agent_type": "dev-loop:implementer", "tool_input": {"file_path": "%s/a.md"}}' \
@@ -2643,7 +2645,7 @@ for name in none collab dark night dark-off dark-null dark-on plain-off plain-nu
     "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)
   [ "$lib" = "$hook" ] && same=$((same + 1)) || echo "  config $name: dl_scenarios_on says $lib, the guard $hook"
 done
-expect "guard: the hook and dl_scenarios_on agree on every factory and scenarios config" 10 "$same"
+expect "guard: the hook and dl_scenarios_on agree on every factory and scenarios config" 12 "$same"
 
 # One list of stop conditions for both modes; the skills and the README describe the preset.
 skill="$plugin/skills/dev-loop/SKILL.md"
