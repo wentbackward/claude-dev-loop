@@ -1876,5 +1876,177 @@ grep -qF "arch-evidence.sh" "$skill" && grep -qF "architecture.cadence" "$skill"
   pass "the dev-loop skill starts the architect on cadence or signals" || fail "the dev-loop skill lacks the architect"
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 
+# Scenario store (#30): where the holdout scenarios live, their format and validation; doctor reports them.
+cd "$work/project" || exit 1
+scen="$work/scenarios"
+mkdir -p "$scen/billing" "$scen/.git"
+scenario() { # scenario FILE: write a scenario from stdin into the store
+  cat >"$scen/$1"
+}
+scenario login.md <<'EOF'
+---
+id: login
+title: "A returning user logs in"   # a comment
+spec: [auth, "accounts"]
+tags: [smoke]
+required: true
+---
+## User and goal
+A returning user wants to see their dashboard.
+EOF
+scenario billing/invoice.md <<'EOF'
+---
+id: invoice
+title: The user downloads an invoice
+spec: billing
+tags: []
+required: false
+---
+The user opens billing and downloads last month's invoice.
+EOF
+printf -- '---\r\nid: crlf\r\ntitle: Windows line ends\r\nrequired: TRUE\r\n---\r\nbody\r\n' >"$scen/crlf.md"
+scenario no-id.md <<'EOF'
+---
+title: No id
+required: false
+---
+body
+EOF
+scenario no-title.md <<'EOF'
+---
+id: untitled
+required: false
+---
+body
+EOF
+scenario dup.md <<'EOF'
+---
+id: login
+title: Same id as login.md
+required: false
+---
+body
+EOF
+scenario maybe.md <<'EOF'
+---
+id: maybe
+title: Required is neither true nor false
+required: yes
+---
+body
+EOF
+scenario no-required.md <<'EOF'
+---
+id: unsure
+title: No required line
+---
+body
+EOF
+scenario empty.md <<'EOF'
+---
+id: empty
+title: Nothing below the front matter
+required: true
+---
+
+EOF
+scenario plain.md <<'EOF'
+Just text, no front matter.
+EOF
+scenario open.md <<'EOF'
+---
+id: open
+title: Front matter never closed
+required: false
+EOF
+echo "not a scenario" >"$scen/notes.txt"
+echo "---" >"$scen/.git/HEAD.md"
+scenlib() { # scenlib CODE [ARG]: run CODE (ARG is its $1) with the scenario library loaded, in the throwaway project
+  DEV_LOOP_CONFIG="${scen_config:-$work/scen.json}" bash -c '. "$0/scripts/lib/common.sh"; . "$0/scripts/lib/scenarios.sh"
+dl_load_config; code=$1; shift; eval "$code"' "$plugin" "$1" "${2:-}" 2>&1
+}
+printf '{"checks": ["true"], "scenarios": {"dir": "%s", "run": "make scenario-env", "pass": 0.8}}\n' "$scen" >"$work/scen.json"
+printf '{"checks": ["true"]}\n' >"$work/scen-none.json"
+expect "paths.sh scenarios prints scenarios.dir" "$scen" \
+  "$(DEV_LOOP_CONFIG="$work/scen.json" "$plugin/scripts/paths.sh" scenarios)"
+printf '{"checks": ["true"], "scenarios": {}}\n' >"$work/scen-default.json"
+expect "paths.sh scenarios defaults to ~/.dev-loop/<repo>/scenarios" "$DEV_LOOP_HOME/project/scenarios" \
+  "$(DEV_LOOP_CONFIG="$work/scen-default.json" "$plugin/scripts/paths.sh" scenarios)"
+printf '{"checks": ["true"], "scenarios": {"dir": "~/stores/<repo>/scenarios"}}\n' >"$work/scen-repo.json"
+expect "paths.sh scenarios expands ~ and <repo> in scenarios.dir" "$HOME/stores/project/scenarios" \
+  "$(DEV_LOOP_CONFIG="$work/scen-repo.json" "$plugin/scripts/paths.sh" scenarios)"
+expect "the library knows when scenarios are configured" "on off" \
+  "$(scenlib 'dl_scenarios_on && echo on || echo off') $(scen_config="$work/scen-none.json" scenlib 'dl_scenarios_on && echo on || echo off')"
+expect "the library lists the Markdown files of the store, sorted, subfolders included, .git left out" \
+  "billing/invoice.md crlf.md dup.md empty.md login.md maybe.md no-id.md no-required.md no-title.md open.md plain.md" \
+  "$(scenlib 'dl_scenarios_files "$(dl_scenarios_dir)"' | sed "s#^$scen/##" | paste -sd' ' -)"
+expect "a store that does not exist lists no files" "" "$(scenlib 'dl_scenarios_files /nonexistent/store')"
+expect "the library reads front-matter fields, without quotes or comments" "login|A returning user logs in|true" \
+  "$(scenlib 'f=$(dl_scenarios_dir)/login.md; echo "$(dl_scenario_field "$f" id)|$(dl_scenario_field "$f" title)|$(dl_scenario_field "$f" required)"')"
+expect "a list field reads one item per line, a scalar as one item, [] as none" "auth accounts|billing|" \
+  "$(scenlib 'd=$(dl_scenarios_dir); echo "$(dl_scenario_list "$d/login.md" spec | paste -sd" " -)|$(dl_scenario_list "$d/billing/invoice.md" spec)|$(dl_scenario_list "$d/billing/invoice.md" tags)"')"
+expect "a field outside the front matter is not read" "" \
+  "$(scenlib 'dl_scenario_field "$(dl_scenarios_dir)/plain.md" id')"
+expect "front matter with CRLF line ends reads clean values" "crlf|TRUE" \
+  "$(scenlib 'f=$(dl_scenarios_dir)/crlf.md; echo "$(dl_scenario_field "$f" id)|$(dl_scenario_field "$f" required)"')"
+out=$(scenlib 'dl_scenarios_validate "$(dl_scenarios_dir)"; echo "rc=$?"')
+echo "$out"
+invalid() { # invalid FILE REASON: the validation names FILE with REASON
+  printf '%s\n' "$out" | grep -F "$1" | grep -qF "$2" && pass "validation: $1 is invalid ($2)" ||
+    fail "validation does not report $1 with '$2': $out"
+}
+invalid no-id.md "missing id"
+invalid no-title.md "missing title"
+invalid dup.md "duplicate id login (also in login.md)"
+invalid maybe.md 'required: "yes" is not true or false'
+invalid no-required.md 'required: "" is not true or false'
+invalid crlf.md 'required: "TRUE" is not true or false'
+invalid empty.md "empty body"
+invalid plain.md "no front matter"
+invalid open.md "front matter is not closed"
+for good in login.md billing/invoice.md; do
+  printf '%s\n' "$out" | grep -qF "$good" && fail "validation reports the valid $good" || pass "validation accepts the valid $good"
+done
+expect "validation fails when a file is invalid" "rc=1" "$(printf '%s\n' "$out" | tail -n 1)"
+expect "validation prints one line per problem, file then reason" 9 "$(printf '%s\n' "$out" | grep -c $'^[^\t]*\.md\t')"
+mkdir -p "$work/scen-good" && cp "$scen/login.md" "$scen/billing/invoice.md" "$work/scen-good/"
+expect "validation of a store with only valid files passes silently" "rc=0" \
+  "$(scenlib 'dl_scenarios_validate "$1"; echo "rc=$?"' "$work/scen-good")"
+expect "the library counts the scenarios and the required ones (exactly true)" "11 2" \
+  "$(scenlib 'd=$(dl_scenarios_dir); echo "$(dl_scenarios_count "$d") $(dl_scenarios_required_count "$d")"')"
+out=$(DEV_LOOP_CONFIG="$work/scen.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out" | grep -E "^ +scenarios +$scen\$" >/dev/null && pass "doctor prints the scenario store" || fail "no store line: $out"
+echo "$out" | grep -E "^ +scenarios +11 files, 2 required" >/dev/null && pass "doctor prints the count and the required count" ||
+  fail "no count line: $out"
+expect "doctor reports each invalid scenario file as MISSING" 9 "$(echo "$out" | grep -c "^MISSING scenario ")"
+echo "$out" | grep -qF "MISSING scenario dup.md: duplicate id login" && pass "doctor names the file and the reason" ||
+  fail "no reason in doctor: $out"
+printf '{"checks": ["true"], "scenarios": {"dir": "%s", "pass": 2, "min_satisfaction": "high", "sealed": 0.2}}\n' "$scen" >"$work/scen-bad.json"
+out=$(DEV_LOOP_CONFIG="$work/scen-bad.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out" | grep -qE '^MISSING scenarios.pass: "2" is not a number from 0 to 1' && pass "doctor reports a pass threshold over 1" ||
+  fail "no MISSING for scenarios.pass: $out"
+echo "$out" | grep -qE '^MISSING scenarios.min_satisfaction: "high"' && pass "doctor reports a threshold that is not a number" ||
+  fail "no MISSING for scenarios.min_satisfaction"
+echo "$out" | grep -qE '^MISSING scenarios.sealed' && fail "doctor reports a valid sealed share" || pass "doctor accepts sealed 0.2"
+out=$(DEV_LOOP_CONFIG="$work/scen-default.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out" | grep -E "^note .*scenario store $DEV_LOOP_HOME/project/scenarios does not exist" >/dev/null &&
+  pass "doctor notes a scenario store that does not exist yet" || fail "no note for a missing store: $out"
+printf '{"checks": ["true"], "scenarios": {"dir": "scenarios"}}\n' >"$work/scen-inside.json"
+DEV_LOOP_CONFIG="$work/scen-inside.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -E "^note .*inside the repository" >/dev/null &&
+  pass "doctor notes a scenario store inside the repository" || fail "no note for a store inside the repository"
+expect "doctor without scenarios prints no scenario lines" 0 \
+  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -ci "scenario")"
+expect "doctor's output without scenarios is unchanged by an empty store directory" \
+  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)" \
+  "$(mkdir -p "$DEV_LOOP_HOME/project/scenarios"; DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)"
+rmdir "$DEV_LOOP_HOME/project/scenarios"
+example="$plugin/templates/scenario.md"
+mkdir -p "$work/scen-example" && cp "$example" "$work/scen-example/"
+expect "the example scenario in templates/ is valid" "rc=0" \
+  "$(scenlib 'dl_scenarios_validate "$1"; echo "rc=$?"' "$work/scen-example")"
+grep -qF "scenarios.dir" "$plugin/README.md" && grep -qF "min_satisfaction" "$plugin/README.md" &&
+  grep -qF "templates/scenario.md" "$plugin/README.md" && pass "the README documents the scenario keys and the example" ||
+  fail "the README lacks the scenario keys"
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
