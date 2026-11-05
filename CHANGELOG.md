@@ -46,6 +46,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   counts as build output unless it is a secret or data file; output folders (`build`, `out`) still count
   only as a whole. Secret and data names match in any case and include `*.pfx`, `id_rsa*`, `id_ed25519*`,
   `id_ecdsa*`, `id_dsa*`, `credentials*`, `secrets*` and `*.sqlite-*` (#11).
+- `merge-train.sh` no longer keeps a merged worktree for vendored files named like secrets
+  (`node_modules/pkg/credentials.js`): the broad names (`credentials*`, `secrets*`, `id_*`) count only for an
+  entry git lists one by one; the scan inside a whole rebuildable folder looks for the strong patterns only
+  (`.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.sqlite`, `*.sqlite3`, `*.sqlite-*`,
+  `*.db`), so `node_modules/.env` still keeps its worktree (#15).
 
 ## 0.5.0 — 2026-11-05
 
