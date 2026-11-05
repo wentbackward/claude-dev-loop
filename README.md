@@ -447,7 +447,7 @@ whenever `scenarios` is configured):
 - **Sealed:** `scenarios.sealed` is the share of scenarios that are only counted (`scenarios sealed: <n>
   judged, <k> unsatisfied`), never named and never described, as a check on overfitting to the feedback.
   A scenario is sealed when the checksum of its id modulo 1000 is below `sealed * 1000`, so the choice
-  depends only on the id.
+  depends only on the id; `dl_scenario_sealed <file|id> [share]` (default `scenarios.sealed`) tells.
 - **With `affected`:** only the scenarios with a `spec` or `tags` item that occurs in a path the train
   changes (`DL_CHANGED_FILES`, ignoring case) run, plus every required one.
 - **Invalid store:** any invalid scenario file makes the stage red (`scenarios red: <n> invalid scenario

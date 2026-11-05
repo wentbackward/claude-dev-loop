@@ -2378,6 +2378,9 @@ printf '%s\n' "$out" | grep -qxF "scenario $open_id unsatisfied (0.1, required):
   pass "a mixed store names the open failure and counts the sealed one" || fail "mixed sealed output"
 printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "$sealed_id|SEALED-MISSING" &&
   fail "the sealed scenario of a mixed store is named" || pass "the sealed scenario of a mixed store is not named"
+printf '{"scenarios": {"dir": "%s", "sealed": 0.5}}\n' "$jstore" >"$work/judge-sealed.json"
+expect "dl_scenario_sealed takes a scenario file or an id, with scenarios.sealed as the default share" "yes yes no" \
+  "$(scen_config="$work/judge-sealed.json" scenlib 'for x in "$1" "$(basename "$1" .md)"; do dl_scenario_sealed "$x" && printf "yes " || printf "no "; done; dl_scenario_sealed "$(basename "$1" .md)" 0 && echo yes || echo no' "$jstore/$sealed_id.md")"
 
 # affected: only the scenarios whose spec or tags occur in a changed path run, plus every required one.
 jstore_reset

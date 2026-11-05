@@ -177,12 +177,14 @@ dl_scenarios_judge_command() {
     '--no-session-persistence --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash" --add-dir "$(dirname "$DL_SCENARIO_FILE")" "Judge the scenario $DL_SCENARIO_ID in $DL_SCENARIO_FILE against the running system: ${DL_SCENARIO_TARGET:-the project in the current directory}. End with the JSON object."'
 }
 
-# dl_scenario_sealed ID SHARE: true when the scenario ID is sealed (only counted, never named) at this share:
-# its id's checksum modulo 1000 is below SHARE * 1000, so the choice depends only on the id.
+# dl_scenario_sealed FILE|ID [SHARE]: true when the scenario (a scenario file, or an id) is sealed: only
+# counted, never named. SHARE defaults to scenarios.sealed (0). It is sealed when its id's checksum modulo
+# 1000 is below SHARE * 1000, so the choice depends only on the id; the orchestrator uses it too.
 dl_scenario_sealed() {
-  local hash
-  hash=$(printf '%s' "$1" | cksum | awk '{ print $1 % 1000 }')
-  awk -v h="$hash" -v s="$2" 'BEGIN { exit !(h < s * 1000) }'
+  local id=$1 hash
+  [ -f "$1" ] && id=$(dl_scenario_field "$1" id)
+  hash=$(printf '%s' "$id" | cksum | awk '{ print $1 % 1000 }')
+  awk -v h="$hash" -v s="${2:-$(cfg scenarios.sealed 0)}" 'BEGIN { exit !(h < s * 1000) }'
 }
 
 # dl_scenario_affected FILE CHANGED: true when an item of the scenario's spec or tags occurs in a path of the
