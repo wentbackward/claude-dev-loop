@@ -2990,7 +2990,8 @@ expect "the entries are the headings outside CommonMark fences" "2026-02-01 2026
 printf '%s\n' "$out" | grep -qF "## fake" && fail "a ## inside a ~~~ block holding \`\`\` was taken for an entry" ||
   pass "a \`\`\` line does not close a ~~~ fence"
 expect "the link rule uses the same fences" "real.md" \
-  "$(printf '~~~\n```\n[a](fake.md)\n~~~\n    ```\n[b](real.md)\n' | (. "$plugin/scripts/lib/common.sh" && . "$plugin/scripts/lib/docs.sh" && dl_docs_links) | paste -sd' ' -)"
+  "$(printf '~~~\n```\n[a](fake.md)\n~~~\n    ```\n[b](real.md)\n' |
+    bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/docs.sh" && dl_docs_links' _ "$plugin" | paste -sd' ' -)"
 
 # The newest entry always stays; a newest-first journal is refused.
 archive on journal --keep 1 --apply
@@ -2998,6 +2999,11 @@ expect "the newest entry stays in the live file" "0 2026-02-04" \
   "$rc $(grep -o '^## 2026-02-0[0-9]' docs/DECISIONS.md | cut -c4- | paste -sd' ' -)"
 { head -n 2 docs/DECISIONS.md; cat docs/archive/DECISIONS-2026-02-01--2026-02-03.md; tail -n +3 docs/DECISIONS.md; } |
   cmp -s - "$work/journal-original" && pass "the CommonMark-fence journal round-trips" || fail "fence round trip"
+rm -rf docs/archive
+printf '## 2026-04-01 — a\n## 2026-04-02 — b\n## Standing decisions\n- s\n' >docs/DECISIONS.md
+archive on journal --keep 1 --apply
+expect "the newest entry stays when the standing decisions come last" "0 2026-04-02" \
+  "$rc $(grep -o '^## 2026-04-0[0-9]' docs/DECISIONS.md | cut -c4- | paste -sd' ' -)"
 rm -rf docs/archive
 printf '# Log\n\n## 2026-03-02 — Newer\n\n- b\n\n## 2026-03-01 — Older\n\n- a\n' >docs/DECISIONS.md
 cp docs/DECISIONS.md "$work/journal-original"

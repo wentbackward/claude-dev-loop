@@ -7,10 +7,11 @@
 # A dry run by default: it prints exactly what would move and writes nothing; --apply writes.
 #   journal  For each journal (<file>, else every docs.journals entry, default docs/DECISIONS.md) over its
 #            budget (--keep, else docs.max_lines, default 1000): move the oldest whole entries ("## "
-#            headings outside code fences), verbatim, to docs/archive/<NAME>-<first date>--<last date>.md
+#            headings outside CommonMark code fences), verbatim, to docs/archive/<NAME>-<first date>--<last date>.md
 #            until the live file is within budget. The preamble (text before the first entry) and a
 #            "## Standing decisions" section stay in place; only the run of entries before that section (or
-#            after it, when it comes first) moves. An archive file is never edited: a taken name gets -2,
+#            after it, when it comes first) moves, and never the newest entry. A journal must be newest last:
+#            one whose first dated entry is newer than its last is refused. An archive file is never edited: a taken name gets -2,
 #            -3, ... It verifies that the live file with the archive put back equals the original, byte for
 #            byte, before writing anything.
 #   spec     Move a finished spec to docs/archive/specs/ verbatim and leave a one-line pointer in its place
@@ -76,8 +77,9 @@ check_moved_links() {
   [ "$bad" -eq 0 ] || refuse "rewrite those links (a path that resolves from both places, or a URL)"
 }
 
-# corrupt_for_test FILE: the test seam for the dangerous direction: with DEV_LOOP_ARCHIVE_TEST_CORRUPT set,
-# change FILE so that the verification must fail.
+# corrupt_for_test FILE: test only (tests/smoke.sh): with DEV_LOOP_ARCHIVE_TEST_CORRUPT set, change the
+# temporary copy FILE so that the verification must fail. It fails safe: set by mistake, it only makes the
+# run refuse and write nothing.
 corrupt_for_test() {
   [ -z "${DEV_LOOP_ARCHIVE_TEST_CORRUPT:-}" ] || printf 'x' >>"$1"
 }
@@ -85,15 +87,28 @@ corrupt_for_test() {
 # journal_sections FILE: one "<line><TAB><kind><TAB><heading>" per "## " heading outside code fences, kind
 # "standing" for the standing decisions section, else "entry"; a last line "<total lines><TAB>end".
 journal_sections() {
-  awk '
-    /^[ \t]*(```|~~~)/ { fenced = !fenced; next }
-    fenced { next }
+  LC_ALL=C awk "$DL_DOCS_FENCE_AWK"'
+    in_fence($0) { next }
     /^## / {
       heading = $0; sub(/\r$/, "", heading)
       title = tolower(heading); sub(/[ \t]+$/, "", title)
       print NR "\t" (title == "## standing decisions" ? "standing" : "entry") "\t" heading
     }
     END { print NR "\tend" }' "$1"
+}
+
+# check_newest_last FILE: refuse a journal whose first dated entry is newer than its last (newest first);
+# uses the heads and kinds of compact_journal.
+check_newest_last() {
+  local j date oldest="" newest=""
+  for ((j = 0; j < ${#heads[@]}; j++)); do
+    [ "${kinds[j]}" = entry ] || continue
+    date=$(entry_date "${heads[j]}") || continue
+    [ -n "$oldest" ] || oldest=$date
+    newest=$date
+  done
+  [[ ! "$oldest" > "$newest" ]] ||
+    refuse "$1 starts with $oldest and ends with $newest: a journal must be newest last"
 }
 
 # entry_date HEADING: the date an entry heading starts with ("## 2026-11-05 — ..."), else nothing.
@@ -121,7 +136,7 @@ free_name() {
 # compact_journal FILE: move the oldest entries of the journal FILE to a new archive file until it is
 # within budget (a dry run without --apply).
 compact_journal() {
-  local file=$1 total lines=() kinds=() heads=() line kind heading i first="" last="" end moved date stem
+  local file=$1 total lines=() kinds=() heads=() line kind heading i j first="" last="" end moved date stem
   local from_date="" to_date="" archive
   [ -f "$top/$file" ] || refuse "$file does not exist"
   while IFS=$'\t' read -r line kind heading; do
@@ -137,7 +152,13 @@ compact_journal() {
     if [ -z "$first" ]; then [ "${kinds[i]}" = entry ] && first=$i; continue; fi
     [ "${kinds[i]}" = entry ] || break
   done
-  [ -n "$first" ] || { say "$file has $total lines, over $keep, but no entry to move"; return 0; }
+  check_newest_last "$file"
+  # The newest entry (the last one in the file) always stays in the live file.
+  for ((j = ${#lines[@]} - 1; j >= 0; j--)); do
+    [ "${kinds[j]}" = entry ] && { [ "$j" -lt "$i" ] && i=$j; break; }
+  done
+  [ -n "$first" ] && [ "$first" -lt "$i" ] ||
+    { say "$file has $total lines, over $keep, but no entry to move"; return 0; }
   for ((last = first; last < i; last++)); do
     end=$(( last + 1 < ${#lines[@]} ? lines[last + 1] - 1 : total ))
     moved=$((end - lines[first] + 1))
@@ -183,10 +204,11 @@ verify_journal() {
 named_by_config() {
   local name path
   while IFS=$'\t' read -r name path; do
+    path=$(dl_docs_resolve_link "" "$path") || continue
     [ "$1" = "$path" ] || [[ "$1" == "$path"/* ]] && { echo "docs aspect $name ($path)"; return 0; }
   done < <(dl_docs_aspects)
   while IFS= read -r path; do
-    [ -n "$path" ] && [ "$1" = "$path" ] && { echo "docs.prd"; return 0; }
+    [ -n "$path" ] && path=$(dl_docs_resolve_link "" "$path") && [ "$1" = "$path" ] && { echo "docs.prd"; return 0; }
   done < <(dl_docs_prd)
   return 1
 }
@@ -208,7 +230,7 @@ report_inbound_links() {
 
 # archive_spec FILE: move the spec FILE to docs/archive/specs/ and leave a pointer (a dry run without --apply).
 archive_spec() {
-  local file=$1 dest named
+  local file=$1 dest named dir new_dirs=""
   [ -f "$top/$file" ] || refuse "$file does not exist"
   if named=$(named_by_config "$file") && [ -z "$force" ]; then
     refuse "$file is still named by $named (archive it with --force, or change the config first)"
@@ -220,11 +242,12 @@ archive_spec() {
     "$([ -n "$pointer" ] && echo "with a pointer left in its place" || echo "with no pointer")"
   report_inbound_links "$file" "$dest"
   [ -n "$apply" ] || return 0
+  for dir in "$archive_dir/specs" "$archive_dir"; do [ -d "$top/$dir" ] || new_dirs+="$dir "; done
   write_new "$top/$file" "$dest" || refuse "cannot write $dest"
   corrupt_for_test "$top/$dest"
   if ! cmp -s "$top/$file" "$top/$dest"; then
     rm -f "$top/$dest"
-    rmdir "$top/$archive_dir/specs" "$top/$archive_dir" 2>/dev/null
+    for dir in $new_dirs; do rmdir "$top/$dir"; done
     refuse "verification failed: $dest is not a copy of $file"
   fi
   if [ -n "$pointer" ]; then

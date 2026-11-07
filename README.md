@@ -256,7 +256,7 @@ every merge:
 
 ### Journals and the archive
 
-A journal is an append-only Markdown file whose `## ` headings are its entries, oldest first:
+A journal is an append-only Markdown file whose `## ` headings are its entries, newest last (required):
 `docs.journals` (default `["docs/DECISIONS.md"]`). It keeps growing, so like a long session log it is
 compacted: the oldest whole entries move, verbatim, to `docs/archive/`, and the live file keeps the recent
 ones. A `## Standing decisions` section at the top of a journal lists, one line each, the decisions still
@@ -276,7 +276,10 @@ scripts/docs-archive.sh spec <file> [--no-pointer] [--force] [--apply]
   `docs/archive/<NAME>-<first date>--<last date>.md` (the dates of the first and last moved entry
   headings, `## 2026-11-05 — ...`; `undated` without one). The preamble (the text before the first entry)
   and the `## Standing decisions` section stay where they are; only the run of entries before that section
-  (or after it, when it comes first) moves. `## ` inside a code fence is not an entry. An archive file is
+  (or after it, when it comes first) moves, and the newest entry always stays. A journal whose first dated
+  entry is newer than its last (newest first) is refused. `## ` inside a code fence is not an entry; fences
+  follow CommonMark (a fence closes only on its own character, at least as long; a line indented 4 spaces
+  is not a fence), the same rule `docs-check.sh` uses for links. An archive file is
   never edited or overwritten: a taken name gets `-2`, `-3`, ... Before writing, it checks that the live
   file with the archive put back equals the original byte for byte (CRLF and a missing last newline
   included); otherwise it writes nothing and exits 1. A journal within budget is left alone.

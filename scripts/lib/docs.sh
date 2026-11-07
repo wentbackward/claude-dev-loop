@@ -202,11 +202,36 @@ dl_docs_line_count() {
   awk 'END {print NR}' "$1"
 }
 
+# DL_DOCS_FENCE_AWK: awk functions for CommonMark code fences, put before an awk program. in_fence(line)
+# is true for a fence line and for every line inside a fence: a fence opens with 3 or more ` or ~ after at
+# most 3 spaces, and closes only on the same character, at least as many, and nothing but spaces after.
+# shellcheck disable=SC2016  # awk code, not shell
+DL_DOCS_FENCE_AWK='
+function fence_run(line,   i, n, c) {
+  i = 1
+  while (i <= 4 && substr(line, i, 1) == " ") i++
+  if (i > 4) return ""
+  c = substr(line, i, 1)
+  if (c != "`" && c != "~") return ""
+  n = 0
+  while (substr(line, i + n, 1) == c) n++
+  if (n < 3) return ""
+  fence_rest = substr(line, i + n)
+  return c n
+}
+function in_fence(line,   run) {
+  run = fence_run(line)
+  if (open_fence == "") { open_fence = run; return run != "" }
+  if (run != "" && substr(run, 1, 1) == substr(open_fence, 1, 1) && substr(run, 2) + 0 >= substr(open_fence, 2) + 0 &&
+      fence_rest ~ /^[ \t\r]*$/) open_fence = ""
+  return 1
+}
+'
+
 # dl_docs_links < markdown: the link targets of Markdown text, outside fenced and inline code.
 dl_docs_links() {
-  awk '
-    /^[ \t]*(```|~~~)/ { fenced = !fenced; next }
-    fenced { next }
+  LC_ALL=C awk "$DL_DOCS_FENCE_AWK"'
+    in_fence($0) { next }
     {
       line = $0
       gsub(/`[^`]*`/, "", line)

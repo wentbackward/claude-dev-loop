@@ -437,7 +437,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 
 ## 2026-11-07 — docs-archive.sh (#44): dates, archive names, links and the verification
 
-- **Decision:** an entry is a line starting `## ` outside a code fence (the fence rule of `docs-check.sh`);
+- **Decision:** an entry is a line starting `## ` outside a CommonMark code fence (at most 3 spaces of
+  indent, 3 or more of one character, closed only by the same character at least as long; the link rule of
+  `docs-check.sh` uses the same fences, shared in `scripts/lib/docs.sh`). A journal must be newest last:
+  one whose first dated entry is newer than its last is refused, and the newest entry never moves.
   its date is the `YYYY-MM-DD` right after `## `, and the archive is named from the first and last moved
   entries that have one (`undated` when none has). Only the contiguous run of entries before the
   `## Standing decisions` section (or after it, when it comes first) moves, oldest first, until the live
@@ -449,8 +452,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   link that would not resolve from the archive folder is refused with the link named, never rewritten.
   Paths are from the top of the current worktree (the branch that commits the move); the archive folder
   is fixed at `docs/archive/`. Without `docs` the script is a config error (exit 2), like `docs-check.sh`.
-  The dangerous direction is tested through `DEV_LOOP_ARCHIVE_TEST_CORRUPT`, which changes the archive
-  copy before the check. The link helpers of `docs-check.sh` moved to `scripts/lib/docs.sh` so both
+  The dangerous direction is tested through `DEV_LOOP_ARCHIVE_TEST_CORRUPT`, a test-only hook that changes
+  the temporary archive copy before the check; it fails safe (set by mistake, the run only refuses and
+  writes nothing). Config paths are normalized (`./docs/f.md` is `docs/f.md`) before `spec` compares
+  them, and a failed `spec` removes only the folders that run created. The link helpers of `docs-check.sh` moved to `scripts/lib/docs.sh` so both
   scripts use one link rule. `doctor.sh` counts a last line without a newline as a line for journals.
 - **Reason:** byte-exact moves and a byte-exact check are the simplest way to prove nothing is lost; a
   rewrite of links would change the moved bytes and make the check approximate. A contiguous run keeps the

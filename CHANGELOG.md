@@ -22,8 +22,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   spec to `docs/archive/specs/` and leaves a one-line pointer (`--no-pointer`), refuses a file a docs
   aspect or `docs.prd` names (`--force`), and reports links to it. Moved text whose relative links would
   break is refused, the link named. `doctor.sh` notes a journal over `docs.max_lines`;
-  `templates/DECISIONS.md` has a `## Standing decisions` section. The link helpers of `docs-check.sh`
-  moved to `scripts/lib/docs.sh`, unchanged.
+  `templates/DECISIONS.md` has a `## Standing decisions` section. A journal must be newest last (a
+  newest-first one is refused) and its newest entry always stays.
+- `docs-check.sh` follows CommonMark code fences: a ``` line inside a `~~~` block no longer ends it, and a
+  line indented 4 spaces is not a fence; its link helpers moved to `scripts/lib/docs.sh`, shared with
+  `docs-archive.sh` (#44).
 
 ## 0.7.0 — 2026-11-05
 
