@@ -22,7 +22,9 @@ dl_load_config
 branch=${1:-$(git symbolic-ref -q --short HEAD)}
 [ -n "$branch" ] || dl_die "no branch given and HEAD is detached"
 head=$(git rev-parse -q --verify "refs/heads/$branch") || dl_die "no local branch $branch"
-case "$branch" in "$DL_BASE" | main | master | develop | trunk) dl_die "refusing to re-push the base branch $branch" ;; esac
+case "$branch" in
+  "$DL_BASE" | main | master | develop | trunk) dl_die "refusing to re-push the base branch $branch" ;;
+esac
 worktree=$(dl_worktree_of "$branch" | head -n 1)
 if [ -n "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain)" ]; then
   dl_die "$worktree has uncommitted changes: commit them (or move them away) first"
@@ -52,7 +54,7 @@ if [ -n "$worktree" ] && ! git -C "$worktree" checkout -q "$new"; then
   dl_die "could not switch $worktree to $new"
 fi
 if ! "$scripts_dir/as-role.sh" implementer git -C "${worktree:-$DL_ROOT}" push -q -u "$DL_REMOTE" "$new"; then
-  # Undo only what this run created: the worktree goes back to the branch, the new name (at the same head) goes.
+  # Undo only what this run created: the worktree goes back, the new name (at the same head) goes.
   [ -z "$worktree" ] || git -C "$worktree" checkout -q "$branch"
   git update-ref -d "refs/heads/$new" "$head"
   echo "repush: the push of $new failed; nothing changed" >&2
@@ -62,9 +64,14 @@ fi
 old_note=$(dl_note_file "$branch")
 new_note=$(dl_note_file "$new")
 if [ -f "$old_note" ]; then
-  mkdir -p "$(dirname "$new_note")"
   # shellcheck disable=SC2016  # the backticks are Markdown, not a command
-  { cat "$old_note"; printf '\nSupersedes `%s` (re-pushed under a new name after a rebase, never force-pushed).\n' "$branch"; } >"$new_note"
+  if ! { mkdir -p "$(dirname "$new_note")" &&
+    { cat "$old_note" &&
+      printf '\nSupersedes `%s` (re-pushed under a new name after a rebase, never force-pushed).\n' "$branch"; } \
+      >"$new_note"; } 2>/dev/null; then
+    dl_warn "WARNING: $new is pushed, but its notes file could not be written: copy $old_note to $new_note"
+    dl_warn "and add the line: Supersedes \`$branch\`"
+  fi
 else
   dl_warn "no notes file for $branch ($old_note): write $new_note"
 fi
