@@ -63,6 +63,13 @@ case "${1:-} ${2:-}" in
       { echo "fake gh: cannot approve your own pull request" >&2; exit 1; }
     case " $* " in *" --approve "*) echo "$who" >"$dir/$(key "$branch").approved" ;; esac
     ;;
+  "pr close")
+    branch=$3
+    [ -f "$dir/$(key "$branch").state" ] || exit 1
+    comment=$(printf '%s\n' "$@" | grep -A1 -- --comment | tail -1)
+    printf '%s\n' "$comment" >"$dir/$(key "$branch").comment"
+    echo CLOSED >"$dir/$(key "$branch").state"
+    ;;
   "pr merge")
     branch=$3
     if [ "${FAKE_GH_REQUIRE_APPROVAL:-}" = 1 ] && [ ! -f "$dir/$(key "$branch").approved" ]; then
