@@ -3067,5 +3067,41 @@ expect "spec --no-pointer leaves no file behind" "0 no yes" \
 archive on spec docs/specs/prd.md --force --apply
 expect "spec --force archives a file the config names" "0 yes" "$rc $([ -f docs/archive/specs/prd.md ] && echo yes)"
 cd "$work/project" || exit 1
+# 18. Docs maintenance (#47): the dev-loop skill's maintenance ticket on the audit's cadence, and the
+# doc-auditor's housekeeping list in its report (the auditor stays read-only).
+maint_skill="$plugin/skills/dev-loop/SKILL.md"
+maint=$(awk '/^#+ / { on = ($0 ~ /^#+ .*Docs maintenance/) } on' "$maint_skill")
+printf '%s\n' "$maint" | grep -qF 'docs.audit_every' && printf '%s\n' "$maint" | grep -qiE 'after (the|each) (doc )?audit' &&
+  pass "the dev-loop skill has a Docs maintenance section on the doc audit's cadence" ||
+  fail "no Docs maintenance section on the audit's cadence"
+printf '%s\n' "$maint" | grep -qF 'docs: maintenance' && printf '%s\n' "$maint" | grep -qiE 'one .*ticket' &&
+  pass "docs maintenance is one docs: maintenance ticket" || fail "no single docs: maintenance ticket"
+maint_items=0
+for want in 'doctor' 'planned' 'docs-archive.sh journal' 'Standing decisions' 'docs-archive.sh spec' 'split'; do
+  printf '%s\n' "$maint" | grep -qF "$want" && maint_items=$((maint_items + 1))
+done
+expect "the maintenance ticket lists doctor's notes, planned rows, journals, specs and splits" 6 "$maint_items"
+printf '%s\n' "$maint" | grep -qiE 'at most one .*per ticket' && pass "docs maintenance splits at most one doc per ticket" ||
+  fail "no one-split-per-ticket rule"
+printf '%s\n' "$maint" | grep -qiE 'not planned' && printf '%s\n' "$maint" | grep -qiE "user's OK" &&
+  printf '%s\n' "$maint" | grep -qiE 'collaborative' && printf '%s\n' "$maint" | grep -qiE 'dark.*(automatic|without asking)' &&
+  pass "closing a stale ticket needs the user's OK in collaborative mode and is automatic in dark mode" ||
+  fail "no collaborative/dark rule for closing stale tickets"
+printf '%s\n' "$maint" | grep -qiE 'nothing to do' && printf '%s\n' "$maint" | grep -qiE 'reviewed' &&
+  printf '%s\n' "$maint" | grep -qiE 'gated' && pass "docs maintenance is skipped when empty and reviewed and gated like any ticket" ||
+  fail "docs maintenance does not say skipped, reviewed and gated"
+awk '/^## 8a\./ { on = 1; next } /^## / { on = 0 } on' "$maint_skill" | grep -qiE 'not planned' &&
+  pass "factory mode dark closes stale tickets as not planned without asking" || fail "section 8a lacks the stale-ticket rule"
+auditor="$plugin/agents/doc-auditor.md"
+grep -E '^tools:' "$auditor" | grep -vqE 'Write|Edit' && grep -qiE 'never edits files' "$auditor" &&
+  grep -qiE 'you do not change files' "$auditor" && pass "the doc-auditor brief still forbids edits" ||
+  fail "the doc-auditor brief no longer forbids edits"
+auditor_report=$(awk '/^## Report/ { on = 1; next } /^## / { on = 0 } on' "$auditor")
+printf '%s\n' "$auditor_report" | grep -qiE 'maintenance list' && pass "the doc-auditor report has a maintenance list" ||
+  fail "no maintenance list in the doc-auditor report"
+grep -qiE 'one ticket per drift' "$auditor" && grep -qiE 'housekeeping' "$auditor" &&
+  pass "the doc-auditor keeps one ticket per real drift and lists housekeeping instead" || fail "auditor: drift vs housekeeping"
+grep -qF 'Docs maintenance' "$plugin/README.md" && grep -qF 'docs: maintenance' "$plugin/README.md" &&
+  pass "the README describes docs maintenance" || fail "the README lacks docs maintenance"
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
