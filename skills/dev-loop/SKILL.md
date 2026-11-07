@@ -118,6 +118,10 @@ Report: per scenario the file, id, title, required, and new or changed; the open
 - Never wait idle on a long job (backfills, big builds, the gate): run it in the background
   (`run_in_background`), verify its first output, and continue with other work. You are notified when it
   ends.
+- Record your steps in the event log, so `/dev-loop:status` can tell waiting from stalled without waking
+  you: `${CLAUDE_PLUGIN_ROOT}/scripts/event.sh <event> [key=value ...]`, e.g. `agent-started ticket=<n>`,
+  `review-round ticket=<n> round=<r>`, and before you wait, `waiting detail="gate <branches>"` or
+  `waiting detail="agents for #<n> #<m>"`. The gate, the merge and `heavy.sh` record their own steps.
 
 ## 3. Launch an implementer
 

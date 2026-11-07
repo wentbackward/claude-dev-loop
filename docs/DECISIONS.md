@@ -596,3 +596,27 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   merges); `-rN` or date suffixes (`-vN` is what was already used by hand). `merge-train.sh`'s own replay
   push keeps its `--force-with-lease` on the gated head: that is the gate identity updating a branch it
   has just verified, outside this ticket's scope.
+
+## 2026-11-07 — Status and the event log (#55)
+
+- **Decision:** every event value is a JSON string (`rc`, `pid` and `ticket` too), so the line format is
+  one rule and `event.sh` needs no types. The log rotates at a fixed 1 MiB (`DEV_LOOP_EVENTS_MAX_BYTES`
+  for tests, no config key) with one old file, by a `mv` before the append; two writers rotating at once
+  can at worst drop the older `.1`. Heavy slot holders come from the `slot-acquired` events without a
+  `slot-released` of every repository's event log under `~/.dev-loop` (the slots are machine-wide) and a
+  live pid (`ps -p`): probing the flock would take the lock, and `heavy.sh` outside a repository writes
+  no events, so such a job is not listed. "Seconds since the log last grew" is the log's modification
+  age (python3, else perl), not a sample over time, so `status.sh` returns at once. The gate's running
+  stages are those its last `train-started` (same pid) started and did not end; a gate without events (an
+  older version) shows its newest stage log. The verdict counts as evidence this repository's events,
+  the running stage logs, `train-running.txt` and the commits and notes files of loop worktrees whose
+  branch is not in the ledger; it is `idle` when nothing runs or waits, no unmerged loop worktree exists
+  and the orchestrator's last event is older than the threshold. The orchestrator's `waiting` events name
+  what it waits on (`detail`, else the rest of the event name). `status.sh` does not fetch (a fetch
+  writes refs), so pushed and ahead/behind use the local remote-tracking refs.
+- **Reason:** the smallest contracts that let a later watchdog (#56) read the verdict and the event log,
+  with no write, signal or lock from the reader and no slowdown or failure for the writers.
+- **Alternatives:** typed values (numbers for `rc`, `pid`; one more rule per key); a holder file per slot
+  written by `heavy.sh` (more state in the lock directory, a larger change to `heavy.sh`); sampling the
+  log size over 20 s (slow, and the modification time says the same); `stat` (its options differ between
+  Linux and macOS).

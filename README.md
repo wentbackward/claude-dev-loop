@@ -94,6 +94,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | skill | `setup` | bootstrap a project (CLAUDE.md, DECISIONS.md, `.dev-loop.json`, permission rules, Makefile) |
 | skill | `gate` / `merge` | run the batch gate and the ordered merge, and read their results |
 | skill | `doctor` | check the machine and the project (`/dev-loop:doctor`), and explain each problem's fix |
+| skill | `status` | what the loop is doing now, without waking its session (`/dev-loop:status`; see Status) |
 | agent | `implementer` | one ticket, test first, in its worktree; pushes and writes the notes file |
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
@@ -106,6 +107,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
 | script | `permissions.sh` | merges the loop's permission rules into the project's settings (dry run by default; see Permission modes) |
+| script | `status.sh` / `event.sh` | read-only status and verdict; the orchestrator's steps into the event log (see Status) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
@@ -144,6 +146,38 @@ or the kernel kills processes. The plugin makes "one heavy job at a time, per sl
   touched plus the fast check. Anything heavy goes through `heavy.sh` or is left to the gate.
 - **The Stop hook runs only `fast_check`**, which takes seconds. Running the full suite on every stop
   would delay every reply.
+
+## Status: what is the loop doing?
+
+A session waiting on a 20-minute gate looks the same as a stalled one, and asking it wakes it.
+`/dev-loop:status` (the script: `${CLAUDE_PLUGIN_ROOT}/scripts/status.sh`) answers from any terminal or
+session, read-only: it never writes, signals or locks anything.
+
+- **The gate:** running or not (`train-running.txt` and its pid), the train, each running stage with its
+  elapsed time, its log, and how many seconds ago the log last grew.
+- **Heavy slots:** how many are in use and what holds each (pid, repository, command), read from the event
+  logs of every repository under `~/.dev-loop`, since the slots are machine-wide.
+- **Loop worktrees:** branch, ticket, last commit age, notes file age, pushed or not, ahead and behind the
+  base (from the local remote-tracking refs; it does not fetch).
+- **The last merge** (the ledger), the **open tickets** count (`gh issue list`; `--no-gh` skips it), and
+  the **orchestrator's last event** with its age.
+- **The verdict**, the last line: `idle`, `working`, `waiting on <what> (output <n>s ago)` (a running gate
+  stage, a heavy job of this repository, or the orchestrator's last `waiting` event), or
+  `possibly stalled: no event or output for <n> min`, when the newest evidence (an event, a stage log, a
+  worktree commit or notes file) is older than `watchdog.stall_minutes` (default 30).
+- **`--json`** prints one object for machines; its fields are listed at the top of `scripts/status.sh`
+  and are only ever added to.
+
+The **event log** `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`) has one JSON line per step:
+`{"t": "<UTC>", "who": "gate|merge|heavy|orchestrator", "event": "...", ...}`, every other value a string.
+`gate-train.sh` writes `train-started` (`pid`, `branches`), `stage-started` (`stage`, `log`),
+`stage-ended` (`stage`, `rc`, or `result: stopped`) and `train-ended` (`rc`, `result`: green, red,
+conflict, error); `merge-train.sh` writes `merge-started`, `merged` (`branch`, `ticket`) and `merge-ended`
+(`rc`); `heavy.sh` writes `queued`, `slot-acquired` and `slot-released` (`slot`, `pid`, `rc`, the command as
+`detail`). The orchestrator records its own steps with `scripts/event.sh <event> [key=value ...]` (for
+example `event.sh agent-started ticket=12`, `event.sh waiting detail="gate train feat/12-x"`). Each line is
+one append; at 1 MiB the log moves to `events.jsonl.1` (one old file kept). A failed write is ignored, so
+the log never fails a gate, and nothing but `status.sh` reads it.
 
 ## Branch lifecycle
 
@@ -675,6 +709,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `heavy.port_env`, `heavy.port_base`, `heavy.port_step` | none, `8600`, `10` | the per-slot port variable |
 | `heavy.clean_temp`, `heavy.clean_temp_minutes` | `[]`, `120` | stale temp globs (`$USER` is expanded) and their age |
 | `heavy.poll_seconds` | `10` | how often a waiting command retries |
+| `watchdog.stall_minutes` | `30` | `status.sh`: minutes without an event or output before the verdict is `possibly stalled` |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
@@ -902,7 +937,7 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
   names, account numbers, emails, private hostnames) into the repository, commits, issues or PRs.
 - Merges happen only through `merge-train.sh` after a green gate, and never with `--admin`.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
-  directory, and, in identity mode, `~/.config/dev-loop/`.
+  directory, and, in identity mode, `~/.config/dev-loop/`. `status.sh` only reads them.
 - The scripts never push to the base branch directly. They push feature branches with
   `--force-with-lease` on the gated head, so commits pushed after the gate are never overwritten. Agents
   never force-push: a rebased branch is re-pushed as `<branch>-vN` with `repush.sh`.
@@ -915,7 +950,8 @@ make check     # manifests, shellcheck, ruff, then tests/smoke.sh and tests/iden
 
 `tests/smoke.sh` builds a throwaway repository with a local bare origin and a fake `gh`. It covers the
 hooks, the heavy queue (3 jobs on 2 slots, a killed job's slot), the gate, the merge, a red train, the
-tree check, a branch that moved, a conflict, and the gate options (affected, parallel, fail_fast). `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
+tree check, a branch that moved, a conflict, the gate options (affected, parallel, fail_fast), and
+`status.sh` with the event log. `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
 `as-role.sh`, app JWTs and tokens, the guard, the ruleset plan, the manifest flow and identity-mode merges.
 
 ## License
