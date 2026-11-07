@@ -35,3 +35,7 @@ the stage log (`tail` it to see where it stopped), the heavy slots (a job holdin
 and the worktrees whose commit and notes are oldest. Do not kill processes or remove files on your own:
 suggest the step and wait for the user's OK. A gate whose pid has ended but still shows in
 `train-running.txt` was killed; re-running the gate is the fix.
+
+The loop's own heartbeat (the `dev-loop` skill, section 2a) reads the same verdict with `--json` when its
+fallback wake-up fires, and confirms a stall before it stops anything of the loop's own; a check with
+`stall_minutes` is stopped by the gate itself and shows as `<name> stalled: no output for <n> min`.

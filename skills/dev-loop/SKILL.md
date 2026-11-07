@@ -117,11 +117,52 @@ Report: per scenario the file, id, title, required, and new or changed; the open
   between tickets; the user expects continuous work.
 - Never wait idle on a long job (backfills, big builds, the gate): run it in the background
   (`run_in_background`), verify its first output, and continue with other work. You are notified when it
-  ends.
+  ends; the heartbeat (section 2a) wakes you if it hangs.
 - Record your steps in the event log, so `/dev-loop:status` can tell waiting from stalled without waking
   you: `${CLAUDE_PLUGIN_ROOT}/scripts/event.sh <event> [key=value ...]`, e.g. `agent-started ticket=<n>`,
   `review-round ticket=<n> round=<r>`, and before you wait, `waiting detail="gate <branches>"` or
   `waiting detail="agents for #<n> #<m>"`. The gate, the merge and `heavy.sh` record their own steps.
+
+## 2a. Heartbeat: the stall watchdog (`watchdog` in `.dev-loop.json`)
+
+Background notifications wake you when a job ends; nothing wakes you when a command hangs or an agent
+never reports. So whenever you have nothing to do but wait (the gate runs, agents work), keep a heartbeat,
+unless `.dev-loop.json` sets `"watchdog": false`:
+
+1. Record the wait: `${CLAUDE_PLUGIN_ROOT}/scripts/event.sh waiting detail="<what>"`.
+2. Schedule a fallback wake-up in `watchdog.wake_minutes` (default 25) minutes with the session's
+   scheduling tool (a scheduled wake-up or a self-paced loop). If the session has none, start a
+   background command that waits that long and exits (with `run_in_background`, never a foreground
+   sleep), so its end notifies you. A notification that comes
+   first (an agent report, the gate ending) is handled as usual; the fallback then only finds work moving.
+3. On waking, run `${CLAUDE_PLUGIN_ROOT}/scripts/status.sh --json` and read `verdict.state`:
+   - `working` or `waiting` (something moved: a stage log grew, a commit or notes file changed, an event
+     came): wait again from step 1.
+   - `idle` while you expected work: an agent or the gate ended without notifying you; read its report,
+     notes or log and continue the loop.
+   - `stalled` (`possibly stalled: no event or output for <n> min`, after `watchdog.stall_minutes`,
+     default 30): **confirm before acting**, since a slow silent suite looks the same. Is the stage's
+     process tree still using CPU (`ps -o pid,pgid,pcpu,time,command` for its processes, twice, a minute
+     apart: the CPU time grows)? Has the agent's worktree changed (`git -C <worktree> status --short`,
+     file times)? A queued heavy job (`waiting on heavy slot (queued)`) is never stalled. Anything moving:
+     wait again from step 1.
+4. Confirmed stalled, act on the loop's own work only:
+   - **A hung loop command** (a gate stage, a heavy job the gate started): read its log tail
+     (`tail -n 50 <stage log>`, the log `status.sh` names), then stop only that stage: its process group
+     (`kill -TERM -- -<pgid>`, `-KILL` after 10 s) when the stage runs in its own (with `parallel`, or a
+     check with `stall_minutes`: its pgid is the stage's leader pid), else the stage's command and its
+     children by pid. The gate then reports the stage's rc and ends `TRAIN RED`; treat it as RED
+     (section 5) with the log tail as the evidence, and give that check a `stall_minutes` (the `gate`
+     skill) so the gate stops it by itself next time.
+   - **An agent with no report**: read its worktree and notes file; resume it or start a fresh one with
+     the branch, notes and last instructions, per section 3a.
+5. Record what you did: `event.sh watchdog-stopped detail="<stage>: <why>"` or
+   `event.sh watchdog-resumed ticket=<n>`, then continue the loop.
+
+You never kill anything that is not the loop's own: only the gate's stage processes and the heavy jobs
+this loop's gate started (`gate_pid` in `status.sh --json`). Never another repository's job, a user's
+process, a server you did not start, or the session itself; when the evidence does not show a process is
+the loop's own, leave it and tell the user.
 
 ## 3. Launch an implementer
 
@@ -223,6 +264,9 @@ the machine-wide heavy-job queue.
 - **scenario <id> unsatisfied**: with `scenarios`, the running system missed a holdout scenario. Bisect
   as for RED, then send the culprit's implementer only the `missing` text after the colon, never the
   scenario, its id's file or the judge's evidence; sealed scenarios are only a count, never forwarded.
+- **<check> stalled: no output for <n> min**: the check has `stall_minutes` and its log stopped growing,
+  so the gate stopped its process group. Read the log tail: a hung test or server is a failure (RED,
+  below); a suite that is only slow and silent needs a higher `stall_minutes`.
 - **RED**: never merge a red train, not even for an apparent flake. Re-run once to tell a flake from a
   failure. If still red, bisect: gate the first half of the train, then the rest, until the culprit is
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for

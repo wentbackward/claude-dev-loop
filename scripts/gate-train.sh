@@ -37,6 +37,11 @@
 #   "scenarios": {"dir", "run", "judge", ...}  the stage "scenarios" (scenario-stage.sh) after the checks
 #                       pass, or alongside them with "parallel": judges the train's top against the holdout
 #                       scenarios; its unsatisfied and sealed lines print in full in the summary.
+#   "stall_minutes": n  in a check entry, "affected" or "scenarios": the stage runs in its own process group
+#                       and is stopped (as fail_fast stops one) when its log has not grown for n minutes; it
+#                       prints "<name> stalled: no output for <n> min" and the train is red. A heavy stage
+#                       waiting in heavy.sh for a slot is not stalled: its clock starts with the slot.
+#                       DEV_LOOP_STALL_UNIT_SECONDS (default 60) is the length of one such minute (tests).
 #
 # Before stacking, it deletes the train-<branch> refs of earlier trains (red ones, or those of branches no
 # longer in a train) for loop branches (github.feature_patterns); it keeps those of this train and of a
@@ -356,13 +361,25 @@ entry_field() {
   esac
 }
 
+# stall_value NAME VALUE: VALUE when it is a positive whole number of minutes; else nothing, with a
+# warning for a value that is set (the stall timeout is then off for that stage).
+stall_value() {
+  case $2 in
+    "") return 0 ;;
+    *[!0-9]*) ;;
+    *) [ $((10#$2)) -gt 0 ] && printf '%s\n' $((10#$2)) && return 0 ;;
+  esac
+  dl_warn "$1: stall_minutes \"$2\" is not a positive whole number; no stall timeout"
+}
+
 # The stages in order: the affected stage (if configured) first, then the checks.
-names=() commands=() heavies=() patterns=() results=() pids=()
+names=() commands=() heavies=() patterns=() results=() pids=() stalls=()
 add_stage() { # add_stage CONFIG_PATH DEFAULT_NAME
   names+=("$(entry_field "$1" name "$2")")
   commands+=("$(entry_field "$1" command "")")
   heavies+=("$(entry_field "$1" heavy true)")
   patterns+=("$(entry_field "$1" summary "")")
+  stalls+=("$(stall_value "${names[${#names[@]} - 1]}" "$(entry_field "$1" stall_minutes "")")")
   results+=("")
   pids+=("")
 }
@@ -381,12 +398,23 @@ if dl_scenarios_on; then # the scenario stage: after the checks pass, or alongsi
   scenario_stage=$checks_end
   names+=(scenarios) commands+=("$(printf '%q' "$scripts_dir/scenario-stage.sh")")
   heavies+=("$(cfg scenarios.heavy true)") patterns+=("$DL_SCENARIOS_SUMMARY") results+=("") pids+=("")
+  stalls+=("$(stall_value scenarios "$(cfg scenarios.stall_minutes "")")")
 fi
 stages=${#names[@]}
 parallel=$(cfg parallel false)
 fail_fast=$(cfg fail_fast false)
 grace=${DEV_LOOP_STOP_GRACE_SECONDS:-10}
+stall_unit=${DEV_LOOP_STALL_UNIT_SECONDS:-60}
+case $stall_unit in
+  *[!0-9]* | "") stall_unit=0 ;;
+  *) stall_unit=$((10#$stall_unit)) ;;
+esac
+if [ "$stall_unit" -le 0 ]; then
+  dl_warn "DEV_LOOP_STALL_UNIT_SECONDS \"${DEV_LOOP_STALL_UNIT_SECONDS:-}\" is not a positive whole number; using 60"
+  stall_unit=60
+fi
 failed=""
+log_sizes=() log_changed=()
 
 log_of() { printf '%s/train-%s.log\n' "$logs" "${names[$1]//[^A-Za-z0-9_.-]/_}"; }
 
@@ -404,6 +432,7 @@ result_line() {
   case "${results[$1]}" in
     skipped) echo "${names[$1]} skipped" ;;
     stopped) echo "${names[$1]} stopped (log: $(log_of "$1"))" ;;
+    stalled) echo "${names[$1]} stalled: no output for ${stalls[$1]} min (log: $(log_of "$1"))" ;;
     *) echo "${names[$1]} ${results[$1]} (log: $(log_of "$1"))" ;;
   esac
 }
@@ -424,6 +453,9 @@ run_sequential() {
   for ((i = $1; i < $2; i++)); do
     if [ -n "$failed" ]; then
       results[i]=skipped
+    elif [ -n "${stalls[i]}" ]; then
+      run_parallel "$i" $((i + 1)) # in its own process group, so a stall can stop it
+      continue
     else
       stage_command "$i"
       dl_event gate stage-started stage="${names[i]}" log="$(log_of "$i")"
@@ -443,33 +475,69 @@ collect() {
   pids[$1]=""
 }
 
-# stop_running: stop every running stage's process group (TERM, then KILL after the grace period). A stage
-# whose process still ended with 0 (it had finished when the TERM came) keeps rc=0 instead of "stopped".
-stop_running() {
-  local i deadline alive
-  for ((i = 0; i < stages; i++)); do
-    [ -n "${pids[i]}" ] || continue
-    collect "$i" && continue
+# stop_stages RESULT INDEX...: stop these running stages' process groups (TERM, then KILL after the grace
+# period) and mark them RESULT (stopped or stalled; a stall counts as a failure for fail_fast). A stage
+# whose process still ended with 0 (it had finished just before the TERM came, a race within the poll
+# interval) prints rc=0 instead of stopped or stalled; the train stays red, since the stop was decided.
+stop_stages() {
+  local result=$1 i deadline alive
+  shift
+  for i in "$@"; do
     kill -TERM -- "-${pids[i]}" 2>/dev/null
-    results[i]=stopped
-    dl_event gate stage-ended stage="${names[i]}" result=stopped
+    results[i]=$result
+    dl_event gate stage-ended stage="${names[i]}" result="$result"
     all_green=""
+    [ "$result" = stalled ] && [ "$fail_fast" = true ] && failed=yes
   done
   deadline=$(($(date +%s) + grace))
   while true; do
     alive=""
-    for ((i = 0; i < stages; i++)); do
-      [ "${results[i]}" = stopped ] && kill -0 -- "-${pids[i]}" 2>/dev/null && alive=yes
-    done
+    for i in "$@"; do kill -0 -- "-${pids[i]}" 2>/dev/null && alive=yes; done
     [ -n "$alive" ] && [ "$(date +%s)" -lt "$deadline" ] || break
     sleep 0.2
   done
-  for ((i = 0; i < stages; i++)); do
-    [ "${results[i]}" = stopped ] || continue
+  for i in "$@"; do
     kill -KILL -- "-${pids[i]}" 2>/dev/null
     wait "${pids[i]}" 2>/dev/null && results[i]="rc=0"
     pids[i]=""
   done
+}
+
+# stop_running: stop every stage still running.
+stop_running() {
+  local i running=()
+  for ((i = 0; i < stages; i++)); do
+    [ -n "${pids[i]}" ] || continue
+    collect "$i" && continue
+    running+=("$i")
+  done
+  [ ${#running[@]} -eq 0 ] || stop_stages stopped "${running[@]}"
+}
+
+# stop_stalled FROM TO: stop the running stages of FROM..TO-1 with a stall_minutes whose log has not grown
+# for that long. A heavy stage counts from the moment heavy.sh gave it a slot (its "acquired" line,
+# DL_HEAVY_ACQUIRED_RE), so a stage queued for a slot is never stalled; one whose line never appears is never
+# stopped (on purpose: when in doubt the stage runs on, as without stall_minutes).
+stop_stalled() {
+  local i now size stalled=()
+  now=$(date +%s)
+  for ((i = $1; i < $2; i++)); do
+    [ -n "${pids[i]}" ] && [ -n "${stalls[i]}" ] || continue
+    size=$(wc -c <"$(log_of "$i")" 2>/dev/null | tr -d ' ')
+    if [ "${heavies[i]}" != false ] &&
+      ! grep -qE "$DL_HEAVY_ACQUIRED_RE" "$(log_of "$i")" 2>/dev/null; then
+      size=queued
+    fi
+    if [ "$size" = queued ] || [ "$size" != "${log_sizes[i]}" ]; then
+      log_sizes[i]=$size
+      log_changed[i]=$now
+    elif [ $((now - log_changed[i])) -ge $((stalls[i] * stall_unit)) ]; then
+      stalled+=("$i")
+    fi
+  done
+  [ ${#stalled[@]} -eq 0 ] && return 0
+  for i in "${stalled[@]}"; do echo "${names[i]}: no output for ${stalls[i]} min, stopping it"; done
+  stop_stages stalled "${stalled[@]}"
 }
 
 # interrupted FROM TO: this script got a signal while stages FROM..TO-1 ran: stop them, report, exit red.
@@ -498,8 +566,10 @@ run_parallel() {
     dl_event gate stage-started stage="${names[i]}" log="$(log_of "$i")"
     dl_new_session "${stage_argv[@]}" </dev/null >"$(log_of "$i")" 2>&1 &
     pids[i]=$!
+    log_sizes[i]="" log_changed[i]=$(date +%s)
   done
   while true; do
+    stop_stalled "$1" "$2"
     running=""
     for ((i = $1; i < $2; i++)); do
       collect "$i" || { [ -n "${pids[i]}" ] && running=yes; }
