@@ -11,6 +11,8 @@
 #             loop branch the base contains
 #   helper    local train-<branch> and replay-<branch> refs of loop branches outside a live train; local
 #             agent worktree branches with no commits of their own
+#   superseded  a later version of it (<branch>-vN from repush.sh, N above its own) merged (ledger or PR);
+#             never while that version is unmerged, nor while its own PR is open
 #   closed    its PR was closed unmerged at this tip, or its issue (<type>/<n>-...) closed as not planned
 #   stale     no PR, no open issue, no commit for cleanup.stale_days (default 14); remote: loop branches only
 #   keep      everything else, listed with its reason: an open PR or issue, a worktree has it checked out,
@@ -19,11 +21,11 @@
 # Without --apply it is a dry run: it still fetches (with --prune) and writes the classification to
 # <logs_dir>/cleanup-<time>.tsv, and deletes nothing. --apply deletes "merged" and "helper", locally and
 # on the remote; "closed" needs --include closed and "stale" --include stale (the user's OK), unless
-# "factory" is "dark". Each deletion is conditional on the tip that was classified. Before deleting, every
+# "factory" is "dark". "superseded" goes like "merged". Each deletion is conditional on the tip that was classified. Before deleting, every
 # tip the base does not contain is saved to ~/.dev-loop/<repo>/archive/branches-<time>.bundle and checked
 # there; restore with git fetch <bundle> refs/heads/<branch>:refs/heads/<branch> (a remote-only branch:
 # refs/remotes/<remote>/<branch>:refs/heads/<branch>). --apply also moves the notes files of merged PRs
-# whose branch is gone to notes/merged/, and removes, after cleanup.keep_days (default 30), notes there
+# and of superseded branches whose branch is gone to notes/merged/, and removes, after cleanup.keep_days (default 30), notes there
 # and old gate logs and cleanup reports (never other files in the logs directory).
 # Remote deletions run as the gate identity in identity mode. Needs git 2.9 or later.
 #
@@ -80,6 +82,7 @@ dl_ledger_heads >"$work/ledger"
   dl_die "gh issue list failed"
 git worktree list --porcelain |
   awk '/^worktree / {p = substr($0, 10)} /^branch refs\/heads\// {print substr($0, 19) "\t" p}' >"$work/worktrees"
+{ awk '{print $1}' "$work/ledger"; awk -F'\t' '$3 == "MERGED" {print $1}' "$work/prs"; } | sort -u >"$work/merged-names"
 git for-each-ref --merged "$base" --format='%(refname)' refs/heads "refs/remotes/$DL_REMOTE" >"$work/contained"
 now=$(date +%s)
 default_branch=$(git symbolic-ref -q --short "refs/remotes/$DL_REMOTE/HEAD" 2>/dev/null)
@@ -102,9 +105,22 @@ same_changes() {
   [ -n "$mine" ] && [ "$mine" = "$theirs" ]
 }
 
+# superseded_by NAME: the latest merged later version of NAME (<root>-vN, N above NAME's own), if any.
+superseded_by() {
+  local root=$1 version=1
+  if [[ "$1" =~ ^(.+)-v([0-9]+)$ ]]; then
+    root=${BASH_REMATCH[1]}
+    version=$((10#${BASH_REMATCH[2]}))
+  fi
+  awk -v p="$root-v" -v own="$version" 'index($0, p) == 1 {
+      n = substr($0, length(p) + 1)
+      if (n ~ /^[0-9]+$/ && n + 0 > own) print n "\t" $0
+    }' "$work/merged-names" | sort -n | tail -n 1 | cut -f2
+}
+
 # classify SCOPE NAME TIP DATE: prints "<class>\t<scope>\t<name>\t<tip>\t<reason>".
 classify() {
-  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days
+  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days successor
   local open="" merged="" closed="" moved=""
   ref=refs/heads/$name
   [ "$scope" = remote ] && ref=refs/remotes/$DL_REMOTE/$name
@@ -156,6 +172,8 @@ classify() {
   done < <(awk -F'\t' -v b="$name" '$1 == b' "$work/prs")
   [ -n "$open" ] && { out keep "open PR $open"; return; }
   [ -n "$merged" ] && { out merged "merged PR $merged"; return; }
+  successor=$(superseded_by "$name")
+  [ -n "$successor" ] && { out superseded "superseded by $successor, which merged"; return; }
   [ -n "$closed" ] && { out closed "closed PR $closed, not merged"; return; }
   [ -n "$moved" ] && { out keep "$moved, but the branch moved on since"; return; }
   if grep -qxF -- "$ref" "$work/contained"; then
@@ -185,16 +203,16 @@ mkdir -p "$(dirname "$report")" || dl_die "cannot create $(dirname "$report")"
     while read -r name tip date; do classify remote "$name" "$tip" "$date"; done
 } >"$report"
 
-for class in merged helper closed stale keep; do
-  printf '%-7s %5s local %5s remote\n' "$class" \
+for class in merged helper superseded closed stale keep; do
+  printf '%-10s %5s local %5s remote\n' "$class" \
     "$(awk -F'\t' -v c="$class" '$1 == c && $2 == "local"' "$report" | wc -l | tr -d ' ')" \
     "$(awk -F'\t' -v c="$class" '$1 == c && $2 == "remote"' "$report" | wc -l | tr -d ' ')"
 done
 echo "report: $report"
 if [ -n "$verbose" ]; then
-  awk -F'\t' '{printf "%-7s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report"
+  awk -F'\t' '{printf "%-10s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report"
 else
-  awk -F'\t' '$1 == "closed" || $1 == "stale" {printf "%-7s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report" | head -n 40
+  awk -F'\t' '$1 == "superseded" || $1 == "closed" || $1 == "stale" {printf "%-10s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report" | head -n 40
 fi
 
 # notes_to_archive: notes files of merged PRs (none open) whose branch is gone, locally and remotely.
@@ -215,9 +233,21 @@ notes_to_archive() {
   done
 }
 
+# superseded_notes: notes files of superseded branches that are gone, locally and remotely.
+superseded_notes() {
+  local name file
+  awk -F'\t' '$1 == "superseded" {print $3}' "$report" | sort -u | while read -r name; do
+    file=$(dl_note_file "$name")
+    [ -f "$file" ] || continue
+    git rev-parse -q --verify "refs/heads/$name" >/dev/null && continue
+    git rev-parse -q --verify "refs/remotes/$DL_REMOTE/$name" >/dev/null && continue
+    printf '%s\n' "$file"
+  done
+}
+
 if [ -z "$apply" ]; then
-  if [ "$factory" = dark ]; then what="merged, helper, closed and stale"; else
-    what="merged and helper; closed and stale need --include"
+  if [ "$factory" = dark ]; then what="merged, helper, superseded, closed and stale"; else
+    what="merged, helper and superseded; closed and stale need --include"
   fi
   echo "cleanup: dry run ($factory factory); --apply deletes $what"
   exit 0
@@ -225,7 +255,7 @@ fi
 
 # --- Apply ------------------------------------------------------------------------------------------------
 failed=0
-awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
+awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || $1 == "superseded" || index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
 if [ -s "$work/delete" ]; then
   # Archive every tip the base does not contain, and check the bundle has each one before deleting.
   awk -F'\t' -v r="$DL_REMOTE" '{print ($2 == "local" ? "refs/heads/" : "refs/remotes/" r "/") $3}' "$work/delete" |
@@ -284,8 +314,8 @@ fi
 moved=0
 while read -r file; do
   dl_archive_note_file "$file" && moved=$((moved + 1))
-done < <(notes_to_archive)
-echo "moved $moved notes files of merged PRs to $(dl_notes_merged_dir)"
+done < <({ notes_to_archive; superseded_notes; } | sort -u)
+echo "moved $moved notes files of merged and superseded branches to $(dl_notes_merged_dir)"
 find "$(dl_notes_merged_dir)" -maxdepth 1 -type f -name 'pr-*.md' -mtime +"$keep_days" -exec rm -f {} + 2>/dev/null
 
 # Gate logs and cleanup reports only: the current stages' logs (the latest train) are always kept.
