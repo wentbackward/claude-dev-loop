@@ -106,6 +106,19 @@ doctor_audit() {
     optional "doc audit due: $merges merges since the last audit (run the doc-auditor, then record it: date -u +%Y-%m-%dT%H:%M:%SZ >$marker)"
 }
 
+# doctor_journals: note each journal (docs.journals) over docs.max_lines.
+doctor_journals() {
+  local max file lines
+  max=$(cfg docs.max_lines 1000)
+  case $max in "" | *[!0-9]* | 0) return 0 ;; esac
+  while IFS= read -r file; do
+    [ -n "$file" ] && [ -f "$DL_ROOT/$file" ] || continue
+    lines=$(dl_docs_line_count "$DL_ROOT/$file")
+    [ "$lines" -gt "$max" ] &&
+      optional "journal $file has $lines lines, over max_lines $max (compact it: docs-archive.sh journal)"
+  done < <(dl_docs_journals)
+}
+
 # shellcheck source=lib/arch.sh
 . "$scripts_dir/lib/arch.sh"
 
@@ -286,6 +299,7 @@ else
   done
   echo "        models        $models"
   dl_docs_on && doctor_docs
+  dl_docs_on && doctor_journals
   dl_arch_on && doctor_arch
   doctor_factory
   dl_scenarios_on && doctor_scenarios

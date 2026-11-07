@@ -2947,7 +2947,7 @@ archive on journal --apply --keep 100
 expect "a journal under budget is a no-op" "0 yes" \
   "$rc $(cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] && echo yes)"
 echo "$out" | grep -qi "within" && pass "the no-op says the journal is within budget" || fail "no-op output: $out"
-archive on journal docs/DECISIONS.md --keep 19 --apply
+archive on journal docs/DECISIONS.md --keep 22 --apply
 expect "--keep sets the budget (one entry moves)" "0 2026-01-01" \
   "$rc $(grep -o '^## 2026-01-0[0-9]' docs/archive/DECISIONS-2026-01-01--2026-01-01.md | cut -c4- | paste -sd' ' -)"
 

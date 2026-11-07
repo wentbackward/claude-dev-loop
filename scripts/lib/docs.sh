@@ -183,3 +183,79 @@ dl_docs_planned_notes() {
     esac
   done < <(printf '%s\n' "$rows" | cut -f3 | grep . | awk '!seen[$0]++')
 }
+
+# dl_docs_journals: the append-only journals (docs.journals, default docs/DECISIONS.md), one per line.
+dl_docs_journals() {
+  local count i
+  case $(cfg docs.journals "") in
+    "") echo docs/DECISIONS.md ;;
+    "["*)
+      count=$(cfg_len docs.journals)
+      for ((i = 0; i < count; i++)); do cfg "docs.journals.$i"; done
+      ;;
+    *) cfg docs.journals ;;
+  esac
+}
+
+# dl_docs_line_count FILE: the number of lines of FILE, a last line without a newline included.
+dl_docs_line_count() {
+  awk 'END {print NR}' "$1"
+}
+
+# dl_docs_links < markdown: the link targets of Markdown text, outside fenced and inline code.
+dl_docs_links() {
+  awk '
+    /^[ \t]*(```|~~~)/ { fenced = !fenced; next }
+    fenced { next }
+    {
+      line = $0
+      gsub(/`[^`]*`/, "", line)
+      while (match(line, /\]\([^)]*\)/)) {
+        print substr(line, RSTART + 2, RLENGTH - 3)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }'
+}
+
+# dl_docs_resolve_link DIR TARGET: the repository path TARGET points to from DIR, with . and .. resolved;
+# status 1 when it goes above the repository root.
+dl_docs_resolve_link() {
+  local part parts=() out=() IFS=/
+  read -r -a parts <<<"${1:+$1/}$2"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      "" | .) ;;
+      ..)
+        [ ${#out[@]} -gt 0 ] || return 1
+        unset "out[$((${#out[@]} - 1))]"
+        ;;
+      *) out+=("$part") ;;
+    esac
+  done
+  [ ${#out[@]} -eq 0 ] || printf '%s' "${out[*]}"
+  echo
+}
+
+# dl_docs_link_target LINK: the path part of a link: <path with spaces> up to the ">", else up to the first
+# space (a title follows it); without #anchor and ?query, %20 decoded to a space.
+dl_docs_link_target() {
+  local target
+  case "$1" in
+    "<"*) target=${1#<} && target=${target%%>*} ;;
+    *) target=${1%%[[:space:]]*} ;;
+  esac
+  target=${target%%#*}
+  target=${target%%\?*}
+  printf '%s\n' "${target//%20/ }"
+}
+
+# dl_docs_relative_link LINK: LINK is a relative path link the link rule checks (not an anchor, an absolute
+# path or a URL with a scheme); prints its target.
+dl_docs_relative_link() {
+  local target
+  case "$1" in "#"* | /* | "") return 1 ;; esac
+  target=$(dl_docs_link_target "$1")
+  [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: ]] && return 1
+  [ -n "$target" ] || return 1
+  printf '%s\n' "$target"
+}
