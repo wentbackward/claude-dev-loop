@@ -24,7 +24,7 @@ in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 | exit | meaning | what to do |
 |------|---------|------------|
 | 0 | all merged | read any "kept local" lines, comment on the issues, start the next tickets |
-| 3 | replay conflict | the base changed under the train: rebase the branch, review the change, re-gate |
+| 3 | replay conflict | the base changed under the train: have the implementer rebase the branch and publish it with `repush.sh <branch>` (never a force push), review the change, gate the `<branch>-vN` it reports |
 | 4 | tree differs from the gated one | the base moved since the gate: re-gate the remaining branches |
 | 5 | notes file missing | write it (ask the implementer), then re-run |
 | 6 | branch changed since the gate | someone pushed after the gate: review and re-gate |
@@ -32,7 +32,10 @@ in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 | 8 | not gated green | run the gate skill first, with exactly these branches |
 | 9 | approval missing (identity mode) | the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and approve again, then re-run with the branches not merged yet |
 
-Never merge by hand around a failure, and never with `--admin`. Never merge a branch the gate did not
+Never merge by hand around a failure, and never with `--admin`. Never force-push a branch: a rebased one is
+re-pushed as `<branch>-vN` with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh`. When the PR of a `-vN` branch
+is opened (here or by `open-pr.sh`), the open PRs of the versions it supersedes are closed with a comment
+pointing to it, and `cleanup.sh` deletes those branches once the new one has merged. Never merge a branch the gate did not
 prove green.
 
 In identity mode (`identities` in `.dev-loop.json`) the script pushes, posts the required

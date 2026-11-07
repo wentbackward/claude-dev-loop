@@ -559,3 +559,31 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `${CLAUDE_PLUGIN_ROOT}`): more moving parts, and a hook's allow is still overridden by deny rules, so the
   doctor check would be the same; rules on `bash <script>` (would change every command the skills print);
   `Bash(*/scripts/*.sh *)` (allows any command that names such a path).
+
+## 2026-11-07 — Never force-push: a rebased branch is re-pushed as `<branch>-vN` (#53)
+
+- **Decision:** `scripts/repush.sh [<branch>]` (default: the checked-out branch) publishes a rebased
+  branch as `<root>-vN`, where `<root>` is the name without a trailing `-v<digits>` and N is the first
+  number above the branch's own version (1 for an unsuffixed name) that is free on the remote, locally and
+  as a notes file, so nothing of an earlier attempt is overwritten. It switches the worktree that has the
+  branch checked out to the new name (the implementer keeps working there), refuses a worktree with any
+  `git status --porcelain` output (untracked files too) and the base or a long-lived branch, and undoes
+  only what it created when the push fails (exit 3). The notes file is copied with a trailing line
+  ``Supersedes `<old>` ...``; a missing notes file is a warning, not a refusal, since the push is what
+  must not be lost. `open-pr.sh` closes the open PRs of `<root>`, `<root>-v2`, ... below N, as the
+  implementer (it opened them), with a comment naming the new PR; a failure there is a warning.
+  `cleanup.sh` classifies a loop branch `superseded` when a later version of the same root is in the
+  ledger or has a merged PR; the check runs after the open-PR and merged checks (an open PR keeps the
+  branch) and before the closed-PR check, so a branch whose PR `open-pr.sh` closed is deleted without
+  `--include closed`. It is deleted with `--apply` like `merged`, with the same bundle archive first, and
+  its notes file moves to `notes/merged/` once the branch is gone. A slug that itself ends in `-v<n>`
+  (`feat/12-api-v2`) is read as version n of `feat/12-api`; both names carry the same ticket number, so
+  the only effect is on branches of that same ticket.
+- **Reason:** deny rules, Claude Code's auto mode and GitHub rulesets refuse force pushes, and the old
+  branch is evidence until the new one merges. Deriving the predecessors from the name needs no extra
+  state; the `Supersedes` line documents it in the PR body.
+- **Alternatives:** reading the predecessor from the `Supersedes` line only (breaks when the notes file
+  is missing or edited); deleting the old branch right after the re-push (loses it if the new one never
+  merges); `-rN` or date suffixes (`-vN` is what was already used by hand). `merge-train.sh`'s own replay
+  push keeps its `--force-with-lease` on the gated head: that is the gate identity updating a branch it
+  has just verified, outside this ticket's scope.
