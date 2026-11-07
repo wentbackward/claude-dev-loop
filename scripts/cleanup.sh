@@ -11,22 +11,24 @@
 #             loop branch the base contains
 #   helper    local train-<branch> and replay-<branch> refs of loop branches outside a live train; local
 #             agent worktree branches with no commits of their own
-#   superseded  a later version of it (<branch>-vN from repush.sh, N above its own) merged (ledger or PR);
-#             never while that version is unmerged, nor while its own PR is open
+#   superseded  a later version of it (<branch>-vN from repush.sh, N above its own) merged (ledger or
+#             PR); never while that version is unmerged, nor while its own PR is open
 #   closed    its PR was closed unmerged at this tip, or its issue (<type>/<n>-...) closed as not planned
 #   stale     no PR, no open issue, no commit for cleanup.stale_days (default 14); remote: loop branches only
 #   keep      everything else, listed with its reason: an open PR or issue, a worktree has it checked out,
 #             a live train, the base, recent, moved on after its PR, or not a loop branch
 #
 # Without --apply it is a dry run: it still fetches (with --prune) and writes the classification to
-# <logs_dir>/cleanup-<time>.tsv, and deletes nothing. --apply deletes "merged" and "helper", locally and
-# on the remote; "closed" needs --include closed and "stale" --include stale (the user's OK), unless
-# "factory" is "dark". "superseded" goes like "merged". Each deletion is conditional on the tip that was classified. Before deleting, every
-# tip the base does not contain is saved to ~/.dev-loop/<repo>/archive/branches-<time>.bundle and checked
-# there; restore with git fetch <bundle> refs/heads/<branch>:refs/heads/<branch> (a remote-only branch:
+# <logs_dir>/cleanup-<time>.tsv, and deletes nothing. --apply deletes "merged", "helper" and
+# "superseded", locally and on the remote; "closed" needs --include closed and "stale" --include stale
+# (the user's OK), unless "factory" is "dark". Each deletion is conditional on the tip that was
+# classified. Before deleting, every tip the base does not contain is saved to
+# ~/.dev-loop/<repo>/archive/branches-<time>.bundle and checked there; restore with git fetch <bundle>
+# refs/heads/<branch>:refs/heads/<branch> (a remote-only branch:
 # refs/remotes/<remote>/<branch>:refs/heads/<branch>). --apply also moves the notes files of merged PRs
-# and of superseded branches whose branch is gone to notes/merged/, and removes, after cleanup.keep_days (default 30), notes there
-# and old gate logs and cleanup reports (never other files in the logs directory).
+# and of superseded branches whose branch is gone to notes/merged/, and removes, after cleanup.keep_days
+# (default 30), notes there and old gate logs and cleanup reports (never other files in the logs
+# directory).
 # Remote deletions run as the gate identity in identity mode. Needs git 2.9 or later.
 #
 # Exit: 0 done, 1 some deletions failed (listed), 2 usage/config.
@@ -82,7 +84,8 @@ dl_ledger_heads >"$work/ledger"
   dl_die "gh issue list failed"
 git worktree list --porcelain |
   awk '/^worktree / {p = substr($0, 10)} /^branch refs\/heads\// {print substr($0, 19) "\t" p}' >"$work/worktrees"
-{ awk '{print $1}' "$work/ledger"; awk -F'\t' '$3 == "MERGED" {print $1}' "$work/prs"; } | sort -u >"$work/merged-names"
+{ awk '{print $1}' "$work/ledger"; awk -F'\t' '$3 == "MERGED" {print $1}' "$work/prs"; } |
+  sort -u >"$work/merged-names"
 git for-each-ref --merged "$base" --format='%(refname)' refs/heads "refs/remotes/$DL_REMOTE" >"$work/contained"
 now=$(date +%s)
 default_branch=$(git symbolic-ref -q --short "refs/remotes/$DL_REMOTE/HEAD" 2>/dev/null)
@@ -212,7 +215,8 @@ echo "report: $report"
 if [ -n "$verbose" ]; then
   awk -F'\t' '{printf "%-10s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report"
 else
-  awk -F'\t' '$1 == "superseded" || $1 == "closed" || $1 == "stale" {printf "%-10s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report" | head -n 40
+  awk -F'\t' '$1 == "superseded" || $1 == "closed" || $1 == "stale" {
+    printf "%-10s %-6s %s  (%s)\n", $1, $2, $3, $5}' "$report" | head -n 40
 fi
 
 # notes_to_archive: notes files of merged PRs (none open) whose branch is gone, locally and remotely.
@@ -255,7 +259,8 @@ fi
 
 # --- Apply ------------------------------------------------------------------------------------------------
 failed=0
-awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || $1 == "superseded" || index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
+awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || $1 == "superseded" ||
+  index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
 if [ -s "$work/delete" ]; then
   # Archive every tip the base does not contain, and check the bundle has each one before deleting.
   awk -F'\t' -v r="$DL_REMOTE" '{print ($2 == "local" ? "refs/heads/" : "refs/remotes/" r "/") $3}' "$work/delete" |
