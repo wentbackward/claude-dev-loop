@@ -3983,6 +3983,84 @@ grep -qF 'event.sh' "$plugin/skills/dev-loop/SKILL.md" && pass "status: the dev-
 awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#55" && pass "status: CHANGELOG has an Unreleased entry for #55" ||
   fail "status: no Unreleased #55 entry"
 grep -qF '(#55)' "$plugin/docs/DECISIONS.md" && pass "status: the decisions log has #55" || fail "status: no #55 decision"
+# 23. Merge without a force push (#57): on an origin that refuses non-fast-forward pushes, a branch behind
+# the base merges through a merge commit with the gated tree, pushed as a fast-forward of the branch; a
+# re-run after a stop merges the pushed head as it is, without a second push.
+mwork="$work/noforce"
+git init -q --bare "$mwork/origin.git"
+git -C "$mwork/origin.git" config receive.denyNonFastForwards true
+git clone -q "$mwork/origin.git" "$mwork/project" 2>/dev/null
+cd "$mwork/project" || exit 1
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]}\n' >.dev-loop.json
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+export FAKE_GH_DIR="$mwork/gh"
+mbranch() { # mbranch NAME TICKET: a branch from origin/main with one file of its own and its notes, pushed; back on main
+  git checkout -q -B "$1" origin/main && echo "$1" >"f-${1//\//_}.txt" && git add . &&
+    git commit -q -m "feat: $1" && git push -q -u origin "$1" && git checkout -q main &&
+    mkdir -p "$("$plugin/scripts/paths.sh" notes-dir)" &&
+    printf 'feat: %s (#%s)\n\nCloses #%s\n' "$1" "$2" "$2" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+mmove() { echo "$1" >>src.txt && git commit -q -am "chore: the base moves ($1)" && git push -q origin main; }
+mmove probe-base
+git push -q origin "main~1:main" 2>/dev/null && fail "noforce: the origin accepted a non-fast-forward push" ||
+  pass "noforce: the test origin refuses non-fast-forward pushes"
+
+mbranch feat/801-a 801
+mbranch feat/802-b 802
+mmove two
+a_src=$(git rev-parse origin/feat/801-a) b_src=$(git rev-parse origin/feat/802-b)
+"$plugin/scripts/gate-train.sh" feat/801-a feat/802-b >/dev/null 2>&1
+expect "noforce: the train behind the base gates green" 0 "$?"
+gated_tree=$(git rev-parse "train-feat/802-b^{tree}")
+out=$("$plugin/scripts/merge-train.sh" feat/801-a feat/802-b 2>&1)
+expect "noforce: merge-train merges green on an origin that refuses non-fast-forward pushes" 0 "$?"
+git fetch -q --prune origin
+expect "noforce: the base's tree is the gated tree" "$gated_tree" "$(git rev-parse 'origin/main^{tree}')"
+expect "noforce: both squash commits are on the base" "feat: feat/802-b (#802)|feat: feat/801-a (#801)" \
+  "$(git log --format=%s -2 origin/main | paste -sd'|')"
+a_head=$(cat "$FAKE_GH_DIR/feat_801-a.head") b_head=$(cat "$FAKE_GH_DIR/feat_802-b.head")
+expect "noforce: the merged head of a branch behind the base is a merge commit on the gated head" \
+  "$a_src $(git rev-parse origin/main~2)" "$(git log -1 --format=%P "$a_head")"
+expect "noforce: the second branch's merged head builds on its gated head and the first squash" \
+  "$b_src $(git rev-parse origin/main~1)" "$(git log -1 --format=%P "$b_head")"
+expect "noforce: no -vN branch or PR is created" "" \
+  "$(git ls-remote origin 'refs/heads/*-v*'; ls "$FAKE_GH_DIR" | grep -e '-v[0-9]')"
+expect "noforce: the ledger keeps the gated source head" "$a_src $a_head" \
+  "$(jq -r 'select(.branch == "feat/801-a") | "\(.source_head) \(.head)"' "$DEV_LOOP_HOME/project/merged.jsonl")"
+expect "noforce: the merged branches are deleted locally and on the origin" "|" \
+  "$(git branch --list feat/801-a feat/802-b)|$(git ls-remote origin 'refs/heads/feat/*')"
+
+# A stop after the push (the merge refused): the re-run merges the pushed head, no second push.
+mbranch feat/803-c 803
+mmove three
+c_src=$(git rev-parse origin/feat/803-c)
+"$plugin/scripts/gate-train.sh" feat/803-c >/dev/null 2>&1
+FAKE_GH_REQUIRE_APPROVAL=1 "$plugin/scripts/merge-train.sh" feat/803-c >/dev/null 2>&1
+expect "noforce: a refused merge stops with exit 7" 7 "$?"
+git fetch -q origin
+c_pushed=$(git rev-parse origin/feat/803-c)
+expect "noforce: the stopped merge pushed a fast-forward of the gated head" "$c_src" \
+  "$(git log -1 --format=%P "$c_pushed" | cut -d' ' -f1)"
+GH_TOKEN=reviewer gh pr review feat/803-c --approve
+FAKE_GH_REQUIRE_APPROVAL=1 "$plugin/scripts/merge-train.sh" feat/803-c >/dev/null 2>&1
+expect "noforce: the re-run merges" 0 "$?"
+expect "noforce: the re-run merges the head pushed before, without a second push" "$c_pushed" \
+  "$(cat "$FAKE_GH_DIR/feat_803-c.head")"
+expect "noforce: after the re-run the ledger keeps the gated source head" "$c_src" \
+  "$(jq -r 'select(.branch == "feat/803-c") | .source_head' "$DEV_LOOP_HOME/project/merged.jsonl")"
+expect "noforce: after the re-run the local branch at the gated head is deleted" "" "$(git branch --list feat/803-c)"
+
+# No force push of a branch in the merge path; the docs say how it merges.
+expect "noforce: no forced push in merge-train.sh or open-pr.sh" "" \
+  "$(grep -nE -- '--force|push[^|]* -f( |$)|[[:space:]]\+refs/|--mirror' "$plugin/scripts/merge-train.sh" "$plugin/scripts/open-pr.sh")"
+grep -qiF 'fast-forward' "$plugin/skills/merge/SKILL.md" && ! grep -qiF 'lease' "$plugin/skills/merge/SKILL.md" &&
+  pass "noforce: the merge skill describes the fast-forward, no lease" || fail "noforce: merge skill text"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#57" && pass "noforce: CHANGELOG has an Unreleased entry for #57" ||
+  fail "noforce: no Unreleased #57 entry"
+grep -qF '(#57)' "$plugin/docs/DECISIONS.md" && pass "noforce: the decisions log has #57" || fail "noforce: no #57 decision"
+export FAKE_GH_DIR="$work/gh"
+
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
