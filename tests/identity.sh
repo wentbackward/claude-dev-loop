@@ -183,8 +183,10 @@ config["identities"] = {role: {"type": "token", "token_file": f"{work}/credentia
 json.dump(config, open(path, "w"), indent=2)
 PY
 git add .dev-loop.json && git commit -q -m "chore: identities" && git push -q origin main
+git -C "$work/origin.git" config receive.denyNonFastForwards true   # no force push anywhere (#57)
 git checkout -q -b feat/1-x
 echo two >>src.txt && git commit -q -am "feat: two (Refs #1)" && git push -q -u origin feat/1-x
+x_src=$(git rev-parse feat/1-x)
 git checkout -q main
 echo readme >README && git add README && git commit -q -m "docs: readme" && git push -q origin main
 mkdir -p "$("$plugin/scripts/paths.sh" notes-dir)"
@@ -206,6 +208,10 @@ grep -q "^\[token-gate\] gh pr merge feat/1-x --squash --match-head-commit" "$FA
   pass "the merge runs as the gate, pinned to the gated head" || fail "merge identity"
 git fetch -q origin
 expect "origin main has the squash commit" "feat: two (#1)" "$(git log --format=%s -1 origin/main)"
+expect "the merged head is a fast-forward of the gated head, pushed as the gate" "$x_src" \
+  "$(git log -1 --format=%P "$(cat "$FAKE_GH_DIR/feat_1-x.head")" | cut -d' ' -f1)"
+grep -q "^\[token-gate\] gh api -X POST repos/owner/project/statuses/$(cat "$FAKE_GH_DIR/feat_1-x.head") " "$FAKE_GH_DIR/calls.log" &&
+  pass "the gate status is posted on the head that merges" || fail "gate status on the merged head"
 
 echo "identity: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

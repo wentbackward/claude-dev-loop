@@ -5,10 +5,13 @@
 #                                                  ones not merged yet, same order)
 #
 # Refuses unless the last gate-train.sh run was GREEN for these branches. For each branch: replay its own
-# commits onto the current <remote>/<base>, verify the tree equals the gated train-<branch> tree, push it to
-# the branch (with a lease on the head that was gated), create the PR if missing (title and body from the
-# notes file: first line title, a leading "#" is stripped, the rest is the body), squash-merge exactly that
-# head (--match-head-commit), confirm the PR is MERGED and delete the remote branch.
+# commits onto the current <remote>/<base> and verify the tree equals the gated train-<branch> tree. When
+# the branch already contains the base and has that tree, it merges as it is; otherwise a merge commit with
+# the gated tree and two parents (the branch head, the base) is pushed to the branch as a plain
+# fast-forward, never forced (the remote refuses it when the branch moved). Then: create the PR if missing
+# (title and body from the notes file: first line title, a leading "#" is stripped, the rest is the body),
+# squash-merge exactly that head (--match-head-commit; its squash is the gated tree, since the head
+# contains the base), confirm the PR is MERGED and delete the remote branch.
 #
 # After each merge: append the merge to the ledger (~/.dev-loop/<repo>/merged.jsonl, read by cleanup.sh and
 # arch-evidence.sh: the heads, the PR, the merge commit, and the evidence: the files the merge changed,
@@ -60,10 +63,17 @@ if [ "$pending" != "$* " ]; then
   exit 8
 fi
 
-# record BRANCH FIELD VALUE: update the train file (field 2 = pushed head, field 4 = state).
+# record BRANCH FIELD VALUE: update the train file (field 2 = the branch's head on the remote, field 4 =
+# state, field 5 = the head the gate tested, kept once a merge commit moved field 2).
 record() {
   awk -v b="$1" -v f="$2" -v v="$3" '$1 == b {$f = v} {print}' "$train_file" >"$train_file.tmp" &&
     mv "$train_file.tmp" "$train_file"
+}
+
+# up_to_date TIP GATED: TIP contains the base and has the GATED tree, so its squash merge is that tree.
+up_to_date() {
+  git merge-base --is-ancestor "$DL_REMOTE/$DL_BASE" "$1" &&
+    [ "$(git rev-parse "$1^{tree}")" = "$(git rev-parse "$2^{tree}")" ]
 }
 
 for branch in "$@"; do
@@ -76,7 +86,8 @@ done
 
 previous=$(awk '$4 == "merged" {b = $1} END {print b}' "$train_file")
 for branch in "$@"; do
-  read -r _ source_head gated _ <<<"$(awk -v b="$branch" '$1 == b' "$train_file")"
+  read -r _ source_head gated _ tested_head <<<"$(awk -v b="$branch" '$1 == b' "$train_file")"
+  tested_head=${tested_head:-$source_head}
   cd "$gate" || exit 2
   git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
   [ "$(git rev-parse "train-$branch" 2>/dev/null)" = "$gated" ] ||
@@ -102,17 +113,21 @@ for branch in "$@"; do
     echo "MERGE tree differs from the gated one at $branch ($DL_BASE moved): re-gate"
     exit 4
   fi
-  head=$(git rev-parse HEAD)
   changed=$(git diff -z --name-only "$DL_REMOTE/$DL_BASE" HEAD | dl_json_list_z)
   read -r added deleted <<<"$(dl_diff_lines "$DL_REMOTE/$DL_BASE" HEAD)"
   components=""
   dl_arch_on && components=$(git diff -z --name-only "$DL_REMOTE/$DL_BASE" HEAD | dl_z_lines | dl_arch_components_at HEAD)
-  if [ "$head" != "$source_head" ]; then
-    if ! as_role gate git push -q --force-with-lease="$branch:$source_head" "$DL_REMOTE" "replay-$branch:$branch"; then
+  head=$source_head
+  if ! up_to_date "$source_head" "$gated"; then
+    head=$(git commit-tree "$gated^{tree}" -p "$source_head" -p "$DL_REMOTE/$DL_BASE" \
+      -m "Merge $DL_BASE into $branch" -m "The tree the batch gate tested (train-$branch), as a fast-forward of $branch.") ||
+      { git checkout -q --detach "$DL_REMOTE/$DL_BASE"; echo "MERGE could not create the merge commit for $branch"; exit 2; }
+    if ! as_role gate git push -q "$DL_REMOTE" "$head:$branch"; then
       git checkout -q --detach "$DL_REMOTE/$DL_BASE"
       echo "MERGE push rejected for $branch (changed since the gate?)"
       exit 6
     fi
+    record "$branch" 5 "$tested_head"
     record "$branch" 2 "$head"
   fi
   git checkout -q --detach "$DL_REMOTE/$DL_BASE"
@@ -147,13 +162,13 @@ for branch in "$@"; do
   fi
   record "$branch" 4 merged
   note=$(dl_note_file "$branch")
-  dl_ledger_append "$branch" "$source_head" "$head" "$gated" "$(git -C "$gate" rev-parse "$gated^{tree}")" \
+  dl_ledger_append "$branch" "$tested_head" "$head" "$gated" "$(git -C "$gate" rev-parse "$gated^{tree}")" \
     "$(as_role gate gh pr view "$branch" --json number --jq .number 2>/dev/null)" \
     "$(as_role gate gh pr view "$branch" --json mergeCommit --jq .mergeCommit.oid 2>/dev/null)" \
     "$(dl_notes_ticket "$note" "$branch")" "$(dl_notes_review_rounds "$note")" "$added" "$deleted" "$changed" "$components"
   [ "$delete_branch" = false ] || as_role gate git push -q "$DL_REMOTE" --delete "$branch" >/dev/null 2>&1
   git fetch -q --prune "$DL_REMOTE"
-  [ "$delete_local" = false ] || dl_remove_merged_local "$branch" "$source_head" "$head"
+  [ "$delete_local" = false ] || dl_remove_merged_local "$branch" "$tested_head" "$head"
   dl_event merge merged branch="$branch" ticket="$(dl_notes_ticket "$note" "$branch")"
   dl_archive_note "$branch"
   # Fast-forward the main checkout only when it is on the base branch and clean.
