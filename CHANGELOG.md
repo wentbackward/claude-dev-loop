@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.0 — 2026-11-07
 
 - Merge without a force push (#57): `merge-train.sh` no longer force-pushes the replayed branch. A branch
   that already contains the base with the gated tree merges as it is; a branch behind the base gets a merge
