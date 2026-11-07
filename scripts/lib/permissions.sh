@@ -8,7 +8,7 @@
 # The plugin scripts the loop runs through the Bash tool with any arguments. heavy.sh and as-role.sh run the
 # command they are given, so they get exact rules for the loop's own uses only (dl_perm_plugin_rules).
 DL_PERM_SCRIPTS="gate-train merge-train doctor cleanup paths docs-check docs-archive arch-check arch-evidence
-open-pr repush permissions"
+open-pr repush permissions status event"
 
 # dl_perm_valid FILE: true when FILE holds a JSON object.
 dl_perm_valid() {

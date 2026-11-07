@@ -3303,6 +3303,7 @@ for cmd in "git fetch origin" "git status" "git push -u origin HEAD" "git rebase
   "gh pr create --title x --body-file n.md" "gh pr comment 3 --body ok" "gh pr list" "make lint" "make check" \
   "$mroot/scripts/gate-train.sh feat/1-a feat/2-b" "$mroot/scripts/doctor.sh" "$mroot/scripts/cleanup.sh" \
   "$mroot/scripts/repush.sh feat/1-a" "$mroot/scripts/permissions.sh" "$mroot/scripts/heavy.sh make check" \
+  "$mroot/scripts/status.sh --json --no-gh" "$mroot/scripts/event.sh agent-started ticket=55" \
   "$mroot/scripts/as-role.sh implementer git push -u origin HEAD"; do
   expect "perm: the loop command \"$cmd\" is allowed" allow "$(mdecide "$cmd")"
 done

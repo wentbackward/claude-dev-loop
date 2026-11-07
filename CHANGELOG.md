@@ -42,7 +42,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   (new key `watchdog.stall_minutes`, default 30; raise it for stages that print nothing for longer). `--json` for machines. A new event log
   `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`): `gate-train.sh`, `merge-train.sh` and `heavy.sh`
   append one JSON line per step, the orchestrator through the new `scripts/event.sh`; rotated at 1 MiB
-  to `events.jsonl.1`; a failed write is ignored. Nothing else changes without new config.
+  to `events.jsonl.1`; a failed write is ignored. `permissions.sh` allows `status.sh` and `event.sh` with
+  the other plugin scripts. Nothing else changes without new config.
 - Docs maintenance (#47; only with `docs` configured): on the doc audit's cadence, right after the audit,
   the orchestrator opens one `docs: maintenance` ticket from `doctor.sh`'s docs notes and the auditor's
   new maintenance list (planned rows to move or remove, journals over budget, finished specs, at most one
