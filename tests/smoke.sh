@@ -2390,6 +2390,9 @@ printf '%s\n' "$out" | grep -qE '^scenarios red: 2 judged, 1 required unsatisfie
   fail "the red line of a mixed store counts the sealed required failure"
 printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "$sealed_id|SEALED-MISSING" &&
   fail "the sealed scenario of a mixed store is named" || pass "the sealed scenario of a mixed store is not named"
+grep -qiE "daemon that calls .setsid.*escapes" "$plugin/README.md" && grep -qF "setsid" "$plugin/docs/DECISIONS.md" &&
+  pass "the README and DECISIONS record that a setsid daemon escapes the stop (#40)" ||
+  fail "the setsid limit of the scenario stop is not documented"
 printf '{"scenarios": {"dir": "%s", "sealed": 0.5}}\n' "$jstore" >"$work/judge-sealed.json"
 expect "dl_scenario_sealed takes a scenario file or an id, with scenarios.sealed as the default share" "yes yes no" \
   "$(scen_config="$work/judge-sealed.json" scenlib 'for x in "$1" "$(basename "$1" .md)"; do dl_scenario_sealed "$x" && printf "yes " || printf "no "; done; dl_scenario_sealed "$(basename "$1" .md)" 0 && echo yes || echo no' "$jstore/$sealed_id.md")"
