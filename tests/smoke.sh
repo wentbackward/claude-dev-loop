@@ -3466,8 +3466,9 @@ expect "repush: a plain -u push, the new branch tracks its own remote branch" or
 expect "repush: the notes file is carried over to the new name" "fix(x): the thing (#701)" \
   "$(head -n 1 "$(rnotes fix/701-thing-v2)" 2>/dev/null)"
 grep -qF 'Closes #701' "$(rnotes fix/701-thing-v2)" 2>/dev/null &&
-  grep -qF 'Supersedes `fix/701-thing`' "$(rnotes fix/701-thing-v2)" &&
-  pass "repush: the new notes keep the ticket and say what they supersede" || fail "repush: notes without Supersedes line"
+  grep -qF "Supersedes \`fix/701-thing\` at $rebased $old_head " "$(rnotes fix/701-thing-v2)" &&
+  pass "repush: the new notes keep the ticket and record what they supersede, at its local and remote tips" ||
+  fail "repush: notes without the Supersedes record"
 [ -f "$(rnotes fix/701-thing)" ] && pass "repush: the old notes file is kept" || fail "repush removed the old notes"
 
 # The next free suffix: a version already on the remote, or a notes file of that name, is never reused.
@@ -3561,6 +3562,13 @@ printf 'feat: other (#702)\n\nCloses #702\n' >"$(rnotes feat/702-other)"
 rbranch feat/703-gone && rbranch feat/703-gone-v2                      # successor closed unmerged
 gh pr create --head feat/703-gone-v2 --title v2 --body-file /dev/null >/dev/null && echo CLOSED >"$FAKE_GH_DIR/feat_703-gone-v2.state"
 rbranch feat/704-d && rbranch feat/704-d-v2                            # successor merged by PR only
+printf 'feat: d (#704)\n\nSupersedes `feat/704-d` at %s (re-pushed)\n' "$(git rev-parse feat/704-d)" >"$(rnotes feat/704-d-v2)"
+rbranch feat/712-api && rbranch feat/712-api-v2                        # same-name successor, no record
+gh pr create --head feat/712-api-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/712-api-v2 --squash >/dev/null
+rbranch feat/713-m && rbranch feat/713-m-v2                            # the old branch moved on (locally)
+printf 'feat: m (#713)\n\nSupersedes `feat/713-m` at %s\n' "$(git rev-parse feat/713-m)" >"$(rnotes feat/713-m-v2)"
+gh pr create --head feat/713-m-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/713-m-v2 --squash >/dev/null
+git checkout -q feat/713-m && echo later >>f-feat_713-m.txt && git commit -q -am "feat: after the re-push" && git checkout -q main
 gh pr create --head feat/704-d-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/704-d-v2 --squash >/dev/null
 rbranch feat/706-e && gh pr create --head feat/706-e --title e --body-file /dev/null >/dev/null
 rbranch feat/706-e-v2 && gh pr create --head feat/706-e-v2 --title v2 --body-file /dev/null >/dev/null &&
@@ -3573,14 +3581,21 @@ git fetch -q origin
 out=$("$plugin/scripts/cleanup.sh" 2>&1)
 report=$(echo "$out" | sed -n 's/^report: //p')
 for row in "superseded local fix/701-thing" "superseded remote fix/701-thing" "superseded local fix/701-thing-v2" \
-  "superseded remote fix/701-thing-v2" "superseded remote fix/701-thing-v3" "keep remote fix/701-thing-v6" \
+  "superseded remote fix/701-thing-v2" "keep remote fix/701-thing-v3" "keep remote fix/701-thing-v6" \
   "keep local feat/702-other" "keep remote feat/702-other" "keep local feat/703-gone" "superseded local feat/704-d" \
-  "superseded remote feat/704-d" "keep local feat/706-e" "keep local feat/707-api" "keep local feat/705-plan-v2"; do
+  "superseded remote feat/704-d" "keep local feat/706-e" "keep local feat/707-api" "keep local feat/705-plan-v2" \
+  "keep local feat/712-api" "keep remote feat/712-api" "keep local feat/713-m" "superseded remote feat/713-m"; do
   read -r want scope name <<<"$row"
   expect "cleanup: $scope $name is $want" "$want" "$(rclass "$report" "$scope" "$name")"
 done
 grep -q "^superseded"$'\t'"local"$'\t'"fix/701-thing"$'\t'".*fix/701-thing-v5" "$report" &&
   pass "cleanup: a superseded branch names the version that merged" || fail "cleanup: no successor in the reason"
+grep -q "feat/712-api"$'\t'".*no Supersedes record" "$report" &&
+  pass "cleanup: a same-name later version without a Supersedes record keeps the branch, and says why" ||
+  fail "cleanup: no 'no Supersedes record' reason"
+grep -q "^keep"$'\t'"local"$'\t'"feat/713-m"$'\t'".*moved on since the re-push" "$report" &&
+  pass "cleanup: a branch with commits after the re-push is kept, and says why" ||
+  fail "cleanup: no 'moved on since the re-push' reason"
 grep -q "feat/705-plan-v2.*issue #705 is open" "$report" &&
   pass "cleanup: the ticket number of a -vN name is found" || fail "cleanup: no ticket for feat/705-plan-v2"
 echo "$out" | grep -q "^superseded local  *fix/701-thing " &&
@@ -3592,7 +3607,10 @@ echo "$out"
 expect "cleanup --apply: superseded branches are deleted locally" "" \
   "$(git branch --list fix/701-thing fix/701-thing-v2 feat/704-d)"
 expect "cleanup --apply: superseded branches are deleted on the remote" "" \
-  "$(git ls-remote origin refs/heads/fix/701-thing refs/heads/fix/701-thing-v2 refs/heads/fix/701-thing-v3 refs/heads/feat/704-d)"
+  "$(git ls-remote origin refs/heads/fix/701-thing refs/heads/fix/701-thing-v2 refs/heads/feat/704-d)"
+expect "cleanup --apply: unrecorded and moved-on originals are kept" "feat/712-api feat/713-m" \
+  "$(git branch --list --format='%(refname:short)' feat/712-api feat/713-m | paste -sd' ' -)"
+expect "cleanup --apply: a same-name branch without a record is kept on the remote" "$old_head" "$(remote_tip fix/701-thing-v3)"
 expect "cleanup --apply: an unmerged successor keeps the original, locally and remotely" "feat/702-other feat/702-other" \
   "$(git branch --list --format='%(refname:short)' feat/702-other) $(git ls-remote origin refs/heads/feat/702-other | sed 's:.*refs/heads/::')"
 expect "cleanup --apply: originals of unmerged, open or foreign successors are kept" \
