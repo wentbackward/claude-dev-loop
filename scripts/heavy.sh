@@ -78,7 +78,7 @@ run_in_slot() {
   if [ -n "$port_env" ]; then
     export "$port_env=$((port_base + slot * port_step))"
   fi
-  echo "[heavy.sh] slot $slot/$slots acquired: $*" >&2
+  dl_heavy_acquired_line "$slot" "$slots" "$*" >&2
   dl_event heavy slot-acquired slot="$slot" pid="$$" ${DL_GATE_PID:+"gate_pid=$DL_GATE_PID"} detail="$(heavy_label "$@")"
   if [ -z "$memory_max" ]; then
     without_fd "$lock_fd" "$@"

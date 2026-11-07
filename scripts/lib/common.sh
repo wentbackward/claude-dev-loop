@@ -180,6 +180,15 @@ cfg_len() {
   if [ -n "${DL_CONFIG:-}" ] && [ -f "$DL_CONFIG" ]; then json_len "$1" <"$DL_CONFIG"; else echo 0; fi
 }
 
+# The line heavy.sh writes to stderr when its command gets a slot, and the pattern that finds it: the gate's
+# stall timeout starts a heavy stage's clock at this line, so both sides use these two definitions.
+# shellcheck disable=SC2034  # read by gate-train.sh
+DL_HEAVY_ACQUIRED_RE='^\[heavy\.sh\] slot [0-9]+/[0-9]+ acquired: '
+# dl_heavy_acquired_line SLOT SLOTS COMMAND: the "slot acquired" line heavy.sh prints.
+dl_heavy_acquired_line() {
+  printf '[heavy.sh] slot %s/%s acquired: %s\n' "$1" "$2" "$3"
+}
+
 # dl_new_session COMMAND...: replace this (background) shell with the command as the leader of a new session,
 # so its process group id is the background job's pid ($!) and the whole group can be stopped at once.
 dl_new_session() {

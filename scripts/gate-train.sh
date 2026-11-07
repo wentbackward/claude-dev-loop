@@ -405,6 +405,14 @@ parallel=$(cfg parallel false)
 fail_fast=$(cfg fail_fast false)
 grace=${DEV_LOOP_STOP_GRACE_SECONDS:-10}
 stall_unit=${DEV_LOOP_STALL_UNIT_SECONDS:-60}
+case $stall_unit in
+  *[!0-9]* | "") stall_unit=0 ;;
+  *) stall_unit=$((10#$stall_unit)) ;;
+esac
+if [ "$stall_unit" -le 0 ]; then
+  dl_warn "DEV_LOOP_STALL_UNIT_SECONDS \"${DEV_LOOP_STALL_UNIT_SECONDS:-}\" is not a positive whole number; using 60"
+  stall_unit=60
+fi
 failed=""
 log_sizes=() log_changed=()
 
@@ -469,7 +477,8 @@ collect() {
 
 # stop_stages RESULT INDEX...: stop these running stages' process groups (TERM, then KILL after the grace
 # period) and mark them RESULT (stopped or stalled; a stall counts as a failure for fail_fast). A stage
-# whose process still ended with 0 (it had finished when the TERM came) keeps rc=0 instead.
+# whose process still ended with 0 (it had finished just before the TERM came, a race within the poll
+# interval) prints rc=0 instead of stopped or stalled; the train stays red, since the stop was decided.
 stop_stages() {
   local result=$1 i deadline alive
   shift
@@ -506,8 +515,9 @@ stop_running() {
 }
 
 # stop_stalled FROM TO: stop the running stages of FROM..TO-1 with a stall_minutes whose log has not grown
-# for that long. A heavy stage counts from the moment heavy.sh gave it a slot (its "acquired" line), so a
-# stage queued for a slot is never stalled.
+# for that long. A heavy stage counts from the moment heavy.sh gave it a slot (its "acquired" line,
+# DL_HEAVY_ACQUIRED_RE), so a stage queued for a slot is never stalled; one whose line never appears is never
+# stopped (on purpose: when in doubt the stage runs on, as without stall_minutes).
 stop_stalled() {
   local i now size stalled=()
   now=$(date +%s)
@@ -515,7 +525,7 @@ stop_stalled() {
     [ -n "${pids[i]}" ] && [ -n "${stalls[i]}" ] || continue
     size=$(wc -c <"$(log_of "$i")" 2>/dev/null | tr -d ' ')
     if [ "${heavies[i]}" != false ] &&
-      ! grep -q '^\[heavy.sh\] slot [0-9]*/[0-9]* acquired' "$(log_of "$i")" 2>/dev/null; then
+      ! grep -qE "$DL_HEAVY_ACQUIRED_RE" "$(log_of "$i")" 2>/dev/null; then
       size=queued
     fi
     if [ "$size" = queued ] || [ "$size" != "${log_sizes[i]}" ]; then
