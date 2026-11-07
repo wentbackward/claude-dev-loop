@@ -50,6 +50,8 @@ dl_identities_enabled && identity_mode=yes
 post_status=$(cfg github.post_status "${identity_mode:+true}")
 
 as_role() { "$scripts_dir/as-role.sh" "$@"; }
+trap 'dl_event merge merge-ended rc="$?"' EXIT
+dl_event merge merge-started branches="$*"
 
 [ -f "$train_file" ] || { echo "MERGE refused: no green train recorded (run gate-train.sh)"; exit 8; }
 pending=$(awk '$4 != "merged" {printf "%s ", $1}' "$train_file")
@@ -152,6 +154,7 @@ for branch in "$@"; do
   [ "$delete_branch" = false ] || as_role gate git push -q "$DL_REMOTE" --delete "$branch" >/dev/null 2>&1
   git fetch -q --prune "$DL_REMOTE"
   [ "$delete_local" = false ] || dl_remove_merged_local "$branch" "$source_head" "$head"
+  dl_event merge merged branch="$branch" ticket="$(dl_notes_ticket "$note" "$branch")"
   dl_archive_note "$branch"
   # Fast-forward the main checkout only when it is on the base branch and clean.
   if [ "$(git rev-parse --abbrev-ref HEAD)" = "$DL_BASE" ] && [ -z "$(git status --porcelain)" ]; then

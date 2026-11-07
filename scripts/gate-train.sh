@@ -60,7 +60,16 @@ mkdir -p "$logs" "$DL_STATE" || dl_die "cannot create $logs"
 train_file=$(dl_train_file)
 running_file=$(dl_running_file)
 printf '%s %s\n' "$$" "$*" >"$running_file"
-trap 'rm -f "$running_file"' EXIT
+# train_ended RC: on exit, forget the running train and record its end with the exit status and outcome.
+# shellcheck disable=SC2329  # called from the EXIT trap
+train_ended() {
+  local result=error
+  rm -f "$running_file"
+  case $1 in 0) result=green ;; 1) result=red ;; 3) result=conflict ;; esac
+  dl_event gate train-ended rc="$1" result="$result"
+}
+trap 'train_ended $?' EXIT
+dl_event gate train-started pid="$$" branches="$*"
 
 # Stale train refs: everything but this train and the unmerged branches of a waiting green train.
 keep_train=" $* "
@@ -172,7 +181,11 @@ fi
 
 setup=$(cfg gate_setup "")
 if [ -n "$setup" ]; then
-  if ! bash -c "$setup" >"$logs/train-setup.log" 2>&1; then
+  dl_event gate stage-started stage=gate_setup log="$logs/train-setup.log"
+  bash -c "$setup" >"$logs/train-setup.log" 2>&1
+  setup_rc=$?
+  dl_event gate stage-ended stage=gate_setup rc="$setup_rc"
+  if [ "$setup_rc" -ne 0 ]; then
     echo "gate_setup failed (log: $logs/train-setup.log)"
     echo "TRAIN RED"
     exit 1
@@ -396,6 +409,7 @@ result_line() {
 # record INDEX RC: store a stage's exit status; a failure under fail_fast stops the train.
 record() {
   results[$1]="rc=$2"
+  dl_event gate stage-ended stage="${names[$1]}" rc="$2"
   if [ "$2" -ne 0 ]; then
     all_green=""
     [ "$fail_fast" = true ] && failed=yes
@@ -410,6 +424,7 @@ run_sequential() {
       results[i]=skipped
     else
       stage_command "$i"
+      dl_event gate stage-started stage="${names[i]}" log="$(log_of "$i")"
       "${stage_argv[@]}" >"$(log_of "$i")" 2>&1
       record "$i" $?
     fi
@@ -435,6 +450,7 @@ stop_running() {
     collect "$i" && continue
     kill -TERM -- "-${pids[i]}" 2>/dev/null
     results[i]=stopped
+    dl_event gate stage-ended stage="${names[i]}" result=stopped
     all_green=""
   done
   deadline=$(($(date +%s) + grace))
@@ -477,6 +493,7 @@ run_parallel() {
       continue
     fi
     stage_command "$i"
+    dl_event gate stage-started stage="${names[i]}" log="$(log_of "$i")"
     dl_new_session "${stage_argv[@]}" </dev/null >"$(log_of "$i")" 2>&1 &
     pids[i]=$!
   done

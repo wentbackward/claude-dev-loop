@@ -77,6 +77,7 @@ run_in_slot() {
     export "$port_env=$((port_base + slot * port_step))"
   fi
   echo "[heavy.sh] slot $slot/$slots acquired: $*" >&2
+  dl_event heavy slot-acquired slot="$slot" pid="$$" detail="$(heavy_label "$@")"
   if [ -z "$memory_max" ]; then
     without_fd "$lock_fd" "$@"
   elif have_memory_cap; then
@@ -85,6 +86,15 @@ run_in_slot() {
     dl_warn "heavy.sh: no systemd user manager; running without the $memory_max memory cap"
     without_fd "$lock_fd" "$@"
   fi
+  local rc=$?
+  dl_event heavy slot-released slot="$slot" pid="$$" rc="$rc"
+  return "$rc"
+}
+
+# heavy_label COMMAND...: the command as one line of at most 200 characters, for the event log.
+heavy_label() {
+  local label="$*"
+  printf '%s' "${label:0:200}"
 }
 
 # without_fd FD COMMAND...: run the command with descriptor FD closed (FD empty: nothing to close).
@@ -158,6 +168,7 @@ while true; do
   done
   if [ -z "$waiting_said" ]; then
     echo "[heavy.sh] all $slots slots busy, waiting: $*" >&2
+    dl_event heavy queued pid="$$" detail="$(heavy_label "$@")"
     waiting_said=yes
   fi
   sleep "$poll_seconds"

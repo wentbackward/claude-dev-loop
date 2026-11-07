@@ -3730,7 +3730,7 @@ for n in $(seq 1 30); do
 done
 [ -s "$rot/project/events.jsonl.1" ] && [ "$(wc -c <"$rot/project/events.jsonl" | tr -d ' ')" -lt 600 ] &&
   pass "status: the log rotates at the cap and keeps the old file as .1" || fail "status: no rotation"
-expect "status: only one old file is kept" "events.jsonl events.jsonl.1" "$(ls "$rot/project" | paste -sd' ' -)"
+expect "status: only one old file is kept" "events.jsonl events.jsonl.1" "$(cd "$rot/project" && echo *)"
 expect "status: the newest event is in the current log" step-30 "$(tail -n 1 "$rot/project/events.jsonl" | jq -r .event)"
 rot_lines=$(($(wc -l <"$rot/project/events.jsonl") + 0))
 expect "status: the rotated log is valid JSON" "$(wc -l <"$rot/project/events.jsonl.1" | tr -d ' ')|$(wc -l <"$rot/project/events.jsonl.1" | tr -d ' ')" \
@@ -3782,7 +3782,7 @@ expect "status: all event lines so far are valid JSON" "$(wc -l <"$sevents" | tr
   "$(valid_lines "$sevents")"
 
 # A heavy job holds a slot: status names its slot, pid and repository; the slot is free after release.
-senv "$plugin/scripts/heavy.sh" bash -c 'sleep 4' >/dev/null 2>&1 &
+DEV_LOOP_HOME="$shome" DEV_LOOP_LOCK_DIR="$swork/locks" "$plugin/scripts/heavy.sh" bash -c 'sleep 4' >/dev/null 2>&1 &
 heavy_bg=$!
 wait_event slot-acquired || fail "status: heavy.sh wrote no slot-acquired event"
 out=$(sstatus)
