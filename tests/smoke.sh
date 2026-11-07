@@ -3568,6 +3568,8 @@ gh pr create --head feat/712-api-v2 --title v2 --body-file /dev/null >/dev/null 
 rbranch feat/713-m && rbranch feat/713-m-v2                            # the old branch moved on (locally)
 printf 'feat: m (#713)\n\nSupersedes `feat/713-m` at %s\n' "$(git rev-parse feat/713-m)" >"$(rnotes feat/713-m-v2)"
 gh pr create --head feat/713-m-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/713-m-v2 --squash >/dev/null
+git branch -q feat/714-c origin/main && rbranch feat/714-c-v2          # contained in the base, no record
+gh pr create --head feat/714-c-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/714-c-v2 --squash >/dev/null
 git checkout -q feat/713-m && echo later >>f-feat_713-m.txt && git commit -q -am "feat: after the re-push" && git checkout -q main
 gh pr create --head feat/704-d-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/704-d-v2 --squash >/dev/null
 rbranch feat/706-e && gh pr create --head feat/706-e --title e --body-file /dev/null >/dev/null
@@ -3584,7 +3586,7 @@ for row in "superseded local fix/701-thing" "superseded remote fix/701-thing" "s
   "superseded remote fix/701-thing-v2" "keep remote fix/701-thing-v3" "keep remote fix/701-thing-v6" \
   "keep local feat/702-other" "keep remote feat/702-other" "keep local feat/703-gone" "superseded local feat/704-d" \
   "superseded remote feat/704-d" "keep local feat/706-e" "keep local feat/707-api" "keep local feat/705-plan-v2" \
-  "keep local feat/712-api" "keep remote feat/712-api" "keep local feat/713-m" "superseded remote feat/713-m"; do
+  "keep local feat/712-api" "keep remote feat/712-api" "keep local feat/713-m" "superseded remote feat/713-m" "merged local feat/714-c"; do
   read -r want scope name <<<"$row"
   expect "cleanup: $scope $name is $want" "$want" "$(rclass "$report" "$scope" "$name")"
 done
