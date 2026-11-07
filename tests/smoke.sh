@@ -4051,6 +4051,21 @@ expect "noforce: after the re-run the ledger keeps the gated source head" "$c_sr
   "$(jq -r 'select(.branch == "feat/803-c") | .source_head' "$DEV_LOOP_HOME/project/merged.jsonl")"
 expect "noforce: after the re-run the local branch at the gated head is deleted" "" "$(git branch --list feat/803-c)"
 
+# A run that stopped right after its push, before recording it: the re-run finds the pushed merge commit.
+mbranch feat/804-d 804
+mmove four
+d_src=$(git rev-parse origin/feat/804-d)
+"$plugin/scripts/gate-train.sh" feat/804-d >/dev/null 2>&1
+FAKE_GH_REQUIRE_APPROVAL=1 "$plugin/scripts/merge-train.sh" feat/804-d >/dev/null 2>&1
+git fetch -q origin
+d_pushed=$(git rev-parse origin/feat/804-d)
+mtrain=$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_train_file' _ "$plugin")
+awk -v s="$d_src" '{$2 = s; print}' "$mtrain" >"$mtrain.tmp" && mv "$mtrain.tmp" "$mtrain"   # field 2 not recorded yet
+GH_TOKEN=reviewer gh pr review feat/804-d --approve
+FAKE_GH_REQUIRE_APPROVAL=1 "$plugin/scripts/merge-train.sh" feat/804-d >/dev/null 2>&1
+expect "noforce: a re-run after a stop between push and record merges, not exit 6" 0 "$?"
+expect "noforce: it merges the merge commit pushed before" "$d_pushed" "$(cat "$FAKE_GH_DIR/feat_804-d.head")"
+
 # No force push of a branch in the merge path; the docs say how it merges.
 expect "noforce: no forced push in merge-train.sh or open-pr.sh" "" \
   "$(grep -nE -- '--force|push[^|]* -f( |$)|[[:space:]]\+refs/|--mirror' "$plugin/scripts/merge-train.sh" "$plugin/scripts/open-pr.sh")"
