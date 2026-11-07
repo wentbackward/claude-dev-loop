@@ -100,6 +100,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `architect` | read-only architecture review from the merge evidence; refactoring tickets and extraction-ladder steps |
 | agent | `scenario-writer` | writes the holdout scenarios for a ticket in the scenario store, from the spec (see Holdout scenarios) |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
+| script | `docs-archive.sh` | moves the oldest journal entries and finished specs to `docs/archive/` (dry run by default; see Current-state docs) |
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
@@ -205,7 +206,8 @@ every merge:
 ```
 
 - **Aspects** name a file or a folder (an index and one file per area). They describe only what is built;
-  planned work stays in the tickets and the `planned` list. `docs/DECISIONS.md` stays the only history.
+  planned work stays in the tickets and the `planned` list. `docs/DECISIONS.md` stays the only history
+  (its old entries in `docs/archive/`, see Journals and the archive).
 - **The map** says which docs describe which code. `paths` are shell globs matched against the whole
   repository path, where `*` also matches `/` (`src/api/*` covers `src/api/v1/users.py`).
 - **The agents.** Each ticket names the doc sections it changes; for a feature, the change to Features is
@@ -230,7 +232,7 @@ every merge:
   (an interface change first, then each consumer), fits one implementer's context, starts with the
   Features change for a feature, and names its `Docs:` and `Components:` in its body. As it merges, its
   planned entry moves to Features in the same branch; a PRD section whose work has all merged is marked
-  done or archived.
+  done or archived (`docs-archive.sh spec`).
 - **The `doc-auditor`** (read-only by its brief; its tools include Bash, which can write, and the role
   guard covers only GitHub writes) compares each current-state doc and component card with the code and,
   where it is safe, the running system (CLI help, endpoints, config keys, jobs), and opens one ticket per
@@ -239,9 +241,9 @@ every merge:
   tickets merged since the last one. The orchestrator records each audit in
   `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one UTC time).
 - **`doctor.sh`** prints the aspects, the planned list, the PRD files and the map; reports a missing aspect
-  path or PRD file as MISSING; notes files over `max_lines` and map rules that match no tracked file; and
-  prints the merges since the last audit (from the merge ledger and the audit marker), with a
-  `doc audit due` note at `audit_every`.
+  path or PRD file as MISSING; notes files and journals over `max_lines` and map rules that match no
+  tracked file; and prints the merges since the last audit (from the merge ledger and the audit marker),
+  with a `doc audit due` note at `audit_every`.
 - **Planned-list hygiene.** A ticket never lives only to hold a memory: the PRD holds the intent, the
   planned list only what is actively sliced. `doctor.sh` reads each planned row's ticket (`#n`) with one
   `gh issue list` call and notes a row whose ticket closed as completed (`move it to Features`), closed as
@@ -251,6 +253,46 @@ every merge:
   a table body row outside code blocks (a rule like `* * *` is not one); in a file with a heading whose
   text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
   access one note says the rows were not checked.
+
+### Journals and the archive
+
+A journal is an append-only Markdown file whose `## ` headings are its entries, newest last (required):
+`docs.journals` (default `["docs/DECISIONS.md"]`). It keeps growing, so like a long session log it is
+compacted: the oldest whole entries move, verbatim, to `docs/archive/`, and the live file keeps the recent
+ones. A `## Standing decisions` section at the top of a journal lists, one line each, the decisions still
+in force, each linking its entry wherever it lives (the live file or an archive file); compaction keeps
+the section in place, and keeping it true is model work, a maintenance ticket reviewed like any change.
+Finished specs move to `docs/archive/specs/` the same way.
+
+```
+scripts/docs-archive.sh journal [<file>] [--keep <lines>] [--apply]
+scripts/docs-archive.sh spec <file> [--no-pointer] [--force] [--apply]
+```
+
+- **A dry run by default.** Without `--apply` it prints exactly what would move (the lines, each entry
+  heading, the archive file) and writes nothing. Without `docs` it is a config error and changes nothing.
+- **`journal`** works on `<file>`, else on every journal. When one is over its budget (`--keep`, else
+  `docs.max_lines`), it moves the oldest entries until the live file is within budget, to
+  `docs/archive/<NAME>-<first date>--<last date>.md` (the dates of the first and last moved entry
+  headings, `## 2026-11-05 — ...`; `undated` without one). The preamble (the text before the first entry)
+  and the `## Standing decisions` section stay where they are; only the run of entries before that section
+  (or after it, when it comes first) moves, and the newest entry always stays. A journal whose first dated
+  entry is newer than its last (newest first) is refused. `## ` inside a code fence is not an entry; fences
+  follow CommonMark (a fence closes only on its own character, at least as long; a line indented 4 spaces
+  is not a fence), the same rule `docs-check.sh` uses for links. An archive file is
+  never edited or overwritten: a taken name gets `-2`, `-3`, ... Before writing, it checks that the live
+  file with the archive put back equals the original byte for byte (CRLF and a missing last newline
+  included); otherwise it writes nothing and exits 1. A journal within budget is left alone.
+- **`spec <file>`** moves a finished spec to `docs/archive/specs/` byte for byte and leaves a one-line
+  pointer linking it (none with `--no-pointer`). It refuses a file that a docs aspect or `docs.prd` still
+  names (unless `--force`) and a destination that exists, and reports the links in other Markdown files
+  that point to the spec.
+- **Links.** Moved text with a relative link that would not resolve from the archive folder (the link
+  rule of `docs-check.sh`) is refused with the link named; nothing is rewritten, so what moves stays
+  verbatim. Make such a link resolve from both places, or use a URL, then run it again.
+- **Exit:** 0 done or nothing to do, 1 refused (nothing written), 2 usage or config error. `doctor.sh`
+  notes a journal over `docs.max_lines`: `journal docs/DECISIONS.md has <n> lines, over max_lines <m>
+  (compact it: docs-archive.sh journal)`.
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
   current-state docs once, one aspect at a time, each reviewed by the user. Templates:
   `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
@@ -603,7 +645,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `docs.planned` | none | the planned list (built and planned are kept apart); `doctor.sh` notes rows whose ticket closed |
 | `docs.planned_max_days` | none (off) | `doctor.sh` notes a planned row whose ticket is open longer than this with no loop branch; `0` is off |
 | `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
-| `docs.max_lines` | `1000` | the size budget per current-state file (`doctor.sh` notes bigger ones) |
+| `docs.max_lines` | `1000` | the size budget per current-state file and journal (`doctor.sh` notes bigger ones) |
+| `docs.journals` | `["docs/DECISIONS.md"]` | the append-only journals `docs-archive.sh journal` compacts (see Journals and the archive) |
 | `docs.prd` | none | the PRD or spec files, a path or a list: the intent the slice loop cuts into tickets |
 | `docs.audit_every` | `10` | run the `doc-auditor` every this many merges (`doctor.sh` notes when one is due) |
 | `architecture.check` | none (off) | the command printing the dependency edges `<from> <to>` (paths or component names); set, it turns the architecture ratchet on (see Architecture ratchet) |

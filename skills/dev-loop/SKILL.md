@@ -72,7 +72,11 @@ absolute paths into their prompts.
   branch may change; fill the implementer's and reviewer's prompts from them.
 - **Move to built.** As a ticket merges, its planned entry moves to Features in the same branch. When all
   the work of a PRD section has merged, mark that section done or archive it (move it to an archive
-  folder, linked from the planned list or the decisions log), so it is not kept as a second truth.
+  folder, linked from the planned list or the decisions log), so it is not kept as a second truth:
+  `scripts/docs-archive.sh spec <file>` (a dry run), then `--apply`.
+- **Journals.** When `doctor.sh` notes a journal over `docs.max_lines`, compact it in a `docs/` ticket:
+  `scripts/docs-archive.sh journal` (a dry run), then `--apply`; that ticket also keeps the journal's
+  `## Standing decisions` section true, one line per decision in force, linking its entry.
 
 ## 1b. Scenarios (`scenarios` in `.dev-loop.json`)
 

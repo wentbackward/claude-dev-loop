@@ -99,49 +99,7 @@ check_map() {
 
 # markdown_links FILE: the link targets of a Markdown file in <to>, outside fenced and inline code.
 markdown_links() {
-  git show "$to:$1" 2>/dev/null | awk '
-    /^[ \t]*(```|~~~)/ { fenced = !fenced; next }
-    fenced { next }
-    {
-      line = $0
-      gsub(/`[^`]*`/, "", line)
-      while (match(line, /\]\([^)]*\)/)) {
-        print substr(line, RSTART + 2, RLENGTH - 3)
-        line = substr(line, RSTART + RLENGTH)
-      }
-    }'
-}
-
-# resolve_link DIR TARGET: the repository path TARGET points to from DIR, with . and .. resolved; status 1
-# when it goes above the repository root.
-resolve_link() {
-  local part parts=() out=() IFS=/
-  read -r -a parts <<<"${1:+$1/}$2"
-  for part in "${parts[@]}"; do
-    case "$part" in
-      "" | .) ;;
-      ..)
-        [ ${#out[@]} -gt 0 ] || return 1
-        unset "out[$((${#out[@]} - 1))]"
-        ;;
-      *) out+=("$part") ;;
-    esac
-  done
-  [ ${#out[@]} -eq 0 ] || printf '%s' "${out[*]}"
-  echo
-}
-
-# link_target LINK: the path part of a link: <path with spaces> up to the ">", else up to the first space
-# (a title follows it); without #anchor and ?query, %20 decoded to a space.
-link_target() {
-  local target
-  case "$1" in
-    "<"*) target=${1#<} && target=${target%%>*} ;;
-    *) target=${1%%[[:space:]]*} ;;
-  esac
-  target=${target%%#*}
-  target=${target%%\?*}
-  printf '%s\n' "${target//%20/ }"
+  git show "$to:$1" 2>/dev/null | dl_docs_links
 }
 
 # check_links CHANGED: every relative link in the changed Markdown files resolves in <to>.
@@ -153,11 +111,8 @@ check_links() {
     dir=$(dirname "$file")
     [ "$dir" = . ] && dir=""
     while IFS= read -r link; do
-      target=$(link_target "$link")
-      case "$link" in "#"* | /* | "") continue ;; esac
-      [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: ]] && continue
-      [ -n "$target" ] || continue
-      if ! path=$(resolve_link "$dir" "$target"); then
+      target=$(dl_docs_relative_link "$link") || continue
+      if ! path=$(dl_docs_resolve_link "$dir" "$target"); then
         problem "$file links to ($link), which goes above the repository root"
       elif [ -n "$path" ] && ! git cat-file -e "$to:$path" 2>/dev/null; then
         problem "$file links to ($link), but $path does not exist in $to"

@@ -42,6 +42,7 @@
     "planned": "",
     "map": [],
     "max_lines": 1000,
+    "journals": ["docs/DECISIONS.md"],
     "prd": [],
     "audit_every": 10,
     "planned_max_days": 0

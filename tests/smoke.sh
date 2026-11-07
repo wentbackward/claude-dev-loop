@@ -2809,5 +2809,263 @@ grep -qF '`docs.planned_max_days`' "$plugin/README.md" && grep -qF 'planned row 
 cd "$work/project" || exit 1
 git checkout -q -f main
 
+
+# 17. docs-archive.sh (#44): journal compaction and spec archiving (dry run by default, only with "docs").
+git init -q "$work/archive-project"
+cd "$work/archive-project" || exit 1
+mkdir -p docs/specs
+printf '# Features\n' >docs/features.md
+printf '# PRD\n' >docs/specs/prd.md
+printf '# Old spec\n\nDone. See [web](https://example.invalid/x) and [top](#old-spec).\n' >docs/specs/old.md
+printf '# Gone spec\n' >docs/specs/gone.md
+printf '# Linked spec\n\nSee [the PRD](prd.md).\n' >docs/specs/linked.md
+printf '# Index\n\n- [old](specs/old.md#old-spec)\n- [prd](specs/prd.md)\n' >docs/index.md
+git add . && git commit -q -m "docs: start"
+aconfig() { # aconfig NAME DOCS_JSON: an archive test config with that docs block (none for an empty one)
+  if [ -n "$2" ]; then printf '{"base_branch": "main", "docs": %s}\n' "$2"; else echo '{"base_branch": "main"}'; fi \
+    >"$work/archive-$1.json"
+}
+aconfig on '{"aspects": {"features": "docs/features.md"}, "prd": ["docs/specs/prd.md"], "max_lines": 15}'
+aconfig log '{"aspects": {"features": "docs/features.md"}, "journals": ["docs/LOG.md"], "max_lines": 15}'
+aconfig off ''
+archive() { # archive CONFIG ARGS...: run docs-archive.sh with that config; sets out and rc
+  out=$(DEV_LOOP_CONFIG="$work/archive-$1.json" "$plugin/scripts/docs-archive.sh" "${@:2}" 2>&1)
+  rc=$?
+  echo "$out"
+}
+# journal_fixture [crlf|no-eol] [FILE]: a 27-line journal: preamble 1-4, standing decisions 5-8, entries at
+# 9-13, 14-20 (a fence holding "## "), 21-24 and 25-27; no archive folder.
+journal_fixture() {
+  local file=${2:-docs/DECISIONS.md}
+  rm -rf docs/archive
+  cat >"$work/journal.txt" <<'EOF'
+# Decisions log
+
+One entry per decision. Newest last.
+
+## Standing decisions
+
+- keep it simple ([entry](#2026-01-03--third))
+
+## 2026-01-01 — First
+
+- **Decision:** a.
+See [web](https://example.invalid/x) and [top](#first).
+
+## 2026-01-02 — Second with a fence
+
+```sh
+## not a heading
+echo hi
+```
+
+## 2026-01-03 — Third
+
+- c
+
+## 2026-01-04 — Fourth
+
+- d
+EOF
+  case ${1:-} in
+    crlf) awk '{printf "%s\r\n", $0}' "$work/journal.txt" >"$file" ;;
+    no-eol) printf '%s' "$(cat "$work/journal.txt")" >"$file" ;;
+    *) cp "$work/journal.txt" "$file" ;;
+  esac
+  cp "$file" "$work/journal-original"
+}
+# round_trip LIVE ARCHIVE: the live file's first 8 lines, the archive, then the rest equal the original.
+round_trip() {
+  { head -n 8 "$1"; cat "$2"; tail -n +9 "$1"; } | cmp -s - "$work/journal-original"
+}
+arch1=docs/archive/DECISIONS-2026-01-01--2026-01-02.md
+
+archive off journal --apply
+expect "docs-archive without docs is a config error" 2 "$rc"
+journal_fixture
+archive off journal --apply
+cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] &&
+  pass "without docs docs-archive writes nothing" || fail "docs-archive wrote without docs"
+archive on
+expect "docs-archive without a command is a usage error" 2 "$rc"
+archive on journal --keep many
+expect "docs-archive with a bad --keep is a usage error" 2 "$rc"
+
+archive on journal
+expect "the journal dry run exits 0" 0 "$rc"
+cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] &&
+  pass "the journal dry run is the default and writes nothing" || fail "the dry run wrote"
+echo "$out" | grep -F "would move 2 entries" | grep -qF "$arch1" &&
+  pass "the dry run names the entry count and the archive file" || fail "dry run output: $out"
+printf '%s\n' "$out" | grep -qF -- "## 2026-01-02 — Second with a fence" &&
+  ! printf '%s\n' "$out" | grep -qF -- "## not a heading" &&
+  pass "the dry run lists each entry, and a fenced ## is not an entry" || fail "dry run entries: $out"
+
+archive on journal --apply
+expect "the journal apply exits 0" 0 "$rc"
+expect "the live file is within max_lines" 15 "$(awk 'END {print NR}' docs/DECISIONS.md)"
+[ -f "$arch1" ] && round_trip docs/DECISIONS.md "$arch1" &&
+  pass "byte-exact round trip: preamble and standing decisions, archive, rest equal the original" ||
+  fail "round trip failed"
+expect "the oldest whole entries moved, the fenced entry whole" "2026-01-01 2026-01-02 1" \
+  "$(grep -o '^## 2026-01-0[0-9]' "$arch1" | cut -c4- | paste -sd' ' -) $(grep -c '^## not a heading' "$arch1")"
+expect "the preamble and standing decisions stay in place" "# Decisions log|## Standing decisions|## 2026-01-03 — Third" \
+  "$(sed -n '1p;5p;9p' docs/DECISIONS.md | paste -sd'|' -)"
+cp "$arch1" "$work/arch1-copy"
+
+# A second run appends a new archive file and never edits the first.
+printf '\n## 2026-01-05 — Fifth\n\n- e\n\n## 2026-01-06 — Sixth\n\n- f\n' >>docs/DECISIONS.md
+cp docs/DECISIONS.md "$work/journal-second"
+archive on journal --apply
+arch2=docs/archive/DECISIONS-2026-01-03--2026-01-04.md
+expect "a second run writes a new archive file" "0 yes" "$rc $([ -f "$arch2" ] && echo yes)"
+cmp -s "$arch1" "$work/arch1-copy" && pass "a second run leaves the first archive untouched" ||
+  fail "the first archive changed"
+{ head -n 8 docs/DECISIONS.md; cat "$arch2"; tail -n +9 docs/DECISIONS.md; } | cmp -s - "$work/journal-second" &&
+  pass "the second run round-trips too" || fail "second round trip failed"
+
+# An archive name that exists is never overwritten: the next free name is used.
+journal_fixture
+mkdir -p docs/archive && echo existing >"$arch1"
+archive on journal --apply
+expect "an existing archive name gets a -2 suffix" "0 existing" \
+  "$rc $(cat "$arch1")"
+round_trip docs/DECISIONS.md docs/archive/DECISIONS-2026-01-01--2026-01-02-2.md &&
+  pass "the suffixed archive round-trips" || fail "suffixed archive round trip failed"
+
+journal_fixture crlf
+archive on journal --apply
+expect "a CRLF journal is compacted" 0 "$rc"
+round_trip docs/DECISIONS.md "$arch1" && pass "byte-exact round trip with CRLF line ends" || fail "CRLF round trip"
+journal_fixture no-eol
+archive on journal --apply
+round_trip docs/DECISIONS.md "$arch1" && [ "$(tail -c 1 docs/DECISIONS.md)" = d ] &&
+  pass "byte-exact round trip without a trailing newline" || fail "no-eol round trip"
+
+journal_fixture
+archive on journal --apply --keep 100
+expect "a journal under budget is a no-op" "0 yes" \
+  "$rc $(cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] && echo yes)"
+echo "$out" | grep -qi "within" && pass "the no-op says the journal is within budget" || fail "no-op output: $out"
+archive on journal docs/DECISIONS.md --keep 22 --apply
+expect "--keep sets the budget (one entry moves)" "0 2026-01-01" \
+  "$rc $(grep -o '^## 2026-01-0[0-9]' docs/archive/DECISIONS-2026-01-01--2026-01-01.md | cut -c4- | paste -sd' ' -)"
+
+# The dangerous direction: a failed verification leaves every file untouched; links that would break refuse.
+journal_fixture
+DEV_LOOP_ARCHIVE_TEST_CORRUPT=1 archive on journal --apply
+expect "a failed verification exits non-zero" 1 "$rc"
+cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] &&
+  pass "a failed verification leaves every file untouched" || fail "files changed after a failed verification"
+echo "$out" | grep -qi "verif" && pass "the failure says the verification failed" || fail "verification output: $out"
+journal_fixture
+awk '$0 == "- **Decision:** a." {$0 = "- **Decision:** a, see [features](features.md)."} 1' "$work/journal-original" >docs/DECISIONS.md
+cp docs/DECISIONS.md "$work/journal-original"
+archive on journal --apply
+expect "a relative link that would break in the archive refuses" 1 "$rc"
+echo "$out" | grep -qF "(features.md)" && pass "the refusal names the link" || fail "link refusal: $out"
+cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] &&
+  pass "a link refusal writes nothing" || fail "a link refusal wrote"
+git checkout -q -- docs && git clean -qfd docs
+
+# docs.journals names the journals; docs/DECISIONS.md is the default only without it.
+journal_fixture "" docs/LOG.md
+journal_fixture
+archive log journal --apply
+expect "docs.journals picks the journal to compact" "0 yes no" \
+  "$rc $([ -f docs/archive/LOG-2026-01-01--2026-01-02.md ] && echo yes) $([ -e "$arch1" ] && echo yes || echo no)"
+cmp -s docs/DECISIONS.md "$work/journal-original" && pass "a journal not in docs.journals is untouched" ||
+  fail "docs/DECISIONS.md changed"
+rm -rf docs/archive docs/LOG.md
+
+# Code fences follow CommonMark: a ~~~ block holding ``` closes only on ~~~, a fence indented 4 spaces is
+# not one; the link rule shares the fence rule.
+rm -rf docs/archive
+printf '# Log\n\n## 2026-02-01 — Tilde\n\n~~~\n```\n## fake\n~~~\n\n## 2026-02-02 — Indented\n\n    ```\n\n## 2026-02-03 — Real\n\n- r\n\n## 2026-02-04 — Last\n' \
+  >docs/DECISIONS.md
+cp docs/DECISIONS.md "$work/journal-original"
+archive on journal --keep 1
+expect "the entries are the headings outside CommonMark fences" "2026-02-01 2026-02-02 2026-02-03" \
+  "$(printf '%s\n' "$out" | grep -o '^docs-archive:   ## [^ ]*' | awk '{print $3}' | paste -sd' ' -)"
+printf '%s\n' "$out" | grep -qF "## fake" && fail "a ## inside a ~~~ block holding \`\`\` was taken for an entry" ||
+  pass "a \`\`\` line does not close a ~~~ fence"
+expect "the link rule uses the same fences" "real.md" \
+  "$(printf '~~~\n```\n[a](fake.md)\n~~~\n    ```\n[b](real.md)\n' |
+    bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/docs.sh" && dl_docs_links' _ "$plugin" | paste -sd' ' -)"
+
+# The newest entry always stays; a newest-first journal is refused.
+archive on journal --keep 1 --apply
+expect "the newest entry stays in the live file" "0 2026-02-04" \
+  "$rc $(grep -o '^## 2026-02-0[0-9]' docs/DECISIONS.md | cut -c4- | paste -sd' ' -)"
+{ head -n 2 docs/DECISIONS.md; cat docs/archive/DECISIONS-2026-02-01--2026-02-03.md; tail -n +3 docs/DECISIONS.md; } |
+  cmp -s - "$work/journal-original" && pass "the CommonMark-fence journal round-trips" || fail "fence round trip"
+rm -rf docs/archive
+printf '## 2026-04-01 — a\n## 2026-04-02 — b\n## Standing decisions\n- s\n' >docs/DECISIONS.md
+archive on journal --keep 1 --apply
+expect "the newest entry stays when the standing decisions come last" "0 2026-04-02" \
+  "$rc $(grep -o '^## 2026-04-0[0-9]' docs/DECISIONS.md | cut -c4- | paste -sd' ' -)"
+rm -rf docs/archive
+printf '# Log\n\n## 2026-03-02 — Newer\n\n- b\n\n## 2026-03-01 — Older\n\n- a\n' >docs/DECISIONS.md
+cp docs/DECISIONS.md "$work/journal-original"
+archive on journal --keep 1 --apply
+expect "a newest-first journal is refused" "1 yes" \
+  "$rc $(cmp -s docs/DECISIONS.md "$work/journal-original" && [ ! -e docs/archive ] && echo yes)"
+echo "$out" | grep -qi "newest last" && pass "the refusal says the journal must be newest last" || fail "newest-first: $out"
+
+# doctor notes a journal over max_lines.
+journal_fixture
+out=$(DEV_LOOP_CONFIG="$work/archive-on.json" "$plugin/scripts/doctor.sh" 2>&1)
+echo "$out" | grep -qF "journal docs/DECISIONS.md has 27 lines, over max_lines 15 (compact it: docs-archive.sh journal)" &&
+  pass "doctor notes a journal over max_lines" || fail "doctor journal note: $out"
+expect "doctor without docs notes no journal" 0 \
+  "$(DEV_LOOP_CONFIG="$work/archive-off.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "journal docs/")"
+rm -f docs/DECISIONS.md
+grep -q '^## Standing decisions' "$plugin/templates/DECISIONS.md" && pass "the DECISIONS template has a standing decisions section" ||
+  fail "no standing decisions in the template"
+
+# spec: refuse a file the config names; report links to it; move it verbatim and leave a pointer.
+archive on spec docs/specs/prd.md --apply
+expect "spec refuses a file docs.prd names" "1 yes" \
+  "$rc $(git diff --quiet && [ ! -e docs/archive ] && echo yes)"
+echo "$out" | grep -qF "docs.prd" && pass "the refusal names docs.prd" || fail "prd refusal: $out"
+archive on spec docs/features.md --apply
+expect "spec refuses a current-state aspect" "1 yes" "$rc $(git diff --quiet && [ ! -e docs/archive ] && echo yes)"
+archive on spec docs/specs/linked.md --apply
+expect "spec refuses a spec whose relative link would break" "1 yes" \
+  "$rc $(git diff --quiet && [ ! -e docs/archive ] && echo yes)"
+echo "$out" | grep -qF "(prd.md)" && pass "the spec link refusal names the link" || fail "spec link refusal: $out"
+archive on spec docs/specs/old.md
+expect "the spec dry run writes nothing" "0 yes" "$rc $(git diff --quiet && [ ! -e docs/archive ] && echo yes)"
+echo "$out" | grep -F "docs/index.md" | grep -qF "specs/old.md" && pass "links in other docs to the spec are reported" ||
+  fail "no link report: $out"
+echo "$out" | grep -qF "docs/archive/specs/old.md" && pass "the spec dry run names the destination" || fail "spec dry run: $out"
+DEV_LOOP_ARCHIVE_TEST_CORRUPT=1 archive on spec docs/specs/old.md --apply
+expect "a failed spec verification writes nothing" "1 yes" \
+  "$rc $(git diff --quiet && [ ! -e docs/archive/specs/old.md ] && echo yes)"
+mkdir -p docs/archive
+DEV_LOOP_ARCHIVE_TEST_CORRUPT=1 archive on spec docs/specs/old.md --apply
+expect "a failed spec move removes only the folders it created" "1 yes no" \
+  "$rc $([ -d docs/archive ] && echo yes) $([ -e docs/archive/specs ] && echo yes || echo no)"
+rmdir docs/archive
+aconfig dot '{"aspects": {"features": "./docs/features.md"}, "prd": ["./docs/specs/prd.md"]}'
+archive dot spec docs/specs/prd.md
+expect "spec matches a config path written with ./" 1 "$rc"
+archive dot spec docs/features.md
+expect "spec matches an aspect written with ./" 1 "$rc"
+archive on spec docs/specs/old.md --apply
+expect "spec moves the file verbatim" "0 yes" \
+  "$rc $(git show HEAD:docs/specs/old.md | cmp -s - docs/archive/specs/old.md && echo yes)"
+expect "spec leaves a one-line pointer that links the archive" "1 yes" \
+  "$(awk 'END {print NR}' docs/specs/old.md) $(grep -qF '](../archive/specs/old.md)' docs/specs/old.md && echo yes)"
+git show HEAD:docs/specs/old.md >docs/specs/old.md
+archive on spec docs/specs/old.md --apply
+expect "spec never overwrites an archived spec" "1 yes" \
+  "$rc $(git show HEAD:docs/specs/old.md | cmp -s - docs/archive/specs/old.md && echo yes)"
+archive on spec docs/specs/gone.md --no-pointer --apply
+expect "spec --no-pointer leaves no file behind" "0 no yes" \
+  "$rc $([ -e docs/specs/gone.md ] && echo yes || echo no) $([ -f docs/archive/specs/gone.md ] && echo yes)"
+archive on spec docs/specs/prd.md --force --apply
+expect "spec --force archives a file the config names" "0 yes" "$rc $([ -f docs/archive/specs/prd.md ] && echo yes)"
+cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
