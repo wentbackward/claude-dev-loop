@@ -366,9 +366,10 @@ entry_field() {
 stall_value() {
   case $2 in
     "") return 0 ;;
-    *[!0-9]* | 0 | 0*) dl_warn "$1: stall_minutes \"$2\" is not a positive whole number; no stall timeout" ;;
-    *) printf '%s\n' "$2" ;;
+    *[!0-9]*) ;;
+    *) [ $((10#$2)) -gt 0 ] && printf '%s\n' $((10#$2)) && return 0 ;;
   esac
+  dl_warn "$1: stall_minutes \"$2\" is not a positive whole number; no stall timeout"
 }
 
 # The stages in order: the affected stage (if configured) first, then the checks.
