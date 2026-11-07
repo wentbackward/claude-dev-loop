@@ -3166,6 +3166,218 @@ grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
   pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
 awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" && head -n 20 "$plugin/CHANGELOG.md" |
   grep -q '^## Unreleased' && pass "adopt: CHANGELOG has an Unreleased entry for #46" || fail "no Unreleased #46 entry"
+# 20. Permissions (#54): permissions.sh merges the loop's allow, ask and deny rules into the project's
+# .claude/settings.json (and the plugin-script rules, which hold this machine's plugin path, into
+# .claude/settings.local.json), only adding; doctor reads only the project's two files and reports a deny
+# that blocks a loop command (MISSING) and a missing or stale allow list (notes).
+mwork="$work/perm"
+git init -q --bare "$mwork/origin.git"
+git clone -q "$mwork/origin.git" "$mwork/project" 2>/dev/null
+cd "$mwork/project" || exit 1
+printf '# Project\n' >CLAUDE.md
+mkdir -p "$mwork/cache/mk/dev-loop" "$mwork/home/.claude"
+ln -s "$plugin" "$mwork/cache/mk/dev-loop/9.9.9"
+mroot="$mwork/cache/mk/dev-loop/9.9.9"
+mscripts="$mwork/cache/mk/dev-loop/*/scripts"
+# A user-level settings file that would block the loop: doctor must never read it.
+printf '{"permissions": {"deny": ["Bash(gh pr:*)"]}}\n' >"$mwork/home/.claude/settings.json"
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+# mconfig FAST_CHECK: write the project config with this fast check and two checks (one compound).
+mconfig() {
+  printf '{"base_branch": "main", "fast_check": "%s", "checks": [{"name": "unit", "command": "make check"}, "./e2e.sh --all | tee e2e.log"]}\n' \
+    "$1" >"$mwork/config.json"
+}
+mconfig "test -x run.sh && make lint"
+# mperm ARGS: permissions.sh from the plugin's cache-layout path, in the project.
+mperm() {
+  (cd "$mwork/project" && HOME="$mwork/home" DEV_LOOP_HOME="$mwork/state" DEV_LOOP_CONFIG="$mwork/config.json" \
+    "$mroot/scripts/permissions.sh" "$@" 2>&1)
+}
+# mdoctor: doctor's output from the plugin's cache-layout path, in the project.
+mdoctor() {
+  (cd "$mwork/project" && HOME="$mwork/home" DEV_LOOP_HOME="$mwork/state" DEV_LOOP_CONFIG="$mwork/config.json" \
+    "$mroot/scripts/doctor.sh" 2>&1)
+}
+# mrules FILE LIST: the rules of permissions.LIST in FILE, one per line.
+mrules() {
+  bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_rules "$2" "$3"' _ \
+    "$plugin" "$1" "$2"
+}
+# mdecide COMMAND: deny, ask, allow or none for COMMAND under the project's two settings files.
+mdecide() {
+  bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_decision "$2" "$3" "$4"' _ \
+    "$plugin" "$1" "$mwork/project/.claude/settings.json" "$mwork/project/.claude/settings.local.json"
+}
+
+# Doctor without .claude/settings.json: one note, and otherwise the same output as with complete rules.
+no_settings=$(mdoctor)
+expect "perm: without .claude/settings.json doctor prints exactly one permissions line" 1 \
+  "$(printf '%s\n' "$no_settings" | grep -c 'permissions')"
+printf '%s\n' "$no_settings" | grep -q '^note    permissions: no .claude/settings.json' &&
+  pass "perm: the missing settings file is a note" || fail "perm: no note for a missing .claude/settings.json"
+
+# The merge keeps every existing rule and key, adds the loop's rules, and only adds.
+mkdir -p .claude
+cat >.claude/settings.json <<'EOF'
+{
+  "model": "custom",
+  "permissions": {
+    "allow": ["Bash(npm test)", "WebFetch"],
+    "ask": ["Bash(git push origin main)"],
+    "deny": ["Bash(curl *)", "Bash(sudo:*)"],
+    "defaultMode": "default"
+  },
+  "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]}
+}
+EOF
+printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >.claude/settings.local.json
+cp .claude/settings.json "$mwork/before.json"
+cp .claude/settings.local.json "$mwork/before-local.json"
+dry=$(mperm)
+cmp -s .claude/settings.json "$mwork/before.json" && cmp -s .claude/settings.local.json "$mwork/before-local.json" &&
+  pass "perm: permissions.sh without --apply changes nothing" || fail "perm: the dry run changed a settings file"
+printf '%s\n' "$dry" | grep -qF '.claude/settings.json: + allow Bash(make lint)' &&
+  printf '%s\n' "$dry" | grep -qF ".claude/settings.local.json: + allow Bash($mscripts/gate-train.sh *)" &&
+  printf '%s\n' "$dry" | tail -n 1 | grep -q 'dry run' && pass "perm: the dry run lists the rules it would add" ||
+  fail "perm: the dry run does not list the rules ($dry)"
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  cp "$mwork/before.json" .claude/settings.json
+  cp "$mwork/before-local.json" .claude/settings.local.json
+  DEV_LOOP_NO_JQ=$nojq mperm --apply >/dev/null
+  expect "perm: the merge keeps every existing allow rule first, in order$label" "Bash(npm test) WebFetch" \
+    "$(mrules .claude/settings.json allow | head -n 2 | paste -sd' ' -)"
+  expect "perm: the merge keeps the existing ask and deny rules$label" "Bash(git push origin main)|Bash(curl *) Bash(sudo:*)" \
+    "$(mrules .claude/settings.json ask | head -n 1)|$(mrules .claude/settings.json deny | head -n 2 | paste -sd' ' -)"
+  expect "perm: the merge keeps the other keys$label" "custom default true" \
+    "$(json_get_py() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["permissions"]["defaultMode"], d["hooks"]["Stop"][0]["hooks"][0]["command"])' "$1"; }
+      json_get_py .claude/settings.json)"
+  expect "perm: no rule is duplicated (sudo deny stays once)$label" 1 "$(mrules .claude/settings.json deny | grep -cxF 'Bash(sudo:*)')"
+  missing_rules=""
+  for list in allow ask deny; do
+    while IFS= read -r rule; do
+      mrules .claude/settings.json "$list" | grep -qxF -- "$rule" || missing_rules="$missing_rules $list:$rule"
+    done < <(mrules "$plugin/templates/settings.json" "$list")
+  done
+  expect "perm: every template rule is in the merged settings$label" "" "$missing_rules"
+  for rule in "Bash(test -x run.sh)" "Bash(make lint)" "Bash(make check)" "Bash(./e2e.sh --all)" "Bash(tee e2e.log)" \
+    "Bash(git push -u origin feat/*)" "Bash(git push -u origin docs/*)"; do
+    mrules .claude/settings.json allow | grep -qxF -- "$rule" && pass "perm: the project allow list has $rule$label" ||
+      fail "perm: the project allow list lacks $rule$label"
+  done
+  expect "perm: the local file keeps its own rule first and gets the plugin scripts$label" \
+    "Bash(ls *) Bash($mscripts/gate-train.sh)" "$(mrules .claude/settings.local.json allow | head -n 2 | paste -sd' ' -)"
+  mrules .claude/settings.json allow | grep -qF "$mwork" && fail "perm: the shared settings file holds a machine path$label" ||
+    pass "perm: the shared settings file holds no machine path$label"
+  expect "perm: a second run adds nothing$label" "permissions: complete" "$(DEV_LOOP_NO_JQ=$nojq mperm --apply | tail -n 1)"
+done
+git check-ignore -q .claude/settings.local.json && pass "perm: the local settings file is ignored by git" ||
+  fail "perm: .claude/settings.local.json is not ignored"
+printf '{"permissions": [' >"$mwork/broken.json"
+cp "$mwork/broken.json" .claude/settings.json
+mperm --apply >/dev/null
+expect "perm: an invalid settings file is refused and left untouched" "0" \
+  "$(cmp -s .claude/settings.json "$mwork/broken.json"; echo $?)"
+cp "$mwork/before.json" .claude/settings.json
+mperm --apply >/dev/null
+
+# The decision for each command under the merged rules: the loop's commands are allowed, the dangerous ones
+# never are (deny or ask), whatever wildcard an allow rule has.
+for cmd in "git fetch origin" "git status" "git push -u origin feat/54-permissions" "git rebase origin/main" \
+  "git worktree add ../p-54 -b feat/54-x origin/main" "gh issue view 54" "gh issue create --title x --body y" \
+  "gh pr create --title x --body-file n.md" "gh pr comment 3 --body ok" "gh pr list" "make lint" "make check" \
+  "$mroot/scripts/gate-train.sh feat/1-a feat/2-b" "$mroot/scripts/doctor.sh" "$mroot/scripts/cleanup.sh" \
+  "$mroot/scripts/repush.sh feat/1-a" "$mroot/scripts/permissions.sh"; do
+  expect "perm: the loop command \"$cmd\" is allowed" allow "$(mdecide "$cmd")"
+done
+for cmd in "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git push -u origin feat/1-a --force" \
+  "git push -u origin feat/1-a --force-with-lease" "git push -u origin feat/1-a -f" "git push -u origin feat/1-a +feat/1-a" \
+  "git push -u origin feat/1-a --tags" "git push -u origin feat/1-a refs/tags/v1" "git push origin v1.0" \
+  "git push -u origin feat/1-a main" "git push -u origin feat/1-a --delete" "git tag v1.0" "git tag -a v1 -m x" \
+  "gh release create v1.0" "gh repo delete o/r --yes" "gh pr merge --admin 3" "gh pr merge 3 --squash --admin" \
+  "$mroot/scripts/as-role.sh implementer git push --force" "$mroot/scripts/heavy.sh gh release create v1" \
+  "$mroot/scripts/cleanup.sh --apply --include closed" "git worktree remove --force ../p-54"; do
+  decision=$(mdecide "$cmd")
+  case $decision in deny | ask) pass "perm: \"$cmd\" is never allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
+done
+# Over the template alone: no allow rule matches a force push, a repository delete, a release, a tag or an
+# admin merge at all.
+template_allow=$(mrules "$plugin/templates/settings.json" allow)
+for cmd in "git push --force" "git push -f origin main" "gh repo delete o/r" "gh release create v1" "git tag v1" \
+  "git push origin --tags" "gh pr merge --admin 3" "gh pr merge 3"; do
+  hit=$(printf '%s\n' "$template_allow" | while IFS= read -r rule; do
+    bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_match "$2" "$3"' _ \
+      "$plugin" "$rule" "$cmd" && echo "$rule"
+  done)
+  expect "perm: no template allow rule matches \"$cmd\"" "" "$hit"
+done
+# The rule matcher follows the documented syntax: :* and a trailing " *" match the bare command, a word
+# boundary holds, * matches spaces, and other glob characters are literal.
+mmatch() { bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_match "$2" "$3" && echo y || echo n' _ "$plugin" "$1" "$2"; }
+expect "perm: matcher semantics" "y y y n y n y n y y n" "$(mmatch 'Bash(ls *)' ls) $(mmatch 'Bash(ls:*)' 'ls -la') \
+$(mmatch 'Bash(ls *)' 'ls -la') $(mmatch 'Bash(ls *)' lsof) $(mmatch 'Bash(ls*)' lsof) $(mmatch 'Bash(git * main)' 'git push') \
+$(mmatch 'Bash(git * main)' 'git push origin main') $(mmatch 'Bash(a?)' ab) $(mmatch Bash anything) \
+$(mmatch 'Bash(make lint)' 'make lint') $(mmatch 'Read(./.env)' 'cat .env')"
+
+# Doctor: complete rules print nothing new; the same output as without settings, less the one note.
+complete_out=$(mdoctor)
+expect "perm: doctor prints nothing about complete permissions" "" "$(printf '%s\n' "$complete_out" | grep 'permissions')"
+expect "perm: doctor output without settings is the complete output plus one note" \
+  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks')" "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: ')"
+# A stale allow list: the fast check changed.
+mconfig "make fmt-check lint"
+printf '%s\n' "$(mdoctor)" | grep -qF 'note    permissions: the allow list lacks the project commands: Bash(make fmt-check lint)' &&
+  pass "perm: doctor notes a fast_check missing from the allow list" || fail "perm: no note for a stale allow list"
+mconfig "test -x run.sh && make lint"
+# Missing loop rules: a plugin script rule removed.
+cp .claude/settings.local.json "$mwork/local-full.json"
+printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >.claude/settings.local.json
+printf '%s\n' "$(mdoctor)" | grep -qE '^note    permissions: the allow list lacks [0-9]+ of the loop.s rules' &&
+  pass "perm: doctor notes missing loop rules" || fail "perm: no note for missing loop rules"
+# No allow list at all.
+printf '{"permissions": {"deny": ["Bash(sudo:*)"]}}\n' >.claude/settings.json
+rm .claude/settings.local.json
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qF 'note    permissions: no allow list' && pass "perm: doctor notes a missing allow list" ||
+  fail "perm: no note for a missing allow list"
+expect "perm: a missing allow list is not a problem" "doctor: ready" "$(printf '%s\n' "$out" | tail -n 1)"
+# A deny rule that blocks a loop command is MISSING, in either project file; the user's file is never read.
+cp "$mwork/before.json" .claude/settings.json
+cp "$mwork/local-full.json" .claude/settings.local.json
+mperm --apply >/dev/null
+printf '{"permissions": {"allow": [], "deny": ["Bash(gh pr:*)"]}}\n' >.claude/settings.local.json
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qF 'MISSING permissions: deny rule Bash(gh pr:*) in .claude/settings.local.json blocks "gh pr' &&
+  pass "perm: doctor reports a deny on gh pr as MISSING" || fail "perm: no MISSING for a deny on gh pr"
+printf '%s\n' "$out" | tail -n 1 | grep -q 'problem' && pass "perm: a blocking deny makes the doctor not ready" ||
+  fail "perm: a blocking deny left the doctor ready"
+cp "$mwork/local-full.json" .claude/settings.local.json
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["permissions"]["deny"].append("Bash(*/scripts/gate-train.sh*)"); json.dump(d, open(sys.argv[1], "w"))' \
+  .claude/settings.json
+printf '%s\n' "$(mdoctor)" | grep -qF 'MISSING permissions: deny rule Bash(*/scripts/gate-train.sh*) in .claude/settings.json blocks' &&
+  pass "perm: doctor reports a deny on a plugin script as MISSING" || fail "perm: no MISSING for a deny on the plugin scripts"
+cp "$mwork/before.json" .claude/settings.json
+mperm --apply >/dev/null
+expect "perm: the user's own settings are never read (their deny on gh pr is not reported)" "" \
+  "$(mdoctor | grep 'permissions')"
+
+# Docs: the README section, the setup step, the doctor rows, the changelog and the decisions log.
+grep -q '^## Permission modes' "$plugin/README.md" && pass "perm: the README has a Permission modes section" ||
+  fail "perm: no Permission modes section in the README"
+perm_readme=$(awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md")
+for phrase in default auto bypass "permissions.sh" "ask" "settings.local.json"; do
+  printf '%s\n' "$perm_readme" | grep -qF -- "$phrase" && pass "perm: the README section names \"$phrase\"" ||
+    fail "perm: the README section does not name \"$phrase\""
+done
+grep -qF 'Permissions' "$plugin/skills/setup/SKILL.md" && grep -qF 'permissions.sh' "$plugin/skills/setup/SKILL.md" &&
+  pass "perm: the setup skill has a Permissions step running permissions.sh" || fail "perm: no Permissions step in setup"
+grep -qF 'note permissions: no allow list' "$plugin/skills/doctor/SKILL.md" &&
+  grep -qF 'MISSING permissions: deny rule' "$plugin/skills/doctor/SKILL.md" &&
+  pass "perm: the doctor skill has rows for the permissions lines" || fail "perm: no doctor skill rows for permissions"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#54" && pass "perm: CHANGELOG has an Unreleased entry for #54" ||
+  fail "perm: no Unreleased #54 entry"
+grep -qF 'permission rule syntax' "$plugin/docs/DECISIONS.md" && pass "perm: the decisions log records the rule syntax" ||
+  fail "perm: the decisions log does not record the rule syntax"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
