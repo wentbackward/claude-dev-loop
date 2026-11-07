@@ -612,8 +612,8 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   the running stage logs, `train-running.txt` and the commits and notes files of loop worktrees whose
   branch is not in the ledger; it is `idle` when nothing runs or waits, no unmerged loop worktree exists
   and the orchestrator's last event is older than the threshold. While the gate runs, only gate-side
-  evidence counts (stage logs, `train-running.txt`, this repository's gate and heavy events), so an
-  implementer's commits never hide a frozen stage; other repositories' heavy events never count as this
+  evidence counts (stage logs, `train-running.txt`, this repository's gate events; the gate's own heavy
+  jobs show in their stage logs), so an implementer's commits or heavy jobs never hide a frozen stage; other repositories' heavy events never count as this
   repository's activity. A dead gate pid in `train-running.txt` (a killed gate) is said in the idle
   verdict and flagged in `--json` (`verdict.gate_died`, `gate.stale`). The orchestrator's `waiting` events name
   what it waits on (`detail`, else the rest of the event name). `status.sh` does not fetch (a fetch

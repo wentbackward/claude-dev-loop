@@ -165,8 +165,8 @@ session, read-only: it never writes, signals or locks anything.
   stage, a heavy job of this repository, or the orchestrator's last `waiting` event), or
   `possibly stalled: no event or output for <n> min`, when the newest evidence (an event, a stage log, a
   worktree commit or notes file) is older than `watchdog.stall_minutes` (default 30). While the gate
-  runs, only its own evidence counts (stage logs, `train-running.txt`, this repository's gate and heavy
-  events), so an implementer's commits never hide a frozen stage; other repositories' events never count.
+  runs, only its own evidence counts (stage logs, `train-running.txt`, this repository's gate events), so
+  an implementer's commits or heavy jobs never hide a frozen stage; other repositories' events never count.
   A gate killed without cleaning up shows as `idle (the last gate died: train-running.txt is stale)`.
 - **`--json`** prints one object for machines; its fields are listed at the top of `scripts/status.sh`
   and are only ever added to.
