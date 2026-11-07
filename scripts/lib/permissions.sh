@@ -5,9 +5,10 @@
 # Needs common.sh. Rules follow the Claude Code syntax: Bash(<command>), where * matches any text (spaces
 # and slashes too) and a trailing ":*" is the same as a trailing " *" (see docs/DECISIONS.md).
 
-# The plugin scripts the loop runs through the Bash tool.
-DL_PERM_SCRIPTS="gate-train merge-train heavy doctor cleanup paths docs-check docs-archive arch-check arch-evidence
-open-pr as-role repush permissions"
+# The plugin scripts the loop runs through the Bash tool with any arguments. heavy.sh and as-role.sh run the
+# command they are given, so they get exact rules for the loop's own uses only (dl_perm_plugin_rules).
+DL_PERM_SCRIPTS="gate-train merge-train doctor cleanup paths docs-check docs-archive arch-check arch-evidence
+open-pr repush permissions"
 
 # dl_perm_valid FILE: true when FILE holds a JSON object.
 dl_perm_valid() {
@@ -130,15 +131,18 @@ dl_perm_feature_patterns() {
   for ((i = 0; i < count; i++)); do cfg "github.feature_patterns.$i"; done
 }
 
-# dl_perm_project_rules: "<list><TAB><rule>" lines for the project's shared settings beyond the template:
-# pushes of the loop's branches to the remote, a prompt for any push that names the base branch, and one exact
-# rule per project command.
+# dl_perm_project_rules: "<list><TAB><rule>" lines for the project's shared settings beyond the template: the
+# one exact push the loop makes (the checked-out branch to the remote; a wildcard would also allow any extra
+# argument), prompts for a push that names the base branch or deletes a loop branch, and one exact rule per
+# project command. No rule ends in ":*", which Claude Code reads as a trailing " *".
 dl_perm_project_rules() {
   local pattern command
+  printf 'allow\tBash(git push -u %s HEAD)\n' "$DL_REMOTE"
+  printf 'ask\tBash(*git*push* %s)\nask\tBash(*git*push* %s *)\n' "$DL_BASE" "$DL_BASE"
+  printf 'ask\tBash(*git*push*:%s)\nask\tBash(*git*push*:%s *)\n' "$DL_BASE" "$DL_BASE"
   while IFS= read -r pattern; do
-    printf 'allow\tBash(git push -u %s %s)\n' "$DL_REMOTE" "$pattern"
+    [ "$pattern" = "*" ] || printf 'ask\tBash(*git*push* :%s)\n' "$pattern"
   done < <(dl_perm_feature_patterns)
-  printf 'ask\tBash(*git push* %s)\nask\tBash(*git push*:%s)\n' "$DL_BASE" "$DL_BASE"
   while IFS= read -r command; do
     printf 'allow\tBash(%s)\n' "$command"
   done < <(dl_perm_project_commands)
@@ -153,13 +157,18 @@ dl_perm_template_rules() {
 }
 
 # dl_perm_plugin_rules ROOT: "<list><TAB><rule>" lines for the plugin's scripts (with and without arguments),
-# and a prompt for cleanup.sh --apply (it deletes branches).
+# heavy.sh with each project command, as-role.sh with the implementer's push, and a prompt for
+# cleanup.sh --apply (it deletes branches).
 dl_perm_plugin_rules() {
-  local dir name
+  local dir name command
   dir=$(dl_perm_script_dir "$1")
   for name in $DL_PERM_SCRIPTS; do
     printf 'allow\tBash(%s/%s.sh)\nallow\tBash(%s/%s.sh *)\n' "$dir" "$name" "$dir" "$name"
   done
+  while IFS= read -r command; do
+    printf 'allow\tBash(%s/heavy.sh %s)\n' "$dir" "$command"
+  done < <(dl_perm_project_commands)
+  printf 'allow\tBash(%s/as-role.sh implementer git push -u %s HEAD)\n' "$dir" "$DL_REMOTE"
   printf 'ask\tBash(%s/cleanup.sh *--apply*)\n' "$dir"
 }
 
@@ -181,8 +190,10 @@ dl_perm_loop_samples() {
   printf '%s\n' "git fetch $DL_REMOTE" "git status --porcelain" "git log --oneline -3" \
     "git diff $DL_REMOTE/$DL_BASE...HEAD" "git worktree add ../wt -b feat/1-x $DL_REMOTE/$DL_BASE" \
     "git worktree list" "git rebase $DL_REMOTE/$DL_BASE" "git add -A" "git commit -m x" \
-    "git push -u $DL_REMOTE feat/1-x" "gh issue view 1" "gh issue list --state open" "gh issue create --title x" \
+    "git push -u $DL_REMOTE HEAD" "gh issue view 1" "gh issue list --state open" "gh issue create --title x" \
     "gh issue comment 1 --body x" "gh pr view 1" "gh pr list" "gh pr create --title x" "gh pr comment 1 --body x"
   for name in $DL_PERM_SCRIPTS; do printf '%s/scripts/%s.sh\n' "$1" "$name"; done
-  dl_perm_project_commands
+  printf '%s/scripts/as-role.sh implementer git push -u %s HEAD\n' "$1" "$DL_REMOTE"
+  dl_perm_project_commands | awk -v h="$1/scripts/heavy.sh" '{ print; print h " " $0 }'
+
 }

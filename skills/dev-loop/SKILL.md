@@ -149,7 +149,7 @@ Implement ticket #<n>: <title>.
   <plugin>/scripts/heavy.sh <command> (never `timeout <command>`).
 - Ports for any server you start: <range outside the gate's heavy.port_base..+N>.
 - Commits: small Conventional Commits, each "Refs #<n>". Record open spec questions in docs/DECISIONS.md.
-- Push the branch when green: <git push -u <remote> <branch> | <plugin>/scripts/as-role.sh implementer git push -u <remote> <branch>>.
+- Push the branch when green: <git push -u <remote> HEAD | <plugin>/scripts/as-role.sh implementer git push -u <remote> HEAD> (from the worktree; exactly this form, the project allows only it).
   Never open, approve or merge PRs. Never read .env or credential files. Never write secrets or personal
   identifiers anywhere.
 - Report: branch, head commit, tests added per criterion, commands run with results, anything open.
