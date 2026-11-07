@@ -6,7 +6,9 @@
 # Picks the next free version (no branch of that name on the remote or locally, and no notes file of that
 # name), creates it at the branch's head, moves the worktree that has the branch checked out onto it, and
 # pushes it with a plain `git push -u` (never forced; as the implementer identity in identity mode). The
-# notes file is copied to the new name, with a line saying what it supersedes. The old branch is never
+# notes file is copied to the new name, with a line recording what it supersedes and at which tips (the
+# local head and the remote branch's head): "Supersedes `<branch>` at <sha> [<sha>] (...)". cleanup.sh
+# deletes the old branch only while its tips are still the recorded ones. The old branch is never
 # deleted or moved, locally or on the remote: cleanup.sh removes it once a later version has merged, and
 # open-pr.sh closes its PR when the new one opens. Prints the new branch name as its last line.
 #
@@ -61,16 +63,21 @@ if ! "$scripts_dir/as-role.sh" implementer git -C "${worktree:-$DL_ROOT}" push -
   exit 3
 fi
 
+# The tips the old branch has now, locally and on the remote: the record cleanup.sh checks before deleting.
+tips=$head
+remote_tip=$(printf '%s\n' "$remote_heads" | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
+[ -z "$remote_tip" ] || [ "$remote_tip" = "$head" ] || tips="$tips $remote_tip"
 old_note=$(dl_note_file "$branch")
 new_note=$(dl_note_file "$new")
 if [ -f "$old_note" ]; then
   # shellcheck disable=SC2016  # the backticks are Markdown, not a command
   if ! { mkdir -p "$(dirname "$new_note")" &&
     { cat "$old_note" &&
-      printf '\nSupersedes `%s` (re-pushed under a new name after a rebase, never force-pushed).\n' "$branch"; } \
+      printf '\nSupersedes `%s` at %s (re-pushed under a new name after a rebase, never force-pushed).\n' \
+        "$branch" "$tips"; } \
       >"$new_note"; } 2>/dev/null; then
     dl_warn "WARNING: $new is pushed, but its notes file could not be written: copy $old_note to $new_note"
-    dl_warn "and add the line: Supersedes \`$branch\`"
+    dl_warn "and add the line: Supersedes \`$branch\` at $tips"
   fi
 else
   dl_warn "no notes file for $branch ($old_note): write $new_note"

@@ -24,7 +24,8 @@ as_implementer() { "$scripts_dir/as-role.sh" implementer "$@"; }
 # ancestor of this branch's head ($head); both are set by close_superseded.
 supersedes() {
   local old_head
-  [ -f "$note" ] && grep -qF "Supersedes \`$1\`" "$note" && return 0
+  [ -f "$note" ] && grep -qF "Supersedes \`$1\`" "$note" && return 0   # with or without " at <sha>..."
+  # An old head the base already contains is an ancestor too: closing that PR is benign (its work merged).
   old_head=$(as_implementer gh pr view "$1" --json headRefOid --jq .headRefOid 2>/dev/null)
   [ -n "$old_head" ] && [ -n "$head" ] && git cat-file -e "$old_head^{commit}" 2>/dev/null &&
     git merge-base --is-ancestor "$old_head" "$head"

@@ -12,7 +12,9 @@
 #   helper    local train-<branch> and replay-<branch> refs of loop branches outside a live train; local
 #             agent worktree branches with no commits of their own
 #   superseded  a later version of it (<branch>-vN from repush.sh, N above its own) merged (ledger or
-#             PR); never while that version is unmerged, nor while its own PR is open
+#             PR), whose notes (live or in notes/merged) record "Supersedes `<branch>` at <sha>..." with
+#             this tip; never while that version is unmerged, nor while its own PR is open. Without a
+#             record, or at another tip (moved on since the re-push), it is kept, with the reason
 #   closed    its PR was closed unmerged at this tip, or its issue (<type>/<n>-...) closed as not planned
 #   stale     no PR, no open issue, no commit for cleanup.stale_days (default 14); remote: loop branches only
 #   keep      everything else, listed with its reason: an open PR or issue, a worktree has it checked out,
@@ -108,8 +110,8 @@ same_changes() {
   [ -n "$mine" ] && [ "$mine" = "$theirs" ]
 }
 
-# superseded_by NAME: the latest merged later version of NAME (<root>-vN, N above NAME's own), if any.
-superseded_by() {
+# later_versions NAME: the merged later versions of NAME (<root>-vN, N above NAME's own), oldest first.
+later_versions() {
   local root=$1 version=1
   if [[ "$1" =~ ^(.+)-v([0-9]+)$ ]]; then
     root=${BASH_REMATCH[1]}
@@ -118,12 +120,30 @@ superseded_by() {
   awk -v p="$root-v" -v own="$version" 'index($0, p) == 1 {
       n = substr($0, length(p) + 1)
       if (n ~ /^[0-9]+$/ && n + 0 > own) print n "\t" $0
-    }' "$work/merged-names" | sort -n | tail -n 1 | cut -f2
+    }' "$work/merged-names" | sort -n | cut -f2
+}
+
+# recorded_tips NAME: the tips recorded on "Supersedes `NAME` at <sha>..." lines in the notes files (live
+# or archived in notes/merged) of the versions read from stdin.
+recorded_tips() {
+  local version key file dir
+  dir=$(dl_notes_dir)
+  while read -r version; do
+    key=${version//\//_}
+    for file in "$dir/pr-$key.md" "$dir/merged/pr-$key.md" \
+      "$dir/merged/pr-$key"-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-*.md; do
+      [ -f "$file" ] || continue
+      awk -v p="Supersedes \`$1\` at " 'index($0, p) == 1 {
+          n = split(substr($0, length(p) + 1), word, / /)
+          for (i = 1; i <= n && word[i] ~ /^[0-9a-f]+$/ && length(word[i]) >= 40; i++) print word[i]
+        }' "$file"
+    done
+  done
 }
 
 # classify SCOPE NAME TIP DATE: prints "<class>\t<scope>\t<name>\t<tip>\t<reason>".
 classify() {
-  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days successor
+  local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days successor recorded
   local open="" merged="" closed="" moved=""
   ref=refs/heads/$name
   [ "$scope" = remote ] && ref=refs/remotes/$DL_REMOTE/$name
@@ -175,8 +195,23 @@ classify() {
   done < <(awk -F'\t' -v b="$name" '$1 == b' "$work/prs")
   [ -n "$open" ] && { out keep "open PR $open"; return; }
   [ -n "$merged" ] && { out merged "merged PR $merged"; return; }
-  successor=$(superseded_by "$name")
-  [ -n "$successor" ] && { out superseded "superseded by $successor, which merged"; return; }
+  # A merged later version deletes this branch only at the tip its re-push recorded; otherwise the branch
+  # is kept, unless the base contains it (the rules below then decide, as before).
+  successor=$(later_versions "$name" | tail -n 1)
+  if [ -n "$successor" ]; then
+    recorded=$(later_versions "$name" | recorded_tips "$name")
+    if [ -n "$recorded" ] && printf '%s\n' "$recorded" | grep -qxF -- "$tip"; then
+      out superseded "superseded by $successor, which merged, at the recorded tip"
+      return
+    elif ! grep -qxF -- "$ref" "$work/contained"; then
+      if [ -z "$recorded" ]; then
+        out keep "a later version ($successor) merged, but no Supersedes record for this branch"
+      else
+        out keep "superseded by $successor, but moved on since the re-push"
+      fi
+      return
+    fi
+  fi
   [ -n "$closed" ] && { out closed "closed PR $closed, not merged"; return; }
   [ -n "$moved" ] && { out keep "$moved, but the branch moved on since"; return; }
   if grep -qxF -- "$ref" "$work/contained"; then
