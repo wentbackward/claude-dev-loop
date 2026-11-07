@@ -128,8 +128,9 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
    first): write it from the specs, the merged tickets and the code, describing only what is built; move
    what is planned to the planned list; then show it to the user and change it until they confirm it,
    before starting the next aspect. Commit each aspect on the setup branch (or a `docs/` branch per
-   aspect). Archive specs whose work has all merged. `doctor.sh` must then report no MISSING aspect; its
-   notes name files over the budget and map rules that match nothing.
+   aspect). Archive specs whose work has all merged (`docs-archive.sh spec <file>`, a dry run, then
+   `--apply`). `doctor.sh` must then report no MISSING aspect; its notes name files over the budget and map
+   rules that match nothing.
 
 ## 3c. Component map and architecture ratchet (propose; the user decides)
 

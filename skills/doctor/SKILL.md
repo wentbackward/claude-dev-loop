@@ -34,6 +34,7 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING docs aspect <name>: <path> does not exist` | create the doc (the `setup` skill's step 3b), or fix the path in `docs.aspects` |
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |
 | `note <file> has <n> lines, over docs.max_lines` | split it: an index and one file per area |
+| `note journal <file> has <n> lines, over max_lines <m>` | compact it in a `docs/` ticket: `docs-archive.sh journal` (dry run), then `--apply` |
 | `note docs map rule <n> (...) matches no tracked file` | fix the globs (`*` also matches `/`), or drop the rule |
 | `MISSING docs.prd: <path> does not exist` | fix the path in `docs.prd`, or drop a PRD that was archived |
 | `MISSING docs.audit_every: ...` | a positive number of merges (default 10) |

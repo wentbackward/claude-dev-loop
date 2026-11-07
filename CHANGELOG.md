@@ -13,6 +13,17 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   planned), rows whose ticket does not exist and rows with no ticket number. A new key
   `docs.planned_max_days` (off by default) also notes rows whose ticket is open longer than that with no
   loop branch. Notes only; without `gh` access one note says the rows were not checked.
+- Journal compaction and spec archiving (#44; only with `docs` configured): `scripts/docs-archive.sh`, a
+  dry run by default (`--apply` writes). `journal [<file>] [--keep <lines>]` moves the oldest whole entries
+  of a journal over `docs.max_lines` (new key `docs.journals`, default `["docs/DECISIONS.md"]`), verbatim,
+  to a new `docs/archive/<NAME>-<first date>--<last date>.md`, keeping the preamble and a
+  `## Standing decisions` section in place; it never edits an archive file and writes nothing unless the
+  live file with the archive put back equals the original byte for byte. `spec <file>` moves a finished
+  spec to `docs/archive/specs/` and leaves a one-line pointer (`--no-pointer`), refuses a file a docs
+  aspect or `docs.prd` names (`--force`), and reports links to it. Moved text whose relative links would
+  break is refused, the link named. `doctor.sh` notes a journal over `docs.max_lines`;
+  `templates/DECISIONS.md` has a `## Standing decisions` section. The link helpers of `docs-check.sh`
+  moved to `scripts/lib/docs.sh`, unchanged.
 
 ## 0.7.0 — 2026-11-05
 
