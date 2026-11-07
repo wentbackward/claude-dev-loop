@@ -4,6 +4,14 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Merge without a force push (#57): `merge-train.sh` no longer force-pushes the replayed branch. A branch
+  that already contains the base with the gated tree merges as it is; a branch behind the base gets a merge
+  commit with the gated tree (parents: the gated head and the base), pushed as a plain fast-forward of the
+  branch, so the PR, its review thread and its number stay, and an origin that refuses non-fast-forward
+  pushes (or a ruleset that forbids force pushes) merges green. The squash of that head is the gated tree.
+  The train file keeps the gated head (a fifth field) once the branch moved, so a re-run after exit 9 or 7
+  merges the head already pushed without another push, and the ledger and the local-branch cleanup use the
+  gated head. Exit codes are unchanged; exit 9's advice now says how to confirm the merge commit.
 - Permissions (#54): `scripts/permissions.sh` merges the rules the loop needs into the project's settings,
   only adding (a dry run by default, `--apply` writes): `templates/settings.json` gains an allow list (the
   read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`, `git commit`, the `gh issue`

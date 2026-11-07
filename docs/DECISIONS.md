@@ -632,3 +632,25 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   written by `heavy.sh` (more state in the lock directory, a larger change to `heavy.sh`); sampling the
   log size over 20 s (slow, and the modification time says the same); `stat` (its options differ between
   Linux and macOS).
+
+## 2026-11-07 — Merge without a force push: a fast-forward merge commit with the gated tree (#57)
+
+- **Decision:** `merge-train.sh` still replays each branch onto the current base and checks the replayed
+  tree against the gated one (exits 3 and 4 unchanged). When the branch already contains the base and has
+  the gated tree, it merges as it is, with no push. Otherwise it creates a merge commit whose tree is the
+  gated tree and whose parents are the gated head and the base (`git commit-tree`), and pushes it to the
+  same branch with a plain push: a fast-forward, which the remote refuses when the branch moved (exit 6,
+  as before). The squash merge of a head that contains the base is that head's tree, so the merged tree is
+  the gated tree. The train file gets a fifth field, the gated head, once the branch moved, so a re-run
+  (after exit 9 or 7) finds the pushed head up to date and merges it without another push, and the
+  ledger's `source_head` and the local-branch deletion keep using the gated head.
+- **Reason:** the smallest change that never force-pushes: the PR, its number, its review thread and the
+  notes stay; no new branch names, no superseded PR to close, nothing extra for `cleanup.sh`. The ledger
+  accepts both the gated head and the pushed one, so the original branch is classified `merged`. In
+  identity mode the status is posted on the pushed head and the approval is needed on it, as with the
+  former force push (the ruleset dismisses stale approvals either way).
+- **Alternatives:** push the replay as `<branch>-vN` and open a new PR from the carried notes (a new PR
+  per merge of a branch behind the base, a closed PR per merge, a Supersedes record and a cleanup pass for
+  every one); push the squash commit to the base directly (needs a ruleset bypass; not by default); merge
+  the PR as is and accept a 3-way merge result (the merged tree would no longer be guaranteed to equal the
+  gated one).

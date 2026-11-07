@@ -76,9 +76,11 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    reviewer reads every `## Architecture` and `## Config` reason and judges it, and loosening the gate's
    rules (a weaker or removed check, a narrower docs map) needs the user's OK in collaborative mode.
 5. **Merge.** `merge-train.sh b1 b2 ...` replays each branch on the current base and checks that its tree
-   is exactly the gated tree. It pushes the branch, opens the PR from the notes file (a leading `#` in the
-   title is stripped) and squash-merges exactly that head. If the base moved in between, it asks for a new
-   gate.
+   is exactly the gated tree. A branch that already contains the base with that tree merges as it is; a
+   branch behind the base gets a merge commit with the gated tree on top (its parents: the gated head and
+   the base), pushed as a plain fast-forward, never forced. It opens the PR from the notes file (a leading
+   `#` in the title is stripped) and squash-merges exactly that head, whose squash is the gated tree. If
+   the base moved in between, it asks for a new gate.
 6. **Run and verify.** Jobs that a merged ticket added are run for real, and the `verifier` agent checks
    their outputs. Deploys happen only when the user is not in the middle of using the system, and are
    checked afterwards.
@@ -819,9 +821,10 @@ points to credential files outside the repository. Apps get short-lived installa
 the app's private key with `openssl` and `curl` and cached (user-only) until shortly before they expire.
 The gate posts the status and merges as `gate`; implementers push as `implementer`;
 `open-pr.sh` opens PRs as `implementer`; the reviewer submits a real
-`gh pr review --approve/--request-changes` as `reviewer`. When the gate's replay of a branch dismisses an
-approval, `merge-train.sh` stops with exit 9. The reviewer then confirms with `git range-diff` and approves
-again.
+`gh pr review --approve/--request-changes` as `reviewer`. When the merge commit `merge-train.sh` pushes
+onto a branch behind the base dismisses an approval, it stops with exit 9. The reviewer then confirms that
+the merge commit brings in only the base (`git diff <base> <head>` is the branch's own change) and approves
+again; the re-run merges the head already pushed, without another push.
 
 **Identities.** GitHub Apps are recommended: permissions per app, short-lived tokens, they show as
 `name[bot]`, and they need no seats. Machine-user accounts with fine-grained PATs also work
@@ -946,9 +949,10 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 - Merges happen only through `merge-train.sh` after a green gate, and never with `--admin`.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
   directory, and, in identity mode, `~/.config/dev-loop/`. `status.sh` only reads them.
-- The scripts never push to the base branch directly. They push feature branches with
-  `--force-with-lease` on the gated head, so commits pushed after the gate are never overwritten. Agents
-  never force-push: a rebased branch is re-pushed as `<branch>-vN` with `repush.sh`.
+- The scripts never push to the base branch directly, and nothing in the loop force-pushes. The merge
+  pushes a feature branch only as a fast-forward of the gated head (a merge commit with the gated tree), so
+  the remote refuses it when commits were pushed after the gate. Agents re-push a rebased branch as
+  `<branch>-vN` with `repush.sh`.
 
 ## Developing the plugin
 
