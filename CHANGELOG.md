@@ -11,6 +11,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   Stale planned tickets are closed as not planned with a comment, on the user's OK in collaborative mode,
   without asking in dark mode. The `doc-auditor` lists housekeeping in its report instead of opening a
   ticket for each; real drift still gets one ticket each, and the auditor stays read-only.
+- Docs adoption (#46): without `docs`, `doctor.sh` prints one note, `current-state docs off: no docs
+  check, no doc audit, no planned list; adopt them with the setup skill's step 3b` (a note, `doctor:
+  ready` unchanged). Setup step 3b gains a gradual adoption path for an existing project with large
+  hand-written docs: Features only with an empty `map` first, split a mixed built and planned file,
+  archive finished specs and compact the journal once (`docs-archive.sh`), add `map` rules one aspect at
+  a time, leave oversized docs to docs maintenance tickets. The planned-list rows follow CommonMark code
+  fences (a backtick fence line inside a `~~~` block no longer ends it), the same rule as `docs-check.sh`.
 - The scenario stage's red line (`scenarios red: <n> judged, <k> required unsatisfied, ...`) counts only
   the required scenarios that are not sealed; a sealed required failure is only in the `scenarios sealed`
   count and still makes the train red. The README and `docs/DECISIONS.md` note that a daemon started by

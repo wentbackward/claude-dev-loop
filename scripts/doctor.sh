@@ -298,7 +298,10 @@ else
     esac
   done
   echo "        models        $models"
-  dl_docs_on && doctor_docs
+  # Without docs a note only, so a project that has not adopted them stays ready.
+  if dl_docs_on; then doctor_docs; else
+    optional "current-state docs off: no docs check, no doc audit, no planned list; adopt them with the setup skill's step 3b"
+  fi
   dl_docs_on && doctor_journals
   dl_arch_on && doctor_arch
   doctor_factory

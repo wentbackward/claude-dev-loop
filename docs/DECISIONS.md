@@ -477,3 +477,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** renumbering 7b and 7c (breaks cross-references in files another ticket edits); a new
   `docs.maintenance_every` key (no need: the audit's cadence is what the ticket asks for); letting the
   implementer close stale tickets (an issue write outside its own ticket).
+
+## 2026-11-07 — Docs adoption (#46): the docs-off note and the gradual path
+
+- **Decision:** without `docs` (no aspects), `doctor.sh` prints one note in place of the docs lines:
+  `current-state docs off: no docs check, no doc audit, no planned list; adopt them with the setup skill's
+  step 3b`. It is a note, so `doctor: ready` and the problem count are unchanged. The gradual adoption
+  path is a new item 6 of setup step 3b, next to the one-time rebuild (item 5), not a replacement of it:
+  a small project can still rebuild at once. The planned-row parser (`dl_docs_planned_rows`) uses the
+  shared CommonMark fence helper `DL_DOCS_FENCE_AWK`, so the planned list, the link rule and the journal
+  compaction read fences the same way. Existing smoke tests that counted `docs ` or `doc audit` lines in a
+  docs-off doctor run now drop the note line first; what they assert (no docs lines without docs) holds.
+- **Reason:** a project without docs had no hint that the feature exists; a note costs nothing and never
+  blocks the loop. Large hand-written docs cannot be rebuilt in one session, so each adoption step must
+  leave the gate green on its own. One fence rule avoids rows counted from inside a `~~~` block that
+  holds a backtick fence line.
+- **Alternatives:** a MISSING line (would block every project that chose to stay without docs); printing
+  the note only when a `docs` folder exists (a guess about the project); replacing the one-time rebuild
+  with the gradual path (more steps than a small project needs).

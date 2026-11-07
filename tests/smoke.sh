@@ -912,7 +912,8 @@ expect "doctor without docs prints no docs lines" 0 \
   "$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs aspect\|docs map\|max_lines")"
 expect "the template's empty docs block keeps the docs off" "2 0" \
   "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD >/dev/null 2>&1
-    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs ")"
+    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 |
+    grep -v "current-state docs off" | grep -c "docs ")"
 
 # 14. Architecture: component cards, arch-check.sh, the baseline ratchet in the gate and doctor (all only
 # with "architecture" configured). The edge list comes from a fake command: tools/edges.sh prints edges.txt.
@@ -1588,12 +1589,12 @@ audit_doctor "$work/audit-default.json" | grep -E "docs audit +3 merges" | grep 
 printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}], "docs": {"prd": ["docs/specs/prd.md"], "audit_every": 1}}\n' \
   >"$work/audit-prdonly.json"
 expect "without docs aspects doctor prints no audit or PRD lines" 0 \
-  "$(audit_doctor "$work/audit-prdonly.json" | grep -c "docs audit\|docs prd\|doc audit")"
+  "$(audit_doctor "$work/audit-prdonly.json" | grep -v "current-state docs off" | grep -c "docs audit\|docs prd\|doc audit")"
 printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}]}\n' >"$work/audit-nodocs.json"
 expect "without docs doctor prints no audit or PRD lines" 0 \
-  "$(audit_doctor "$work/audit-nodocs.json" | grep -c "docs audit\|docs prd\|doc audit")"
+  "$(audit_doctor "$work/audit-nodocs.json" | grep -v "current-state docs off" | grep -c "docs audit\|docs prd\|doc audit")"
 expect "the template's docs block keeps the audit off" 0 \
-  "$(audit_doctor "$plugin/templates/dev-loop.json" | grep -c "docs ")"
+  "$(audit_doctor "$plugin/templates/dev-loop.json" | grep -v "current-state docs off" | grep -c "docs ")"
 expect "the template lists docs.prd, docs.audit_every and the doc-auditor's model" "[] 10 sonnet" \
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"].get("doc-auditor"))' \
@@ -3103,5 +3104,68 @@ grep -qiE 'one ticket per drift' "$auditor" && grep -qiE 'housekeeping' "$audito
   pass "the doc-auditor keeps one ticket per real drift and lists housekeeping instead" || fail "auditor: drift vs housekeeping"
 grep -qF 'Docs maintenance' "$plugin/README.md" && grep -qF 'docs: maintenance' "$plugin/README.md" &&
   pass "the README describes docs maintenance" || fail "the README lacks docs maintenance"
+
+# 19. Docs adoption (#46): doctor notes when the current-state docs are off (a note, never MISSING), setup
+# step 3b describes a gradual adoption path, and the planned-row parser follows CommonMark fences.
+awork="$work/adopt"
+git init -q --bare "$awork/origin.git"
+git clone -q "$awork/origin.git" "$awork/project" 2>/dev/null
+cd "$awork/project" || exit 1
+mkdir -p docs
+printf '# Features\n' >docs/features.md
+printf '# Project\n' >CLAUDE.md
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+# adoctor NAME DOCS_MEMBERS: doctor's output with a config holding a docs block of these members (none if empty).
+adoctor() {
+  printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]%s}\n' \
+    "${2:+, \"docs\": {$2}}" >"$awork/$1.json"
+  DEV_LOOP_HOME="$awork/home" DEV_LOOP_CONFIG="$awork/$1.json" "$plugin/scripts/doctor.sh" 2>&1
+}
+docs_off_note="note    current-state docs off: no docs check, no doc audit, no planned list; adopt them with the setup skill's step 3b"
+off_out=$(adoctor off "")
+on_out=$(adoctor on '"aspects": {"features": "docs/features.md"}')
+expect "adopt: doctor without docs prints the docs-off note" "$docs_off_note" \
+  "$(echo "$off_out" | grep -F 'current-state docs off')"
+expect "adopt: doctor with empty aspects prints the docs-off note" "$docs_off_note" \
+  "$(adoctor empty '"aspects": {}' | grep -F 'current-state docs off')"
+expect "adopt: doctor with docs prints no docs-off note" "" "$(echo "$on_out" | grep -F 'current-state docs off')"
+expect "adopt: the docs-off note is never MISSING" "" "$(echo "$off_out" | grep -E '^MISSING .*docs off')"
+expect "adopt: the docs-off note adds no problem to the doctor's verdict" "$(echo "$on_out" | tail -n 1)" \
+  "$(echo "$off_out" | tail -n 1)"
+
+# The planned-row parser uses the shared CommonMark fence helper: a ``` line inside a ~~~ block does not
+# end the fence, and an indented ``` (4 spaces) does not open one.
+printf '# Planned\n\n~~~\n```\n- Fenced (#150)\n~~~\n- Real (#7)\n\n    ```\n- After an indented line (#8)\n' \
+  >docs/planned.md
+planned_rows() { # planned_rows FILE: the ticket numbers of the planned rows dl_docs_planned_rows finds
+  DL_ROOT="$awork/project" bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/docs.sh" &&
+    dl_docs_planned_rows "$2"' _ "$plugin" "$1" | cut -f3 | paste -sd' ' -
+}
+expect "adopt: a \`\`\` line inside a ~~~ fence does not end it early" "7 8" "$(planned_rows docs/planned.md)"
+printf '# Planned\n\n````\n```\n- Fenced (#151)\n````\n- Real (#9)\n' >docs/planned.md
+expect "adopt: a fence closes only on a run at least as long" "9" "$(planned_rows docs/planned.md)"
+
+# Setup step 3b's gradual adoption path, and the README, doctor skill and CHANGELOG that describe it.
+step3b=$(awk '/^## 3b\./ {on = 1; print; next} /^## / {on = 0} on' "$plugin/skills/setup/SKILL.md")
+for phrase in "Gradual adoption" "only the Features aspect" "empty \`map\`" "docs.prd" "planned list" \
+  "docs-archive.sh spec" "docs-archive.sh journal" "--apply" "Standing decisions" "rules one aspect at a time" \
+  "docs maintenance tickets" "one split per ticket"; do
+  printf '%s\n' "$step3b" | grep -qF -- "$phrase" && pass "adopt: setup step 3b names \"$phrase\"" ||
+    fail "setup step 3b does not name \"$phrase\""
+done
+gradual=$(printf '%s\n' "$step3b" | awk '/Gradual adoption/ {on = 1} on')
+printf '%s\n' "$gradual" | grep -n 'templates/FEATURES.md\|empty `map`' | head -n 1 | grep -qF 'templates/FEATURES.md' &&
+  pass "adopt: the gradual path creates the Features file before the empty map turns the docs on" ||
+  fail "the gradual path does not create the Features file first"
+printf '%s\n' "$gradual" | grep -qF "Docs maintenance" && pass "adopt: the gradual path points at the Docs maintenance step" ||
+  fail "the gradual path does not point at Docs maintenance"
+grep -qF "current-state docs off" "$plugin/README.md" && grep -qiF "gradual adoption" "$plugin/README.md" &&
+  pass "adopt: the README describes the docs-off note and the gradual adoption path" ||
+  fail "the README lacks the docs-off note or the gradual adoption path"
+grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
+  pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" && head -n 20 "$plugin/CHANGELOG.md" |
+  grep -q '^## Unreleased' && pass "adopt: CHANGELOG has an Unreleased entry for #46" || fail "no Unreleased #46 entry"
+cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
