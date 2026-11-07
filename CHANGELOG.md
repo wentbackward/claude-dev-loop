@@ -10,7 +10,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   branch, so the PR, its review thread and its number stay, and an origin that refuses non-fast-forward
   pushes (or a ruleset that forbids force pushes) merges green. The squash of that head is the gated tree.
   The train file keeps the gated head (a fifth field) once the branch moved, so a re-run after exit 9 or 7
-  merges the head already pushed without another push, and the ledger and the local-branch cleanup use the
+  merges the head already pushed without another push (the merge commit is recorded before its push, a
+  sixth field, so a run that stopped right after the push resumes too), and the ledger and the local-branch cleanup use the
   gated head. Exit codes are unchanged; exit 9's advice now says how to confirm the merge commit.
 - Permissions (#54): `scripts/permissions.sh` merges the rules the loop needs into the project's settings,
   only adding (a dry run by default, `--apply` writes): `templates/settings.json` gains an allow list (the

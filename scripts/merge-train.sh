@@ -64,7 +64,8 @@ if [ "$pending" != "$* " ]; then
 fi
 
 # record BRANCH FIELD VALUE: update the train file (field 2 = the branch's head on the remote, field 4 =
-# state, field 5 = the head the gate tested, kept once a merge commit moved field 2).
+# state, field 5 = the head the gate tested, kept once a merge commit moved field 2, field 6 = the merge
+# commit about to be pushed, recorded before the push so a run that stopped right after it can resume).
 record() {
   awk -v b="$1" -v f="$2" -v v="$3" '$1 == b {$f = v} {print}' "$train_file" >"$train_file.tmp" &&
     mv "$train_file.tmp" "$train_file"
@@ -86,12 +87,17 @@ done
 
 previous=$(awk '$4 == "merged" {b = $1} END {print b}' "$train_file")
 for branch in "$@"; do
-  read -r _ source_head gated _ tested_head <<<"$(awk -v b="$branch" '$1 == b' "$train_file")"
+  read -r _ source_head gated _ tested_head pushing <<<"$(awk -v b="$branch" '$1 == b' "$train_file")"
   tested_head=${tested_head:-$source_head}
   cd "$gate" || exit 2
   git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
   [ "$(git rev-parse "train-$branch" 2>/dev/null)" = "$gated" ] ||
     { echo "MERGE refused: train-$branch is not the gated head"; exit 8; }
+  # A run that stopped between the push of its merge commit and recording it: the remote has that commit.
+  if [ -n "$pushing" ] && [ "$(git rev-parse "$DL_REMOTE/$branch" 2>/dev/null)" = "$pushing" ]; then
+    record "$branch" 2 "$pushing"
+    source_head=$pushing
+  fi
   if [ "$(git rev-parse "$DL_REMOTE/$branch" 2>/dev/null)" != "$source_head" ]; then
     echo "MERGE $branch changed on $DL_REMOTE since the gate: re-gate it"
     exit 6
@@ -122,12 +128,13 @@ for branch in "$@"; do
     head=$(git commit-tree "$gated^{tree}" -p "$source_head" -p "$DL_REMOTE/$DL_BASE" \
       -m "Merge $DL_BASE into $branch" -m "The tree the batch gate tested (train-$branch), as a fast-forward of $branch.") ||
       { git checkout -q --detach "$DL_REMOTE/$DL_BASE"; echo "MERGE could not create the merge commit for $branch"; exit 2; }
+    record "$branch" 5 "$tested_head"
+    record "$branch" 6 "$head"
     if ! as_role gate git push -q "$DL_REMOTE" "$head:$branch"; then
       git checkout -q --detach "$DL_REMOTE/$DL_BASE"
       echo "MERGE push rejected for $branch (changed since the gate?)"
       exit 6
     fi
-    record "$branch" 5 "$tested_head"
     record "$branch" 2 "$head"
   fi
   git checkout -q --detach "$DL_REMOTE/$DL_BASE"
