@@ -310,12 +310,12 @@ scripts/docs-archive.sh spec <file> [--no-pointer] [--force] [--apply]
   `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
 - **Gradual adoption.** A project with large hand-written docs (many files, some over `max_lines`, specs
   mixed with built state) adopts them in steps instead (setup step 3b.6), so the loop never stalls:
-  `docs` with only the Features aspect and an empty `map` first (nothing turns red; oversized files are
-  only notes); then a mixed "built + planned" file is split (built items to Features, unbuilt ones to the
+  the Features file first (from `templates/FEATURES.md`), then `docs` with only the Features aspect and
+  an empty `map` (nothing turns red; oversized files are only notes); then a mixed "built + planned" file is split (built items to Features, unbuilt ones to the
   PRD in `prd`, or to the planned list only when sliced into a ticket); finished specs are archived and
   the journal compacted once (`docs-archive.sh`, a dry run, then `--apply`, then the `## Standing
   decisions` section is written); `map` rules are added one aspect at a time; oversized docs are left to
-  docs maintenance tickets, one split per ticket.
+  docs maintenance tickets (see Docs maintenance), one split per ticket.
 
 Without `docs` (or with no aspects, as in `templates/dev-loop.json`) none of this runs, and `doctor.sh`
 prints one note: `current-state docs off: no docs check, no doc audit, no planned list; adopt them with

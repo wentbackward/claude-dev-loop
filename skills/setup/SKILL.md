@@ -134,9 +134,10 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
 6. **Gradual adoption** (an existing project with large hand-written docs: many files, some over
    `docs.max_lines`, specs mixed with built state), instead of rebuilding everything at once, so the loop
    never stalls. Each step is its own reviewed change; the loop keeps running between them.
-   1. Start with `docs` holding only the Features aspect and an empty `map`
-      (`"docs": {"aspects": {"features": "docs/features.md"}, "map": []}`): nothing turns red, and files
-      over the budget are only notes.
+   1. Create the Features file first (from `templates/FEATURES.md`, or point at the existing features
+      file), so the aspect's path exists; then start with `docs` holding only the Features aspect and an
+      empty `map` (`"docs": {"aspects": {"features": "docs/features.md"}, "map": []}`): nothing turns red,
+      and files over the budget are only notes.
    2. Split a mixed "built + planned" features file: built items into Features; unbuilt ones into the PRD
       named in `docs.prd` (the intent), or into the planned list only when an item is sliced into a ticket.
    3. Archive finished specs (`docs-archive.sh spec <file>`) and compact the journal once
@@ -144,7 +145,8 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
       section (the decisions still in force, one line each, linking their entries).
    4. Add `map` rules one aspect at a time, each with its doc, so a rule turns on only for a doc that is
       true.
-   5. Leave oversized docs to docs maintenance tickets: one split per ticket.
+   5. Leave oversized docs to docs maintenance tickets (the `dev-loop` skill's Docs maintenance):
+      one split per ticket.
 
    Without `docs`, `doctor.sh` prints one note (`current-state docs off: ...`) and stays ready.
 
