@@ -3182,9 +3182,10 @@ mscripts="$mwork/cache/mk/dev-loop/*/scripts"
 # A user-level settings file that would block the loop: doctor must never read it.
 printf '{"permissions": {"deny": ["Bash(gh pr:*)"]}}\n' >"$mwork/home/.claude/settings.json"
 git add . && git commit -q -m "chore: start" && git push -q -u origin main
-# mconfig FAST_CHECK: write the project config with this fast check and two checks (one compound).
+# mconfig FAST_CHECK [BASE]: write the project config with this fast check, two checks (one compound) and the
+# base branch BASE (default main).
 mconfig() {
-  printf '{"base_branch": "main", "fast_check": "%s", "checks": [{"name": "unit", "command": "make check"}, "./e2e.sh --all | tee e2e.log"]}\n' \
+  printf '{"base_branch": "'"${2:-main}"'", "fast_check": "%s", "checks": [{"name": "unit", "command": "make check"}, "./e2e.sh --all | tee e2e.log"]}\n' \
     "$1" >"$mwork/config.json"
 }
 mconfig "test -x run.sh && make lint"
@@ -3261,7 +3262,7 @@ for nojq in "" 1; do
   done
   expect "perm: every template rule is in the merged settings$label" "" "$missing_rules"
   for rule in "Bash(test -x run.sh)" "Bash(make lint)" "Bash(make check)" "Bash(./e2e.sh --all)" "Bash(tee e2e.log)" \
-    "Bash(git push -u origin feat/*)" "Bash(git push -u origin docs/*)"; do
+    "Bash(git push -u origin HEAD)"; do
     mrules .claude/settings.json allow | grep -qxF -- "$rule" && pass "perm: the project allow list has $rule$label" ||
       fail "perm: the project allow list lacks $rule$label"
   done
@@ -3282,24 +3283,50 @@ cp "$mwork/before.json" .claude/settings.json
 mperm --apply >/dev/null
 
 # The decision for each command under the merged rules: the loop's commands are allowed, the dangerous ones
-# never are (deny or ask), whatever wildcard an allow rule has.
-for cmd in "git fetch origin" "git status" "git push -u origin feat/54-permissions" "git rebase origin/main" \
+# are denied or ask (in every mode, bypass included), and the rest is at least not allowed (it prompts in the
+# default mode).
+# mstrict LABEL COMMAND...: each COMMAND is denied or asks.
+mstrict() {
+  local label=$1 cmd decision
+  shift
+  for cmd in "$@"; do
+    decision=$(mdecide "$cmd")
+    case $decision in deny | ask) pass "perm: \"$cmd\" is $decision$label" ;; *) fail "perm: \"$cmd\" is $decision$label" ;; esac
+  done
+}
+for cmd in "git fetch origin" "git status" "git push -u origin HEAD" "git rebase origin/main" \
   "git worktree add ../p-54 -b feat/54-x origin/main" "gh issue view 54" "gh issue create --title x --body y" \
   "gh pr create --title x --body-file n.md" "gh pr comment 3 --body ok" "gh pr list" "make lint" "make check" \
   "$mroot/scripts/gate-train.sh feat/1-a feat/2-b" "$mroot/scripts/doctor.sh" "$mroot/scripts/cleanup.sh" \
-  "$mroot/scripts/repush.sh feat/1-a" "$mroot/scripts/permissions.sh"; do
+  "$mroot/scripts/repush.sh feat/1-a" "$mroot/scripts/permissions.sh" "$mroot/scripts/heavy.sh make check" \
+  "$mroot/scripts/as-role.sh implementer git push -u origin HEAD"; do
   expect "perm: the loop command \"$cmd\" is allowed" allow "$(mdecide "$cmd")"
 done
-for cmd in "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git push -u origin feat/1-a --force" \
-  "git push -u origin feat/1-a --force-with-lease" "git push -u origin feat/1-a -f" "git push -u origin feat/1-a +feat/1-a" \
-  "git push -u origin feat/1-a --tags" "git push -u origin feat/1-a refs/tags/v1" "git push origin v1.0" \
-  "git push -u origin feat/1-a main" "git push -u origin feat/1-a --delete" "git tag v1.0" "git tag -a v1 -m x" \
-  "gh release create v1.0" "gh repo delete o/r --yes" "gh pr merge --admin 3" "gh pr merge 3 --squash --admin" \
-  "$mroot/scripts/as-role.sh implementer git push --force" "$mroot/scripts/heavy.sh gh release create v1" \
-  "$mroot/scripts/cleanup.sh --apply --include closed" "git worktree remove --force ../p-54"; do
+mstrict "" "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git push -u origin HEAD --force" \
+  "git push -u origin HEAD --force-with-lease" "git push -u origin HEAD -f" "git push -u origin +HEAD" \
+  "git push origin HEAD:+feat/1-a" "git -c a=b push --force" "git -C . push -f" "git --git-dir=x push +main" \
+  "git push -u origin HEAD --tags" "git push origin --follow-tags" "git push -u origin HEAD refs/tags/v1" \
+  "git push -u origin feat/x:refs/heads/main" "git push -u origin feat/x:main -q" "git push origin HEAD:refs/heads/main" \
+  "git push -u origin main" "git push origin main --quiet" "git push -u origin feat/a :feat/b" \
+  "git push origin --delete feat/b" "git push origin -d feat/b" "git push --mirror origin" "git push --all origin" \
+  "git tag v1.0" "git tag -a v1 -m x" "gh release create v1.0" "gh repo delete o/r --yes" "gh pr merge --admin 3" \
+  "gh pr merge 3 --squash --admin" "$mroot/scripts/as-role.sh implementer git push --force" \
+  "$mroot/scripts/as-role.sh implementer git push origin HEAD:main" "$mroot/scripts/heavy.sh gh release create v1" \
+  "$mroot/scripts/heavy.sh git push origin HEAD:refs/heads/main" "$mroot/scripts/cleanup.sh --apply --include closed" \
+  "git worktree remove --force ../p-54" "git worktree remove -f ../p-54" "git worktree remove -f -f ../p-54" \
+  "git -C . worktree remove --force ../p-54"
+for cmd in "git push origin v1.0" "git push -u origin feat/1-a" "git push -u origin feat/1-a main" \
+  "$mroot/scripts/heavy.sh rm -rf build" "$mroot/scripts/as-role.sh orchestrator gh api -X DELETE x"; do
   decision=$(mdecide "$cmd")
-  case $decision in deny | ask | none) pass "perm: \"$cmd\" is never allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
+  case $decision in deny | ask | none) pass "perm: \"$cmd\" is not allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
 done
+# A base branch not named main: the base rules follow base_branch.
+mconfig "test -x run.sh && make lint" master
+mperm --apply >/dev/null
+mstrict " (base master)" "git push -u origin feat/x HEAD:master" "git push origin master" "git push -u origin HEAD:master -q" \
+  "git push origin HEAD:refs/heads/master"
+expect "perm: the loop push stays allowed with base master" allow "$(mdecide "git push -u origin HEAD")"
+mconfig "test -x run.sh && make lint"
 # Over the template alone: no allow rule matches a force push, a repository delete, a release, a tag or an
 # admin merge at all.
 template_allow=$(mrules "$plugin/templates/settings.json" allow)
