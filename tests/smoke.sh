@@ -2681,5 +2681,133 @@ grep -qE '^## Factory preset' "$plugin/README.md" && grep -qF '| `scenarios` |' 
   pass "the README has the factory preset section and table" || fail "the README lacks the factory preset"
 git checkout -q -f main
 
+# Planned-list hygiene (#45): with docs.planned, doctor reads each planned row's ticket through one batched
+# gh call and notes rows whose ticket closed, rows open past docs.planned_max_days with no loop branch, and
+# rows without a ticket number. Notes only; nothing changes without docs or docs.planned.
+pwork="$work/planned"
+git init -q --bare "$pwork/origin.git"
+git clone -q "$pwork/origin.git" "$pwork/project" 2>/dev/null
+cd "$pwork/project" || exit 1
+mkdir -p docs
+printf '# Features\n\n## Search\n\n- **Tickets:** added in #101\n\n## Planned (not built yet)\n\n| Item | Ticket |\n|------|--------|\n| Theta | #107 |\n\n## Notes\n\n- not a planned row (#101)\n' \
+  >docs/features.md
+cat >docs/planned.md <<'EOF'
+# Planned
+
+- Alpha (#101)
+- Beta (#102)
+- Gamma (#103)
+- Delta (#104)
+- Epsilon (#105)
+- Zeta (#106)
+- Eta (#199), see [the PRD](prd.md#2-scope)
+- No ticket here
+
+```
+- #150 inside a code block is not a row
+```
+EOF
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+git branch -q feat/104-delta
+git push -q origin main:refs/heads/fix/105-epsilon
+git fetch -q origin
+git branch -q chore/103x-not-a-loop-branch-of-103
+now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf '101\tCLOSED\tCOMPLETED\t2020-01-01T00:00:00Z\n102\tCLOSED\tNOT_PLANNED\t2020-01-01T00:00:00Z\n' >"$pwork/issues.tsv"
+printf '103\tOPEN\t\t2020-01-01T00:00:00Z\n104\tOPEN\t\t2020-01-01T00:00:00Z\n' >>"$pwork/issues.tsv"
+printf '105\tOPEN\t\t2020-01-01T00:00:00Z\n106\tOPEN\t\t%s\n107\tOPEN\t\t%s\n' "$now_iso" "$now_iso" >>"$pwork/issues.tsv"
+# pconfig NAME DOCS_MEMBERS: write $pwork/NAME.json with a docs block of these members.
+pconfig() {
+  printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]%s}\n' \
+    "${2:+, \"docs\": {$2}}" >"$pwork/$1.json"
+}
+# pdoctor NAME: doctor's output with config NAME and a fake GitHub holding $pwork/issues.tsv.
+pdoctor() {
+  rm -rf "$pwork/gh" && mkdir -p "$pwork/gh" && cp "$pwork/issues.tsv" "$pwork/gh/issues.tsv"
+  FAKE_GH_DIR="$pwork/gh" DEV_LOOP_HOME="$pwork/home" DEV_LOOP_CONFIG="$pwork/$1.json" "$plugin/scripts/doctor.sh" 2>&1
+}
+pconfig aged '"aspects": {"features": "docs/features.md"}, "planned": "docs/planned.md", "planned_max_days": 30'
+out=$(pdoctor aged)
+echo "$out"
+expect "planned: a row whose ticket closed as completed is noted" \
+  "note    planned row #101: ticket closed, move it to Features" "$(echo "$out" | grep -F 'planned row #101')"
+expect "planned: a row whose ticket closed as not planned is noted" \
+  "note    planned row #102: ticket closed as not planned, remove the row" "$(echo "$out" | grep -F 'planned row #102')"
+echo "$out" | grep -E '^note    planned row #103: open [0-9]+ days with no branch \(over planned_max_days 30\): close it as not planned and remove the row; the PRD keeps the intent$' >/dev/null &&
+  pass "planned: a row open past planned_max_days with no loop branch is noted" || fail "no note for the old row #103"
+expect "planned: a local loop branch <type>/<n>-* keeps an old row quiet" "" "$(echo "$out" | grep -F 'planned row #104')"
+expect "planned: a remote-only loop branch keeps an old row quiet" "" "$(echo "$out" | grep -F 'planned row #105')"
+expect "planned: a young open row is not noted" "" "$(echo "$out" | grep -F 'planned row #106')"
+expect "planned: a row whose ticket does not exist is noted" \
+  "note    planned row #199: no such ticket, link the row's ticket" "$(echo "$out" | grep -F 'planned row #199')"
+echo "$out" | grep -E '^note    planned row .*docs/planned.md:10.* has no ticket number' | grep -qF 'No ticket here' &&
+  pass "planned: a row with no ticket number is noted" || fail "no note for the row without a ticket"
+expect "planned: a link anchor like #2-scope is not a ticket" "" "$(echo "$out" | grep -E 'planned row #2[^0-9]')"
+expect "planned: lines in a code block are not rows" "" "$(echo "$out" | grep -F '#150')"
+expect "planned: rows are notes, never MISSING" "" "$(echo "$out" | grep -E '^MISSING .*planned')"
+expect "planned: doctor makes one gh call for all rows" 1 "$(grep -c 'gh issue list' "$pwork/gh/calls.log")"
+grep -F 'gh issue list' "$pwork/gh/calls.log" | grep -qF 'createdAt' && pass "planned: the call asks for createdAt" ||
+  fail "the gh call does not ask for createdAt"
+
+pconfig noage '"aspects": {"features": "docs/features.md"}, "planned": "docs/planned.md"'
+out=$(pdoctor noage)
+expect "planned: without planned_max_days there is no age check" "" "$(echo "$out" | grep -F 'days with no branch')"
+expect "planned: without planned_max_days closed rows are still noted" 2 "$(echo "$out" | grep -cE 'planned row #10[12]:')"
+pconfig badage '"aspects": {"features": "docs/features.md"}, "planned": "docs/planned.md", "planned_max_days": "soon"'
+expect "planned: an invalid planned_max_days is MISSING" \
+  'MISSING docs.planned_max_days: "soon" is not a positive number' "$(pdoctor badage | grep -F 'planned_max_days')"
+pconfig zeroage '"aspects": {"features": "docs/features.md"}, "planned": "docs/planned.md", "planned_max_days": 0'
+out=$(pdoctor zeroage)
+expect "planned: a planned_max_days of 0 keeps the age check off" "0 0" \
+  "$(echo "$out" | grep -c '^MISSING docs.planned_max_days') $(echo "$out" | grep -c 'days with no branch')"
+
+pconfig section '"aspects": {"features": "docs/features.md"}, "planned": "docs/features.md", "planned_max_days": 30'
+out=$(pdoctor section)
+expect "planned: in a file with a Planned heading only that section's rows count" "" \
+  "$(echo "$out" | grep -E 'planned row (#101|.*no ticket)')"
+expect "planned: a table header is not a row; a young table row is quiet" "" "$(echo "$out" | grep -E 'planned row')"
+printf '107\tCLOSED\tCOMPLETED\t2020-01-01T00:00:00Z\n' >"$pwork/issues-107.tsv"
+cp "$pwork/issues.tsv" "$pwork/issues-all.tsv" && grep -v '^107' "$pwork/issues-all.tsv" >"$pwork/issues.tsv"
+cat "$pwork/issues-107.tsv" >>"$pwork/issues.tsv"
+expect "planned: a table row's ticket is read" "note    planned row #107: ticket closed, move it to Features" \
+  "$(pdoctor section | grep -F 'planned row #107')"
+cp "$pwork/issues-all.tsv" "$pwork/issues.tsv"
+
+printf '# Notes\n\n- Lambda (#199)\n\n## Unplanned things\n\n- Iota (#101)\n\n## Planned-list hygiene\n\n- Kappa (#102)\n\n* * *\n- - -\n***\n___\n' \
+  >docs/other.md
+pconfig other '"aspects": {"features": "docs/features.md"}, "planned": "docs/other.md"'
+out=$(pdoctor other)
+expect "planned: headings like Unplanned things or Planned-list hygiene do not open a planned section" 3 \
+  "$(echo "$out" | grep -cE 'planned row #(10[12]|199):')"
+expect "planned: a thematic break (* * *, - - -, ***) is not a row" "" "$(echo "$out" | grep -F 'no ticket number')"
+mkdir -p "$pwork/nogh" && printf '#!/usr/bin/env bash\nexit 1\n' >"$pwork/nogh/gh" && chmod +x "$pwork/nogh/gh"
+out=$(PATH="$pwork/nogh:$PATH" pdoctor aged)
+expect "planned: without gh access one note says the rows were not checked" 1 \
+  "$(echo "$out" | grep -c '^note    planned rows not checked')"
+expect "planned: without gh access no row is judged by its ticket" "" "$(echo "$out" | grep -E 'planned row #')"
+
+pconfig nodocs ''
+pconfig noplanned '"aspects": {"features": "docs/features.md"}'
+for name in nodocs noplanned; do
+  out=$(pdoctor "$name")
+  expect "planned: doctor with config $name prints no planned lines" "" "$(echo "$out" | grep -E 'planned row')"
+  expect "planned: doctor with config $name makes no issue call" 0 "$(cat "$pwork/gh/calls.log" 2>/dev/null | grep -c 'gh issue list')"
+done
+expect "planned: the notes leave doctor's verdict unchanged" "$(pdoctor noplanned | tail -n 1)" "$(pdoctor aged | tail -n 1)"
+
+days() { bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/docs.sh"; dl_docs_days_between "$2" "$3"' _ "$plugin" "$@"; }
+expect "planned: days between dates across a leap day" 2 "$(days 2020-02-28T10:00:00Z 2020-03-01)"
+expect "planned: days between dates across a year" 1 "$(days 2019-12-31T23:59:59Z 2020-01-01T00:00:00Z)"
+expect "planned: days between dates across centuries" 9806 "$(days 2000-01-01 2026-11-06)"
+expect "planned: days between an unreadable date and today are empty" "" "$(days soon 2026-11-06)"
+
+grep -qF '`docs.planned_max_days`' "$plugin/README.md" && grep -qF 'planned row #<n>' "$plugin/skills/doctor/SKILL.md" &&
+  grep -qF '"planned_max_days"' "$plugin/templates/dev-loop.json" &&
+  pass "planned: the README, the doctor skill and the template describe planned_max_days" ||
+  fail "planned: the docs lack planned_max_days"
+cd "$work/project" || exit 1
+git checkout -q -f main
+
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

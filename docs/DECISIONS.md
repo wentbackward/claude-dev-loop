@@ -417,3 +417,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   share than the issue allows); dropping `<k>` from the red line (loses what the implementer needs);
   a `scenarios.stop` command (more config for a case a `trap` in `scenarios.run` covers); a cgroup or
   systemd scope for the system (Linux only).
+
+## 2026-11-07 — Planned-list hygiene in doctor (#45): what a row is, one gh call, 0 is off
+
+- **Decision:** a planned row is a Markdown list item or a table body row (not the header, not inside a
+  fenced code block, not a thematic break such as `* * *`); its ticket is the first `#n` that is not part of a word, a path, an HTML entity or
+  an anchor such as `#2-scope`. In a file with a heading whose text starts with the word "Planned" (not
+  "Unplanned things", not "Planned-list hygiene"), only that section's rows count, so a planned list kept at the end of the Features file (`templates/FEATURES.md`) does not judge
+  the Features entries. The tickets come from one `gh issue list --state all --json
+  number,state,stateReason,createdAt` call, made only when a row has a number. Only `NOT_PLANNED` reads
+  as "not planned"; every other closed reason reads as completed. A number GitHub does not list as an issue
+  gets a `no such ticket` note. `docs.planned_max_days` of `0` or empty is off (the template ships `0`), any
+  other non-number is MISSING. Days are counted from the ticket's creation date to today in UTC with an awk
+  civil-day formula (no `date -d`).
+- **Reason:** one call costs the same for any number of rows; the Features template keeps its planned list
+  in the same file; `0` lets the template list the key without turning the check on.
+- **Alternatives:** one `gh issue view` per row (N calls); treating `DUPLICATE` as not planned (the issue
+  names only "not planned"); counting from the ticket's last update (an edit would hide an idle ticket).

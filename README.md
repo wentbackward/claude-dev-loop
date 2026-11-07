@@ -199,7 +199,8 @@ every merge:
   ],
   "max_lines": 1000,
   "prd": ["docs/specs/prd.md"],
-  "audit_every": 10
+  "audit_every": 10,
+  "planned_max_days": 60
 }
 ```
 
@@ -241,6 +242,15 @@ every merge:
   path or PRD file as MISSING; notes files over `max_lines` and map rules that match no tracked file; and
   prints the merges since the last audit (from the merge ledger and the audit marker), with a
   `doc audit due` note at `audit_every`.
+- **Planned-list hygiene.** A ticket never lives only to hold a memory: the PRD holds the intent, the
+  planned list only what is actively sliced. `doctor.sh` reads each planned row's ticket (`#n`) with one
+  `gh issue list` call and notes a row whose ticket closed as completed (`move it to Features`), closed as
+  not planned (`remove the row`) or does not exist, and a row with no ticket number. With
+  `planned_max_days`, it also notes a row whose ticket is open longer than that with no loop branch
+  (`<type>/<n>-*`, local or remote): close it as not planned and remove the row. A row is a list item or
+  a table body row outside code blocks (a rule like `* * *` is not one); in a file with a heading whose
+  text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
+  access one note says the rows were not checked.
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
   current-state docs once, one aspect at a time, each reviewed by the user. Templates:
   `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
@@ -590,7 +600,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
 | `docs.aspects` | none (docs off) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
-| `docs.planned` | none | the planned list (built and planned are kept apart) |
+| `docs.planned` | none | the planned list (built and planned are kept apart); `doctor.sh` notes rows whose ticket closed |
+| `docs.planned_max_days` | none (off) | `doctor.sh` notes a planned row whose ticket is open longer than this with no loop branch; `0` is off |
 | `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
 | `docs.max_lines` | `1000` | the size budget per current-state file (`doctor.sh` notes bigger ones) |
 | `docs.prd` | none | the PRD or spec files, a path or a list: the intent the slice loop cuts into tickets |

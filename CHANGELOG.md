@@ -8,6 +8,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the required scenarios that are not sealed; a sealed required failure is only in the `scenarios sealed`
   count and still makes the train red. The README and `docs/DECISIONS.md` note that a daemon started by
   `scenarios.run` in a session of its own (`setsid`) escapes the stage's stop (#40).
+- Planned-list hygiene (#45): with `docs.planned`, `doctor.sh` reads each planned row's ticket with one
+  `gh issue list` call and notes rows whose ticket closed (move it to Features, or remove the row when not
+  planned), rows whose ticket does not exist and rows with no ticket number. A new key
+  `docs.planned_max_days` (off by default) also notes rows whose ticket is open longer than that with no
+  loop branch. Notes only; without `gh` access one note says the rows were not checked.
 
 ## 0.7.0 — 2026-11-05
 

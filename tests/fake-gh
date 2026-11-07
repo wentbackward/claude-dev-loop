@@ -3,7 +3,7 @@
 # squash commit pushed to the local bare origin. Every call is logged with the identity (GH_TOKEN) it ran
 # as. Like GitHub, a PR author cannot approve its own PR, and a merge needs an approval when
 # FAKE_GH_REQUIRE_APPROVAL=1. PRs get numbers in creation order; issues come from $FAKE_GH_DIR/issues.tsv
-# ("<number>\t<state>\t<reason>"). `pr list` and `issue list` print the rows the scripts' --jq asks for.
+# ("<number>\t<state>\t<reason>[\t<createdAt>]"). `pr list` and `issue list` print the rows the scripts' --jq asks for.
 # Supports only what the plugin's scripts call.
 set -u
 dir=${FAKE_GH_DIR:?FAKE_GH_DIR not set}
@@ -51,7 +51,11 @@ case "${1:-} ${2:-}" in
     done
     ;;
   "issue list")
-    [ ! -f "$dir/issues.tsv" ] || cat "$dir/issues.tsv"
+    # The rows have a fourth column, createdAt, printed only when the call asks for it.
+    columns=3
+    case " $* " in *createdAt*) columns=4 ;; esac
+    [ ! -f "$dir/issues.tsv" ] ||
+      awk -F'\t' -v OFS='\t' -v n="$columns" '{ out = $1; for (i = 2; i <= n; i++) out = out OFS $i; print out }' "$dir/issues.tsv"
     ;;
   "pr review")
     branch=$3
