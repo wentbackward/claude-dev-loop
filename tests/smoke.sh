@@ -126,6 +126,10 @@ gate=$("$plugin/scripts/paths.sh" gate)
 expect "train-feat/2-second carries only the two branch commits on main" 2 \
   "$(git -C "$gate" rev-list --count origin/main..train-feat/2-second)"
 echo "$out" | grep -q "^3 passed" && pass "gate prints the check summary" || fail "no check summary"
+gate_events="$("$plugin/scripts/paths.sh" events)"
+expect "the gate's heavy jobs carry the gate's pid (gate_pid) in their slot events" \
+  "$(jq -r 'select(.event == "train-started") | .pid' "$gate_events" | tail -n 1)" \
+  "$(jq -r 'select(.who == "heavy" and .event == "slot-acquired") | .gate_pid' "$gate_events" | tail -n 1)"
 
 # 5. merge-train.sh merges in order with the fake gh and strips a leading '#' from the title.
 out=$("$plugin/scripts/merge-train.sh" feat/1-first feat/2-second 2>&1)
@@ -3867,6 +3871,45 @@ printf '{"t":"%s","who":"heavy","event":"queued","pid":"999999","detail":"implem
 stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: a frozen stage with a fresh heavy event of this repository is still possibly stalled" ||
   fail "status: a heavy event hid a frozen stage"
+cp -p "$swork/stalled-events.keep" "$st_state/events.jsonl"
+touch -t 202001010000 "$st_state/events.jsonl"
+# The gate's own job queued in heavy.sh (gate_pid is the running gate's pid) is waiting, never stalled; an
+# implementer's queued job (no gate_pid, or another gate's) leaves the frozen stage possibly stalled.
+# qbg COMMAND... &: run COMMAND in the background with one heavy slot (exec, so $! is the command's pid).
+qbg() { DEV_LOOP_HOME="$st_home" DEV_LOOP_LOCK_DIR="$swork/locks-q" DEV_LOOP_HEAVY_SLOTS=1 exec "$@"; }
+qbg "$plugin/scripts/heavy.sh" sleep 60 >/dev/null 2>&1 &
+q_holder=$!
+wait_event slot-acquired "$st_state/events.jsonl" || fail "status: the slot holder wrote no slot-acquired event"
+DL_GATE_PID=$stuck qbg "$plugin/scripts/heavy.sh" true >/dev/null 2>&1 &
+q_gate=$!
+wait_event queued "$st_state/events.jsonl" || fail "status: the gate's queued job wrote no queued event"
+expect "status: heavy.sh records the gate's pid in its queued event" "$stuck" \
+  "$(jq -r 'select(.event == "queued") | .gate_pid' "$st_state/events.jsonl" | tail -n 1)"
+out=$(stat_st)
+echo "$out"
+expect "status: the gate's own job queued for a heavy slot is waiting, not stalled" \
+  "verdict: waiting on heavy slot (queued)" "$(echo "$out" | tail -n 1)"
+expect "status: --json names the gate's queued job" "waiting|$q_gate|$stuck" \
+  "$(stat_st --json | jq -r '[.verdict.state, .heavy.waiting[0].pid, .heavy.waiting[0].gate_pid] | map(tostring) | join("|")')"
+kill "$q_gate" 2>/dev/null
+wait "$q_gate" 2>/dev/null
+qbg "$plugin/scripts/heavy.sh" true >/dev/null 2>&1 &
+q_impl=$!
+for _i in $(seq 1 75); do [ "$(grep -c '"event":"queued"' "$st_state/events.jsonl")" -ge 2 ] && break; sleep 0.2; done
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: an implementer's queued heavy job plus a frozen stage stays possibly stalled" ||
+  fail "status: an implementer's queued job hid a frozen stage"
+sleep 60 &
+q_other_gate=$!
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"%s","gate_pid":"%s","detail":"another gate"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$q_other_gate" "$q_other_gate" >>"$st_state/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a queued job of another gate pid does not hide a frozen stage" ||
+  fail "status: another gate's queued job hid a frozen stage"
+kill "$q_impl" "$q_other_gate" 2>/dev/null
+wait "$q_impl" "$q_other_gate" 2>/dev/null
+pkill -P "$q_holder" 2>/dev/null
+wait "$q_holder" 2>/dev/null
 cp -p "$swork/stalled-events.keep" "$st_state/events.jsonl"
 touch -t 202001010000 "$st_state/events.jsonl"
 # Another repository sharing the heavy queue: its live slot and fresh event show, but never count here.
