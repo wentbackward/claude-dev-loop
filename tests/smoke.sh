@@ -3066,6 +3066,62 @@ expect "spec --no-pointer leaves no file behind" "0 no yes" \
   "$rc $([ -e docs/specs/gone.md ] && echo yes || echo no) $([ -f docs/archive/specs/gone.md ] && echo yes)"
 archive on spec docs/specs/prd.md --force --apply
 expect "spec --force archives a file the config names" "0 yes" "$rc $([ -f docs/archive/specs/prd.md ] && echo yes)"
+
+# 18. Docs adoption (#46): doctor notes when the current-state docs are off (a note, never MISSING), setup
+# step 3b describes a gradual adoption path, and the planned-row parser follows CommonMark fences.
+awork="$work/adopt"
+git init -q --bare "$awork/origin.git"
+git clone -q "$awork/origin.git" "$awork/project" 2>/dev/null
+cd "$awork/project" || exit 1
+mkdir -p docs
+printf '# Features\n' >docs/features.md
+printf '# Project\n' >CLAUDE.md
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+# adoctor NAME DOCS_MEMBERS: doctor's output with a config holding a docs block of these members (none if empty).
+adoctor() {
+  printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]%s}\n' \
+    "${2:+, \"docs\": {$2}}" >"$awork/$1.json"
+  DEV_LOOP_HOME="$awork/home" DEV_LOOP_CONFIG="$awork/$1.json" "$plugin/scripts/doctor.sh" 2>&1
+}
+docs_off_note="note    current-state docs off: no docs check, no doc audit, no planned list; adopt them with the setup skill's step 3b"
+off_out=$(adoctor off "")
+on_out=$(adoctor on '"aspects": {"features": "docs/features.md"}')
+expect "adopt: doctor without docs prints the docs-off note" "$docs_off_note" \
+  "$(echo "$off_out" | grep -F 'current-state docs off')"
+expect "adopt: doctor with empty aspects prints the docs-off note" "$docs_off_note" \
+  "$(adoctor empty '"aspects": {}' | grep -F 'current-state docs off')"
+expect "adopt: doctor with docs prints no docs-off note" "" "$(echo "$on_out" | grep -F 'current-state docs off')"
+expect "adopt: the docs-off note is never MISSING" "" "$(echo "$off_out" | grep -E '^MISSING .*docs off')"
+expect "adopt: the docs-off note adds no problem to the doctor's verdict" "$(echo "$on_out" | tail -n 1)" \
+  "$(echo "$off_out" | tail -n 1)"
+
+# The planned-row parser uses the shared CommonMark fence helper: a ``` line inside a ~~~ block does not
+# end the fence, and an indented ``` (4 spaces) does not open one.
+printf '# Planned\n\n~~~\n```\n- Fenced (#150)\n~~~\n- Real (#7)\n\n    ```\n- After an indented line (#8)\n' \
+  >docs/planned.md
+planned_rows() { # planned_rows FILE: the ticket numbers of the planned rows dl_docs_planned_rows finds
+  DL_ROOT="$awork/project" bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/docs.sh" &&
+    dl_docs_planned_rows "$2"' _ "$plugin" "$1" | cut -f3 | paste -sd' ' -
+}
+expect "adopt: a \`\`\` line inside a ~~~ fence does not end it early" "7 8" "$(planned_rows docs/planned.md)"
+printf '# Planned\n\n````\n```\n- Fenced (#151)\n````\n- Real (#9)\n' >docs/planned.md
+expect "adopt: a fence closes only on a run at least as long" "9" "$(planned_rows docs/planned.md)"
+
+# Setup step 3b's gradual adoption path, and the README, doctor skill and CHANGELOG that describe it.
+step3b=$(awk '/^## 3b\./ {on = 1; print; next} /^## / {on = 0} on' "$plugin/skills/setup/SKILL.md")
+for phrase in "Gradual adoption" "only the Features aspect" "empty \`map\`" "docs.prd" "planned list" \
+  "docs-archive.sh spec" "docs-archive.sh journal" "--apply" "Standing decisions" "rules one aspect at a time" \
+  "docs maintenance tickets" "one split per ticket"; do
+  printf '%s\n' "$step3b" | grep -qF -- "$phrase" && pass "adopt: setup step 3b names \"$phrase\"" ||
+    fail "setup step 3b does not name \"$phrase\""
+done
+grep -qF "current-state docs off" "$plugin/README.md" && grep -qiF "gradual adoption" "$plugin/README.md" &&
+  pass "adopt: the README describes the docs-off note and the gradual adoption path" ||
+  fail "the README lacks the docs-off note or the gradual adoption path"
+grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
+  pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" && head -n 20 "$plugin/CHANGELOG.md" |
+  grep -q '^## Unreleased' && pass "adopt: CHANGELOG has an Unreleased entry for #46" || fail "no Unreleased #46 entry"
 cd "$work/project" || exit 1
 # 18. Docs maintenance (#47): the dev-loop skill's maintenance ticket on the audit's cadence, and the
 # doc-auditor's housekeeping list in its report (the auditor stays read-only).
