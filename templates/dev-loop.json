@@ -43,7 +43,8 @@
     "map": [],
     "max_lines": 1000,
     "prd": [],
-    "audit_every": 10
+    "audit_every": 10,
+    "planned_max_days": 0
   },
   "architecture": {
     "cards": "docs/architecture/",

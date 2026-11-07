@@ -37,6 +37,13 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note docs map rule <n> (...) matches no tracked file` | fix the globs (`*` also matches `/`), or drop the rule |
 | `MISSING docs.prd: <path> does not exist` | fix the path in `docs.prd`, or drop a PRD that was archived |
 | `MISSING docs.audit_every: ...` | a positive number of merges (default 10) |
+| `MISSING docs.planned_max_days: ...` | a whole number of days, or `0` (or no key) to keep the age check off |
+| `note planned row #<n>: ticket closed, move it to Features` | move the entry to Features (it was built) |
+| `note planned row #<n>: ticket closed as not planned, remove the row` | remove the row; the PRD keeps the intent |
+| `note planned row #<n>: open <d> days with no branch ...` | close the ticket as not planned and remove the row, or slice it now |
+| `note planned row #<n>: no such ticket` | link the row's real ticket (an issue, not a PR) |
+| `note planned row at <file>:<line> has no ticket number` | open its ticket and link it, or move the item to the PRD |
+| `note planned rows not checked` | `gh auth login` (the user), then run the doctor again |
 | `MISSING doc audit marker ...` | write one UTC time to it: `date -u +%Y-%m-%dT%H:%M:%SZ >"$(paths.sh doc-audit)"` |
 | `note doc audit due` | run the `doc-auditor` (the `dev-loop` skill's section 7a), then record the audit as the note says |
 | `MISSING architecture: <card>: ...` | fix the card's header (see `templates/COMPONENT.md`) |
