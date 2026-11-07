@@ -3314,7 +3314,9 @@ mstrict "" "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git
   "$mroot/scripts/as-role.sh implementer git push origin HEAD:main" "$mroot/scripts/heavy.sh gh release create v1" \
   "$mroot/scripts/heavy.sh git push origin HEAD:refs/heads/main" "$mroot/scripts/cleanup.sh --apply --include closed" \
   "git worktree remove --force ../p-54" "git worktree remove -f ../p-54" "git worktree remove -f -f ../p-54" \
-  "git -C . worktree remove --force ../p-54"
+  "git -C . worktree remove --force ../p-54" "git rebase --exec 'make test' origin/main" "git rebase -x 'rm -rf x' main" \
+  "git -C . rebase --exec=true main" "git fetch --upload-pack='touch x' origin" "git pull --upload-pack=x origin" \
+  "git -c core.sshCommand=x fetch origin" "git -c protocol.ext.allow=always pull origin"
 for cmd in "git push origin v1.0" "git push -u origin feat/1-a" "git push -u origin feat/1-a main" \
   "$mroot/scripts/heavy.sh rm -rf build" "$mroot/scripts/as-role.sh orchestrator gh api -X DELETE x"; do
   decision=$(mdecide "$cmd")
