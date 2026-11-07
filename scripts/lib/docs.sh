@@ -93,13 +93,13 @@ dl_docs_days_between() {
 }
 
 # dl_docs_planned_rows FILE...: the rows of the planned list, one "<file>\t<line>\t<ticket>\t<text>" each
-# (ticket empty when the row has no #n). A row is a list item or a table body row outside code blocks
-# (a rule like * * * is not one); in a file with a heading whose text starts with the word "Planned", only
-# the rows of that section count.
+# (ticket empty when the row has no #n). A row is a list item or a table body row outside code fences
+# (CommonMark, DL_DOCS_FENCE_AWK; a rule like * * * is not one); in a file with a heading whose text starts
+# with the word "Planned", only the rows of that section count.
 dl_docs_planned_rows() {
   local file
   for file in "$@"; do
-    awk -v file="$file" '
+    awk -v file="$file" "$DL_DOCS_FENCE_AWK"'
       # ticket: the first #n in s that is not part of a word, a path, an entity or an anchor like #2-scope.
       function ticket(s,   rest, after) {
         rest = " " s
@@ -110,8 +110,7 @@ dl_docs_planned_rows() {
         }
         return ""
       }
-      /^[ \t]*(```|~~~)/ { fence = !fence; next }
-      fence { next }
+      in_fence($0) { next }
       /^#+[ \t]/ {
         match($0, /^#+/)
         if (section && RLENGTH <= level) section = 0

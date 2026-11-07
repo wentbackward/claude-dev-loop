@@ -912,7 +912,8 @@ expect "doctor without docs prints no docs lines" 0 \
   "$(DEV_LOOP_CONFIG="$work/nodocs.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs aspect\|docs map\|max_lines")"
 expect "the template's empty docs block keeps the docs off" "2 0" \
   "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/docs-check.sh" "$c0" HEAD >/dev/null 2>&1
-    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "docs ")"
+    echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 |
+    grep -v "current-state docs off" | grep -c "docs ")"
 
 # 14. Architecture: component cards, arch-check.sh, the baseline ratchet in the gate and doctor (all only
 # with "architecture" configured). The edge list comes from a fake command: tools/edges.sh prints edges.txt.
@@ -1588,12 +1589,12 @@ audit_doctor "$work/audit-default.json" | grep -E "docs audit +3 merges" | grep 
 printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}], "docs": {"prd": ["docs/specs/prd.md"], "audit_every": 1}}\n' \
   >"$work/audit-prdonly.json"
 expect "without docs aspects doctor prints no audit or PRD lines" 0 \
-  "$(audit_doctor "$work/audit-prdonly.json" | grep -c "docs audit\|docs prd\|doc audit")"
+  "$(audit_doctor "$work/audit-prdonly.json" | grep -v "current-state docs off" | grep -c "docs audit\|docs prd\|doc audit")"
 printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "./check.sh"}]}\n' >"$work/audit-nodocs.json"
 expect "without docs doctor prints no audit or PRD lines" 0 \
-  "$(audit_doctor "$work/audit-nodocs.json" | grep -c "docs audit\|docs prd\|doc audit")"
+  "$(audit_doctor "$work/audit-nodocs.json" | grep -v "current-state docs off" | grep -c "docs audit\|docs prd\|doc audit")"
 expect "the template's docs block keeps the audit off" 0 \
-  "$(audit_doctor "$plugin/templates/dev-loop.json" | grep -c "docs ")"
+  "$(audit_doctor "$plugin/templates/dev-loop.json" | grep -v "current-state docs off" | grep -c "docs ")"
 expect "the template lists docs.prd, docs.audit_every and the doc-auditor's model" "[] 10 sonnet" \
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"].get("doc-auditor"))' \
