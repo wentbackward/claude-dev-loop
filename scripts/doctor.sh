@@ -16,10 +16,10 @@ optional() { echo "note    $*"; }
 # shellcheck source=lib/docs.sh
 . "$scripts_dir/lib/docs.sh"
 
-# doctor_docs: print the current-state docs config; report missing paths, files over docs.max_lines and
-# map rules that match no tracked file.
+# doctor_docs: print the current-state docs config; report missing paths, files over docs.max_lines,
+# planned rows that need care (docs.planned, docs.planned_max_days) and map rules that match no tracked file.
 doctor_docs() {
-  local name path max file lines i count names tracked
+  local name path max file lines i count names tracked days note
   max=$(cfg docs.max_lines 1000)
   case $max in "" | *[!0-9]* | 0) missing "docs.max_lines: \"$max\" is not a positive number"; max=1000 ;; esac
   while IFS=$'\t' read -r name path; do
@@ -36,9 +36,15 @@ doctor_docs() {
     done < <(find "$DL_ROOT/$path" -type f ! -path '*/.git/*' | LC_ALL=C sort)
   done < <(dl_docs_aspects)
   path=$(cfg docs.planned "")
+  days=$(cfg docs.planned_max_days "")
+  case $days in "" | 0) days="" ;; *[!0-9]*) missing "docs.planned_max_days: \"$days\" is not a positive number"; days="" ;; esac
   if [ -n "$path" ]; then
     echo "        docs planned  $path"
-    [ -e "$DL_ROOT/$path" ] || missing "docs.planned: $path does not exist"
+    if [ -e "$DL_ROOT/$path" ]; then
+      while IFS= read -r note; do optional "$note"; done < <(dl_docs_planned_notes "$path" "$days")
+    else
+      missing "docs.planned: $path does not exist"
+    fi
   fi
   echo "        docs budget   max_lines $max"
   doctor_prd
