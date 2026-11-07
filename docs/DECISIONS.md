@@ -643,7 +643,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   as before). The squash merge of a head that contains the base is that head's tree, so the merged tree is
   the gated tree. The train file gets a fifth field, the gated head, once the branch moved, so a re-run
   (after exit 9 or 7) finds the pushed head up to date and merges it without another push, and the
-  ledger's `source_head` and the local-branch deletion keep using the gated head.
+  ledger's `source_head` and the local-branch deletion keep using the gated head. A sixth field records
+  the merge commit before its push; a re-run adopts the remote branch's head as the pushed one only when it
+  equals that recorded commit (otherwise the branch changed since the gate: exit 6).
 - **Reason:** the smallest change that never force-pushes: the PR, its number, its review thread and the
   notes stay; no new branch names, no superseded PR to close, nothing extra for `cleanup.sh`. The ledger
   accepts both the gated head and the pushed one, so the original branch is classified `merged`. In
