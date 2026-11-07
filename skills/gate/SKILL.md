@@ -149,7 +149,9 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   issue for a test that is genuinely flaky.
 - `TRAIN rebase conflict at <branch>` (exit 3): drop that branch, gate the others, and have its implementer
   rebase it onto the new base after they merge (`git rebase --onto <remote>/<base> <old base> <branch>`
-  when it was stacked).
+  when it was stacked). Never force-push it: publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh
+  <branch>`, which pushes `<branch>-v2` (then `-v3`, ...) and carries the notes file over; review and
+  gate that new name. The old branch is left alone until `cleanup.sh` removes it as superseded.
 - Exit 2: configuration problem; the message names it (often: no `checks` in `.dev-loop.json`).
 
 The gate runs in its own worktree (`gate_worktree`, default `../<repo>-gate`), detached, so it never

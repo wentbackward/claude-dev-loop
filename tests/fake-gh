@@ -18,7 +18,8 @@ case "${1:-} ${2:-}" in
     case "${5:-}" in
       state) cat "$dir/$(key "$branch").state" ;;
       reviewDecision) if [ -f "$dir/$(key "$branch").approved" ]; then echo APPROVED; else echo REVIEW_REQUIRED; fi ;;
-      number) cat "$dir/$(key "$branch").number" ;;
+      number) [ "${FAKE_GH_FAIL_NUMBER:-}" != 1 ] || exit 1; cat "$dir/$(key "$branch").number" ;;
+      headRefOid) cat "$dir/$(key "$branch").head" ;;
       mergeCommit) cat "$dir/$(key "$branch").merge" 2>/dev/null ;;
     esac
     ;;
@@ -62,6 +63,13 @@ case "${1:-} ${2:-}" in
     [ "$(cat "$dir/$(key "$branch").author" 2>/dev/null)" != "$who" ] ||
       { echo "fake gh: cannot approve your own pull request" >&2; exit 1; }
     case " $* " in *" --approve "*) echo "$who" >"$dir/$(key "$branch").approved" ;; esac
+    ;;
+  "pr close")
+    branch=$3
+    [ -f "$dir/$(key "$branch").state" ] || exit 1
+    comment=$(printf '%s\n' "$@" | grep -A1 -- --comment | tail -1)
+    printf '%s\n' "$comment" >"$dir/$(key "$branch").comment"
+    echo CLOSED >"$dir/$(key "$branch").state"
     ;;
   "pr merge")
     branch=$3

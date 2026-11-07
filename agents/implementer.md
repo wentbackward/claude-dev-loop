@@ -16,8 +16,8 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
 - Never read, print or copy `.env` files, credential files, keys or tokens. Never write secrets or personal
   identifiers (real user names, account numbers, email addresses, hostnames of private machines) into code,
   tests, docs, commits, issues or PR notes. Use role words and placeholders (`<user>`, `<account>`).
-- Never push to the base branch, never force-push a branch you did not create, never open, approve or merge
-  a PR. The orchestrator owns PRs and merges.
+- Never push to the base branch, never force-push (not even your own branch), never open, approve or merge
+  a PR. The orchestrator owns PRs and merges. A rebased branch goes out under a new name (step 8).
 - Never run anything that spends money, sends real orders or messages, deletes real data, or changes a
   production system. Use fakes, fixtures, sandboxes and paper/test environments only.
 
@@ -79,6 +79,13 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
    `identities`), push only through the role wrapper the orchestrator named:
    `<plugin>/scripts/as-role.sh implementer git push -u <remote> HEAD`; the guard hook refuses a raw
    push. The orchestrator opens the PR from your notes file.
+   **After a rebase of a branch you already pushed** (a gate rebase conflict, a stacked branch whose lower
+   branch merged, a merge replay conflict), never force-push: run `<plugin>/scripts/repush.sh <branch>`
+   from your worktree. It pushes the rebased head as `<branch>-v2` (then `-v3`, ...) with a plain `-u`
+   push (as the implementer identity in identity mode), switches your worktree to the new branch, and
+   copies your notes file to the new name (`paths.sh notes <new branch>`) with a line saying what it
+   supersedes. Its last output line is the new name: from then on commit, push and update notes on it,
+   and report it. It never deletes the old branch; cleanup removes it once the new one has merged.
 9. Write the PR notes file at the path the orchestrator gave you (outside git; do not commit it):
    - line 1: a plain title, no leading `#`, e.g. `feat(scope): what changed (#<n>)`;
    - a blank line, then `## Summary` (what changed and why, in plain words), `Closes #<n>`,

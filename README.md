@@ -57,7 +57,8 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 4. **Batch gate.** `gate-train.sh b1 b2 ...` stacks the approved branches, in merge order, on the latest
    base in a separate gate worktree. It then runs the configured checks once on the top of the stack. A red
    train is never merged, not even for an apparent flake: re-run it, then bisect. A branch that conflicts
-   drops out of the train and is rebased after the others merge. The gate reads its rules from the main
+   drops out of the train and is rebased after the others merge, then published as `<branch>-v2` with
+   `repush.sh` (the loop never force-pushes). The gate reads its rules from the main
    checkout's `.dev-loop.json`, so a branch that changes that file in any way needs a reason under
    `## Config` in its notes: every key the plugin reads runs, routes or deletes something (`checks`,
    `deploy`, `format`, `heavy.clean_temp`, `notes_dir`, `remote`, ...), so there is no list of harmless
@@ -106,6 +107,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
 | script | `permissions.sh` | merges the loop's permission rules into the project's settings (dry run by default; see Permission modes) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
+| script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
 | hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
@@ -169,11 +171,31 @@ then the issue its name points at (`<type>/<n>-...`):
 |---|---|---|
 | merged | in the ledger or a merged PR at this tip (or a replayed copy with the same changes); a local loop branch the base contains | deleted |
 | helper | local `train-*`/`replay-*` refs of loop branches outside a live train, local agent worktree branches without own commits | deleted |
+| superseded | a later version (`<branch>-vN`, `repush.sh`) merged and its notes record this tip (``Supersedes `<branch>` at <sha>``); without a record or after new commits: kept until deleted by hand | deleted |
 | closed | PR closed unmerged at this tip, or its issue closed as not planned | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
 | stale | no PR, no open issue, idle for `cleanup.stale_days` (remote: loop branches only) | with `--include stale`; automatic with `"factory": "dark"` |
 | keep | open PR or issue, checked out in a worktree, a live train, recent, moved on after its PR, or a remote branch outside the loop (`develop`, `release-*`) | never |
 
 Branches outside the loop are never judged by PRs or the ledger: locally they can only be stale, remotely they are always kept. `main`, `master`, `develop`, `trunk` and the remote's default branch are always kept. The gate deletes only `train-*` refs of loop branches.
+
+**Never a force push.** The deny rules, Claude Code's auto mode and GitHub rulesets can all refuse a
+force push, so a branch that was rebased after it was pushed (a gate rebase conflict, a merge replay
+conflict, a stacked branch whose lower branch merged) is published under a new name:
+`scripts/repush.sh [<branch>]` (default: the checked-out branch) picks the next free `<branch>-v2`,
+`-v3`, ... (free on the remote, locally and in the notes directory), pushes it with a plain `git push -u`
+(as the implementer in identity mode), switches the worktree to it, and copies the notes file with a
+``Supersedes `<branch>` at <sha> [<sha>]`` line recording the old branch's local and remote tips. It
+refuses a dirty worktree and the base branch, never deletes or moves the old branch, and prints the new
+name last. `open-pr.sh` (also run by `merge-train.sh`) closes the open PRs of the earlier versions a
+`-vN` branch supersedes (its notes name them on a `Supersedes` line, or their head is an ancestor of its
+head), with a comment pointing to the new PR, and closes nothing when it cannot read the new PR's number.
+`cleanup.sh` deletes the old branches as `superseded` once the new one has merged, each ref only while
+its tip is a recorded one, and moves their notes to `notes/merged/`. An old version without a record, or
+one that moved on since the re-push, is kept until the user deletes it by hand: `--include closed` and
+`--include stale` do not touch it. The record lives in the notes files, so once the merged version's
+archived notes are removed after `cleanup.keep_days` they no longer count as a record. The tooling takes
+`<type>/<n>-<slug>-vN` names like any other: they match the feature patterns, and the ticket is still
+`<n>`.
 
 Loop branches are the ones matching `github.feature_patterns` (default `feat/* fix/* chore/* docs/*`).
 Every deletion is conditional on the tip that was classified (`update-ref` with the old value, a push
@@ -882,7 +904,8 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
   directory, and, in identity mode, `~/.config/dev-loop/`.
 - The scripts never push to the base branch directly. They push feature branches with
-  `--force-with-lease` on the gated head, so commits pushed after the gate are never overwritten.
+  `--force-with-lease` on the gated head, so commits pushed after the gate are never overwritten. Agents
+  never force-push: a rebased branch is re-pushed as `<branch>-vN` with `repush.sh`.
 
 ## Developing the plugin
 

@@ -3408,6 +3408,241 @@ awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#54" && pass "perm:
   fail "perm: no Unreleased #54 entry"
 grep -qF 'permission rule syntax' "$plugin/docs/DECISIONS.md" && pass "perm: the decisions log records the rule syntax" ||
   fail "perm: the decisions log does not record the rule syntax"
+
+# 21. Never force-push (#53): repush.sh re-pushes a rebased branch as <branch>-vN (notes carried over, a plain
+# -u push), open-pr.sh closes the superseded PRs, the gate and merge take the new name, cleanup.sh deletes a
+# superseded branch only when a later version merged. Its own project, origin and fake GitHub.
+export FAKE_GH_DIR="$work/gh-repush"
+git init -q --bare "$work/repush.git"
+git clone -q "$work/repush.git" "$work/repush" 2>/dev/null
+cd "$work/repush" || exit 1
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]}\n' >.dev-loop.json
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+rnotes() { "$plugin/scripts/paths.sh" notes "$1"; }
+remote_tip() { git ls-remote origin "refs/heads/$1" | cut -f1; }
+rbranch() { # rbranch NAME: a branch from origin/main with one commit of its own, pushed; back on main
+  git checkout -q -B "$1" origin/main && echo "$1" >"f-${1//\//_}.txt" && git add . &&
+    git commit -q -m "feat: $1" && git push -q -u origin "$1" && git checkout -q main
+}
+repush() { # repush DIR ARGS...: run repush.sh in DIR; sets out (stdout) and rc
+  out=$(cd "$1" && shift && "$plugin/scripts/repush.sh" "$@" 2>"$work/repush.err")
+  rc=$?
+}
+pr_state() { cat "$FAKE_GH_DIR/${1//\//_}.state" 2>/dev/null; }
+rclass() { awk -F'\t' -v s="$2" -v b="$3" '$2 == s && $3 == b {print $1}' "$1"; }
+
+# A branch in its worktree, pushed with its notes; the base moves and the branch is rebased locally.
+git worktree add -q -b fix/701-thing "$work/repush-701" origin/main
+(cd "$work/repush-701" && echo a >a.txt && git add a.txt && git commit -q -m "fix: a (Refs #701)" &&
+  git push -q -u origin fix/701-thing)
+printf 'fix(x): the thing (#701)\n\n## Summary\n- a\n\nCloses #701\n' >"$(rnotes fix/701-thing)"
+old_head=$(git rev-parse fix/701-thing)
+gh pr create --head fix/701-thing --title "fix(x): the thing (#701)" --body-file /dev/null >/dev/null
+echo two >>src.txt && git commit -q -am "chore: the base moves" && git push -q origin main
+(cd "$work/repush-701" && git fetch -q origin && git rebase -q origin/main)
+rebased=$(git rev-parse fix/701-thing)
+
+echo dirty >"$work/repush-701/dirty.txt"
+repush "$work/repush-701" fix/701-thing
+[ "$rc" -ne 0 ] && pass "repush: refuses a dirty tree" || fail "repush pushed from a dirty tree"
+expect "repush: a refused run pushes nothing" "" "$(git ls-remote origin 'refs/heads/fix/701-thing-v*')"
+rm "$work/repush-701/dirty.txt"
+repush "$work/repush-701" main
+[ "$rc" -ne 0 ] && pass "repush: refuses the base branch" || fail "repush re-pushed the base branch"
+repush "$work/repush-701" fix/799-missing
+[ "$rc" -ne 0 ] && pass "repush: refuses a branch that does not exist" || fail "repush took a missing branch"
+
+repush "$work/repush-701" fix/701-thing
+expect "repush: exit 0 on a clean rebased branch" 0 "$rc"
+expect "repush: prints the new name as its last line" fix/701-thing-v2 "$(printf '%s\n' "$out" | tail -n 1)"
+expect "repush: the new name is on the remote at the rebased head" "$rebased" "$(remote_tip fix/701-thing-v2)"
+expect "repush: the old remote branch is never moved" "$old_head" "$(remote_tip fix/701-thing)"
+expect "repush: the old local branch is kept" "$rebased" "$(git rev-parse fix/701-thing)"
+expect "repush: the worktree continues on the new branch" fix/701-thing-v2 \
+  "$(git -C "$work/repush-701" rev-parse --abbrev-ref HEAD)"
+expect "repush: a plain -u push, the new branch tracks its own remote branch" origin/fix/701-thing-v2 \
+  "$(git -C "$work/repush-701" rev-parse --abbrev-ref '@{upstream}')"
+expect "repush: the notes file is carried over to the new name" "fix(x): the thing (#701)" \
+  "$(head -n 1 "$(rnotes fix/701-thing-v2)" 2>/dev/null)"
+grep -qF 'Closes #701' "$(rnotes fix/701-thing-v2)" 2>/dev/null &&
+  grep -qF "Supersedes \`fix/701-thing\` at $rebased $old_head " "$(rnotes fix/701-thing-v2)" &&
+  pass "repush: the new notes keep the ticket and record what they supersede, at its local and remote tips" ||
+  fail "repush: notes without the Supersedes record"
+[ -f "$(rnotes fix/701-thing)" ] && pass "repush: the old notes file is kept" || fail "repush removed the old notes"
+
+# The next free suffix: a version already on the remote, or a notes file of that name, is never reused.
+git push -q origin "$old_head:refs/heads/fix/701-thing-v3"
+echo stray >"$(rnotes fix/701-thing-v4)"
+echo three >>src.txt && git commit -q -am "chore: the base moves again" && git push -q origin main
+(cd "$work/repush-701" && git fetch -q origin && git rebase -q origin/main)
+repush "$work/repush-701"
+expect "repush: without a name it takes the checked-out branch and skips used suffixes" fix/701-thing-v5 \
+  "$(printf '%s\n' "$out" | tail -n 1)"
+expect "repush: an existing remote version is never overwritten" "$old_head" "$(remote_tip fix/701-thing-v3)"
+expect "repush: an existing notes file of a candidate name is never overwritten" stray "$(cat "$(rnotes fix/701-thing-v4)")"
+rm -f "$(rnotes fix/701-thing-v4)"
+grep -qF 'Supersedes `fix/701-thing-v2`' "$(rnotes fix/701-thing-v5)" 2>/dev/null &&
+  pass "repush: a second re-push supersedes the previous version" || fail "repush: v5 notes do not name v2"
+grep -nE -- '--force|push[^|]* -f( |$)|[[:space:]]\+refs/|--mirror' "$plugin/scripts/repush.sh" >/dev/null &&
+  fail "repush.sh has a forced push" || pass "repush.sh has no forced push"
+
+# The tooling takes <type>/<n>-<slug>-vN names.
+expect "names: dl_loop_branch takes a -vN name (default patterns)" yes \
+  "$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_loop_branch "$2" && echo yes' _ "$plugin" fix/701-thing-v5)"
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true"}], "github": {"feature_patterns": ["fix/*"]}}\n' \
+  >"$work/repush-patterns.json"
+expect "names: dl_loop_branch takes a -vN name (configured patterns)" yes \
+  "$(DEV_LOOP_CONFIG="$work/repush-patterns.json" bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_loop_branch "$2" && echo yes' _ "$plugin" fix/701-thing-v5)"
+expect "names: the ticket of a -vN branch without notes is its number" 701 \
+  "$(bash -c '. "$1/scripts/lib/common.sh"; dl_notes_ticket /nonexistent "$2"' _ "$plugin" fix/701-thing-v5)"
+expect "names: paths.sh notes of a -vN branch" pr-fix_701-thing-v5.md "$(basename "$(rnotes fix/701-thing-v5)")"
+
+# open-pr.sh opens the new PR and closes the open PRs of the versions it supersedes, pointing to it.
+gh pr create --head fix/701-thing-v2 --title "v2" --body-file /dev/null >/dev/null
+"$plugin/scripts/open-pr.sh" fix/701-thing-v5 >/dev/null
+expect "open-pr: the new version's PR is open" OPEN "$(pr_state fix/701-thing-v5)"
+expect "open-pr: the superseded PRs are closed" "CLOSED CLOSED" "$(pr_state fix/701-thing) $(pr_state fix/701-thing-v2)"
+new_pr=$(cat "$FAKE_GH_DIR/fix_701-thing-v5.number")
+grep -qF "#$new_pr" "$FAKE_GH_DIR/fix_701-thing.comment" 2>/dev/null &&
+  grep -qF "fix/701-thing-v5" "$FAKE_GH_DIR/fix_701-thing.comment" &&
+  pass "open-pr: the closed PR's comment points to the new PR" || fail "open-pr: no comment pointing to the new PR"
+gh pr create --head fix/702-other --title "other" --body-file /dev/null >/dev/null 2>&1
+"$plugin/scripts/open-pr.sh" fix/702-other >/dev/null
+expect "open-pr: a branch without a version suffix closes nothing" OPEN "$(pr_state fix/702-other)"
+rm -f "$FAKE_GH_DIR"/fix_702-other.*
+# A name that only looks like a version closes nothing: neither a Supersedes line nor ancestry links it.
+rbranch feat/708-api && gh pr create --head feat/708-api --title api --body-file /dev/null >/dev/null
+rbranch feat/708-api-v2 && printf 'feat: api v2 (#708)\n\nCloses #708\n' >"$(rnotes feat/708-api-v2)"
+"$plugin/scripts/open-pr.sh" feat/708-api-v2 >/dev/null 2>"$work/openpr.err"
+expect "open-pr: an unrelated PR whose name looks like an earlier version stays open" OPEN "$(pr_state feat/708-api)"
+grep -qF "left the PR of feat/708-api open" "$work/openpr.err" && pass "open-pr: says why it left that PR open" ||
+  fail "open-pr: no warning for the PR it left open"
+# Ancestry alone is enough: the new version builds on the old PR's head.
+rbranch feat/710-grow && gh pr create --head feat/710-grow --title grow --body-file /dev/null >/dev/null
+git checkout -q -B feat/710-grow-v2 feat/710-grow && echo more >>f-feat_710-grow.txt && git commit -q -am "feat: more" &&
+  git push -q -u origin feat/710-grow-v2 && git checkout -q main
+printf 'feat: grow (#710)\n\nCloses #710\n' >"$(rnotes feat/710-grow-v2)"
+"$plugin/scripts/open-pr.sh" feat/710-grow-v2 >/dev/null 2>&1
+expect "open-pr: an earlier version whose head the new one contains is closed" CLOSED "$(pr_state feat/710-grow)"
+# Without the new PR's number nothing is closed, with a warning.
+rbranch feat/709-n && gh pr create --head feat/709-n --title n --body-file /dev/null >/dev/null
+rbranch feat/709-n-v2 && printf 'feat: n (#709)\n\nSupersedes `feat/709-n`\n' >"$(rnotes feat/709-n-v2)"
+FAKE_GH_FAIL_NUMBER=1 "$plugin/scripts/open-pr.sh" feat/709-n-v2 >/dev/null 2>"$work/openpr.err"
+expect "open-pr: without the new PR's number no superseded PR is closed" "OPEN OPEN" \
+  "$(pr_state feat/709-n) $(pr_state feat/709-n-v2)"
+grep -qF "could not read the PR number of feat/709-n-v2" "$work/openpr.err" &&
+  pass "open-pr: warns when it cannot read the new PR's number" || fail "open-pr: no warning without the PR number"
+
+# repush.sh warns visibly when the notes copy fails; the push stands.
+git worktree add -q -b fix/711-ro "$work/repush-711" origin/main
+(cd "$work/repush-711" && echo r >r.txt && git add r.txt && git commit -q -m "fix: r" && git push -q -u origin fix/711-ro)
+printf 'fix: ro (#711)\n' >"$(rnotes fix/711-ro)"
+chmod a-w "$("$plugin/scripts/paths.sh" notes-dir)"
+repush "$work/repush-711" fix/711-ro
+chmod u+w "$("$plugin/scripts/paths.sh" notes-dir)"
+expect "repush: a failed notes copy does not undo the push" "0 fix/711-ro-v2" "$rc $(remote_tip fix/711-ro-v2 | sed 's/.\{1,\}/fix\/711-ro-v2/')"
+grep -qF "notes file could not be written" "$work/repush.err" &&
+  pass "repush: warns visibly when the notes copy fails" || fail "repush: no warning for a failed notes copy"
+git worktree remove --force "$work/repush-711"
+
+# The gate and merge take the new name; merge-train opens the PR from the new branch's notes.
+out=$("$plugin/scripts/gate-train.sh" fix/701-thing-v5 2>&1)
+expect "gate: a -vN branch gates green" 0 "$?"
+out=$("$plugin/scripts/merge-train.sh" fix/701-thing-v5 2>&1)
+expect "merge: a -vN branch merges" 0 "$?"
+expect "merge: the -vN PR is merged" MERGED "$(pr_state fix/701-thing-v5)"
+git fetch -q --prune origin
+
+# cleanup.sh: superseded only when a later version merged (ledger or merged PR); the dangerous directions.
+git push -q origin "$old_head:refs/heads/fix/701-thing-v6"            # a later version, not merged
+rbranch feat/702-other && rbranch feat/702-other-v2                    # successor with an open PR
+gh pr create --head feat/702-other-v2 --title v2 --body-file /dev/null >/dev/null
+printf 'feat: other (#702)\n\nCloses #702\n' >"$(rnotes feat/702-other)"
+rbranch feat/703-gone && rbranch feat/703-gone-v2                      # successor closed unmerged
+gh pr create --head feat/703-gone-v2 --title v2 --body-file /dev/null >/dev/null && echo CLOSED >"$FAKE_GH_DIR/feat_703-gone-v2.state"
+rbranch feat/704-d && rbranch feat/704-d-v2                            # successor merged by PR only
+printf 'feat: d (#704)\n\nSupersedes `feat/704-d` at %s (re-pushed)\n' "$(git rev-parse feat/704-d)" >"$(rnotes feat/704-d-v2)"
+rbranch feat/712-api && rbranch feat/712-api-v2                        # same-name successor, no record
+gh pr create --head feat/712-api-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/712-api-v2 --squash >/dev/null
+rbranch feat/713-m && rbranch feat/713-m-v2                            # the old branch moved on (locally)
+printf 'feat: m (#713)\n\nSupersedes `feat/713-m` at %s\n' "$(git rev-parse feat/713-m)" >"$(rnotes feat/713-m-v2)"
+gh pr create --head feat/713-m-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/713-m-v2 --squash >/dev/null
+git branch -q feat/714-c origin/main && rbranch feat/714-c-v2          # contained in the base, no record
+gh pr create --head feat/714-c-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/714-c-v2 --squash >/dev/null
+git checkout -q feat/713-m && echo later >>f-feat_713-m.txt && git commit -q -am "feat: after the re-push" && git checkout -q main
+gh pr create --head feat/704-d-v2 --title v2 --body-file /dev/null >/dev/null && gh pr merge feat/704-d-v2 --squash >/dev/null
+rbranch feat/706-e && gh pr create --head feat/706-e --title e --body-file /dev/null >/dev/null
+rbranch feat/706-e-v2 && gh pr create --head feat/706-e-v2 --title v2 --body-file /dev/null >/dev/null &&
+  gh pr merge feat/706-e-v2 --squash >/dev/null                        # merged, but the old PR is still open
+rbranch feat/707-api && rbranch feat/7070-api-v2                       # another ticket's name is no successor
+gh pr create --head feat/7070-api-v2 --title x --body-file /dev/null >/dev/null && gh pr merge feat/7070-api-v2 --squash >/dev/null
+rbranch feat/705-plan-v2 && printf '705\tOPEN\t\n' >"$FAKE_GH_DIR/issues.tsv"
+git fetch -q origin
+
+out=$("$plugin/scripts/cleanup.sh" 2>&1)
+report=$(echo "$out" | sed -n 's/^report: //p')
+for row in "superseded local fix/701-thing" "superseded remote fix/701-thing" "superseded local fix/701-thing-v2" \
+  "superseded remote fix/701-thing-v2" "keep remote fix/701-thing-v3" "keep remote fix/701-thing-v6" \
+  "keep local feat/702-other" "keep remote feat/702-other" "keep local feat/703-gone" "superseded local feat/704-d" \
+  "superseded remote feat/704-d" "keep local feat/706-e" "keep local feat/707-api" "keep local feat/705-plan-v2" \
+  "keep local feat/712-api" "keep remote feat/712-api" "keep local feat/713-m" "superseded remote feat/713-m" "merged local feat/714-c"; do
+  read -r want scope name <<<"$row"
+  expect "cleanup: $scope $name is $want" "$want" "$(rclass "$report" "$scope" "$name")"
+done
+grep -q "^superseded"$'\t'"local"$'\t'"fix/701-thing"$'\t'".*fix/701-thing-v5" "$report" &&
+  pass "cleanup: a superseded branch names the version that merged" || fail "cleanup: no successor in the reason"
+grep -q "feat/712-api"$'\t'".*no Supersedes record" "$report" &&
+  pass "cleanup: a same-name later version without a Supersedes record keeps the branch, and says why" ||
+  fail "cleanup: no 'no Supersedes record' reason"
+grep -q "^keep"$'\t'"local"$'\t'"feat/713-m"$'\t'".*moved on since the re-push" "$report" &&
+  pass "cleanup: a branch with commits after the re-push is kept, and says why" ||
+  fail "cleanup: no 'moved on since the re-push' reason"
+grep -q "feat/705-plan-v2.*issue #705 is open" "$report" &&
+  pass "cleanup: the ticket number of a -vN name is found" || fail "cleanup: no ticket for feat/705-plan-v2"
+echo "$out" | grep -q "^superseded local  *fix/701-thing " &&
+  pass "cleanup: the dry run lists the superseded branches" || fail "cleanup: the dry run does not list them"
+expect "cleanup: the dry run deletes nothing" "$old_head" "$(remote_tip fix/701-thing)"
+
+out=$("$plugin/scripts/cleanup.sh" --apply 2>&1)
+echo "$out"
+expect "cleanup --apply: superseded branches are deleted locally" "" \
+  "$(git branch --list fix/701-thing fix/701-thing-v2 feat/704-d)"
+expect "cleanup --apply: superseded branches are deleted on the remote" "" \
+  "$(git ls-remote origin refs/heads/fix/701-thing refs/heads/fix/701-thing-v2 refs/heads/feat/704-d)"
+expect "cleanup --apply: unrecorded and moved-on originals are kept" "feat/712-api feat/713-m" \
+  "$(git branch --list --format='%(refname:short)' feat/712-api feat/713-m | paste -sd' ' -)"
+expect "cleanup --apply: a same-name branch without a record is kept on the remote" "$old_head" "$(remote_tip fix/701-thing-v3)"
+expect "cleanup --apply: an unmerged successor keeps the original, locally and remotely" "feat/702-other feat/702-other" \
+  "$(git branch --list --format='%(refname:short)' feat/702-other) $(git ls-remote origin refs/heads/feat/702-other | sed 's:.*refs/heads/::')"
+expect "cleanup --apply: originals of unmerged, open or foreign successors are kept" \
+  "feat/703-gone feat/706-e feat/707-api" \
+  "$(git branch --list --format='%(refname:short)' feat/703-gone feat/706-e feat/707-api | paste -sd' ' -)"
+expect "cleanup --apply: a later unmerged version is kept" "$old_head" "$(remote_tip fix/701-thing-v6)"
+bundle=$(echo "$out" | sed -n 's/^archived [0-9]* tips to //p')
+git fetch -q "$bundle" "refs/remotes/origin/fix/701-thing:refs/heads/restored701" 2>/dev/null &&
+  expect "cleanup --apply: the bundle restores a superseded branch" "$old_head" "$(git rev-parse restored701)" ||
+  fail "cleanup: the bundle lacks the superseded remote branch"
+git branch -q -D restored701 2>/dev/null
+[ -f "$("$plugin/scripts/paths.sh" notes-dir)/merged/pr-fix_701-thing.md" ] &&
+  pass "cleanup --apply: the notes of a deleted superseded branch move to notes/merged" ||
+  fail "cleanup: the superseded notes file was not archived"
+[ -f "$(rnotes feat/702-other)" ] && pass "cleanup --apply: the notes of a kept original stay" || fail "cleanup moved kept notes"
+
+# No skill or agent text tells anyone to force-push; the ones that rebase name repush.sh.
+forced=$(grep -rnE -- 'push --force|push -f|--force-with-lease|force-push|force push' "$plugin/skills" "$plugin/agents" |
+  grep -viE 'never')
+expect "docs: no skill or agent text tells anyone to force-push" "" "$forced"
+for file in skills/dev-loop/SKILL.md skills/gate/SKILL.md skills/merge/SKILL.md agents/implementer.md README.md; do
+  grep -qF 'repush.sh' "$plugin/$file" && pass "docs: $file names repush.sh" || fail "$file does not name repush.sh"
+done
+grep -qF 'superseded' "$plugin/README.md" && pass "docs: the README describes the superseded class" ||
+  fail "the README lacks the superseded class"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#53" && pass "docs: CHANGELOG has an Unreleased entry for #53" ||
+  fail "no Unreleased #53 entry"
+grep -qF 'repush.sh' "$plugin/docs/DECISIONS.md" && pass "docs: DECISIONS records the re-push naming" ||
+  fail "DECISIONS has no #53 entry"
+export FAKE_GH_DIR="$work/gh"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

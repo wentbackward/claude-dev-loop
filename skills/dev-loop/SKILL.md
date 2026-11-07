@@ -150,6 +150,8 @@ Implement ticket #<n>: <title>.
 - Ports for any server you start: <range outside the gate's heavy.port_base..+N>.
 - Commits: small Conventional Commits, each "Refs #<n>". Record open spec questions in docs/DECISIONS.md.
 - Push the branch when green: <git push -u <remote> HEAD | <plugin>/scripts/as-role.sh implementer git push -u <remote> HEAD> (from the worktree; exactly this form, the project allows only it).
+  Never force-push: after a rebase of a pushed branch, publish it with <plugin>/scripts/repush.sh <branch>
+  (it pushes <branch>-vN and carries the notes over) and report the new name.
   Never open, approve or merge PRs. Never read .env or credential files. Never write secrets or personal
   identifiers anywhere.
 - Report: branch, head commit, tests added per criterion, commands run with results, anything open.
@@ -161,7 +163,8 @@ The state of a ticket lives on disk and GitHub (the branch, the notes file, the 
 context. Agents are disposable:
 
 - **Implementer: one per ticket, for that ticket only.** Resume it (SendMessage to its agent id) for its
-  own review fixes, gate failures and rebases. Never give it another ticket, and never resume it after its
+  own review fixes, gate failures and rebases (a rebased branch comes back as `<branch>-vN`, see
+  section 5). Never give it another ticket, and never resume it after its
   ticket has merged. Start a fresh implementer for the same ticket, with the branch, the notes file and the
   latest must-fix list, after 3 review rounds, or when it reports that its context was compacted or it has
   lost track of the work.
@@ -221,13 +224,20 @@ the machine-wide heavy-job queue.
   found; send its log excerpt to its implementer; gate and merge the others without it. Open an issue for
   a real flake.
 - **Rebase conflict at <branch>**: drop that branch from the train, gate and merge the rest, then have its
-  implementer rebase it on the new base and re-gate it.
+  implementer rebase it on the new base and publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh
+  <branch>`. Never force-push: a rebased branch is pushed under a new name, `<branch>-v2` (then `-v3`,
+  ...), with its notes file carried over. Review the change (`git range-diff`) and gate the new name;
+  from then on the new name is the ticket's branch. The old branch stays until `cleanup.sh` removes it as
+  superseded, once the new one has merged.
 
 ## 6. Merge in order
 
 Use the `merge` skill: `${CLAUDE_PLUGIN_ROOT}/scripts/merge-train.sh <same branches, same order>`. It
 replays each branch on the current base, checks the tree is exactly the gated one, opens the PR from the
 notes file if missing, squash-merges and deletes the branch. If the base moved in between (exit 4), re-gate.
+A replay conflict (exit 3): the implementer rebases and re-pushes with `repush.sh` as in section 5, then
+review and gate the new `<branch>-vN`. When the PR of a `-vN` branch opens (`open-pr.sh`, also from
+merge-train), the PRs of the versions it supersedes are closed with a comment pointing to it.
 In identity mode it posts the required `dev-loop/gate` status and merges as the gate identity; exit 9
 means the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and
 approve again, then re-run merge-train with the remaining branches.
@@ -239,10 +249,13 @@ list runs low, slice (section 1a).
 With `architecture`, when `doctor.sh` notes `architect due` (every `architecture.cadence` merges, or a
 signal over its threshold), run the architecture review (section 7b).
 A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
-user's OK.
+user's OK. Branches replaced by a merged `-vN` version are classified `superseded` and go with a plain
+`cleanup.sh --apply`.
 
-Stacked branches: after the lower branch merges, rebase the upper one with
-`git rebase --onto <remote>/<base> <old lower head> <upper>` so it never carries foreign commits.
+Stacked branches: after the lower branch merges, have the upper one's implementer rebase it with
+`git rebase --onto <remote>/<base> <old lower head> <upper>` so it never carries foreign commits, then
+publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh <upper>` (never a force push) and gate the
+`<upper>-vN` it reports.
 
 ## 7. Run, verify, deploy
 
