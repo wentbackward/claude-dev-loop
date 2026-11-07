@@ -2361,6 +2361,14 @@ printf '%s\n' "$out" | grep -qxF "scenarios sealed: 2 judged, 1 unsatisfied" && 
 printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "alert|login|SEALED-MISSING" &&
   fail "a sealed scenario is named or described" || pass "sealed scenarios are never named or described"
 no_leak "sealed"
+printf '%s\n' "$out" | grep -qE '^scenarios red: 2 judged, 0 required unsatisfied, ' &&
+  pass "the red line counts no sealed required failure (#40)" || fail "the red line counts a sealed required failure"
+jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge": "'"$work"'/fake-judge.sh", "heavy": false, "sealed": 1, "min_satisfaction": 0.5}'
+expect "a sealed required failure alone, mean above min_satisfaction, still makes the train red (#40)" "1 TRAIN RED" \
+  "$rc $(printf '%s\n' "$out" | tail -n 1)"
+printf '%s\n' "$out" | grep -qxF "scenarios red: 2 judged, 0 required unsatisfied, mean 0.65" &&
+  printf '%s\n' "$out" | grep -qxF "scenarios sealed: 2 judged, 1 unsatisfied" &&
+  pass "the sealed failure stays in its own count, out of the required count (#40)" || fail "sealed-only red output"
 expect "the sealed share is chosen by id: none at 0, all at 1, the same every time" "0 20 yes" \
   "$(scenlib 'n0=0 n1=0; for i in $(seq 20); do dl_scenario_sealed "s$i" 0 && n0=$((n0+1)); dl_scenario_sealed "s$i" 1 && n1=$((n1+1)); done
 same=yes; for i in $(seq 20); do [ "$(dl_scenario_sealed "s$i" 0.5 && echo y)" = "$(dl_scenario_sealed "s$i" 0.5 && echo y)" ] || same=no; done
@@ -2377,6 +2385,9 @@ jgate '"checks": ['"$done_check"']' '"scenarios": {"dir": "'"$jstore"'", "judge"
 printf '%s\n' "$out" | grep -qxF "scenario $open_id unsatisfied (0.1, required): the open one fails" &&
   printf '%s\n' "$out" | grep -qxF "scenarios sealed: 1 judged, 1 unsatisfied" &&
   pass "a mixed store names the open failure and counts the sealed one" || fail "mixed sealed output"
+printf '%s\n' "$out" | grep -qE '^scenarios red: 2 judged, 1 required unsatisfied, ' &&
+  pass "the red line of a mixed store counts only the non-sealed required failure (#40)" ||
+  fail "the red line of a mixed store counts the sealed required failure"
 printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "$sealed_id|SEALED-MISSING" &&
   fail "the sealed scenario of a mixed store is named" || pass "the sealed scenario of a mixed store is not named"
 printf '{"scenarios": {"dir": "%s", "sealed": 0.5}}\n' "$jstore" >"$work/judge-sealed.json"
