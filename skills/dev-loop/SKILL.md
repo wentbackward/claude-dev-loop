@@ -132,7 +132,8 @@ unless `.dev-loop.json` sets `"watchdog": false`:
 1. Record the wait: `${CLAUDE_PLUGIN_ROOT}/scripts/event.sh waiting detail="<what>"`.
 2. Schedule a fallback wake-up in `watchdog.wake_minutes` (default 25) minutes with the session's
    scheduling tool (a scheduled wake-up or a self-paced loop). If the session has none, start a
-   background command that waits that long and exits, so its end notifies you. A notification that comes
+   background command that waits that long and exits (with `run_in_background`, never a foreground
+   sleep), so its end notifies you. A notification that comes
    first (an agent report, the gate ending) is handled as usual; the fallback then only finds work moving.
 3. On waking, run `${CLAUDE_PLUGIN_ROOT}/scripts/status.sh --json` and read `verdict.state`:
    - `working` or `waiting` (something moved: a stage log grew, a commit or notes file changed, an event

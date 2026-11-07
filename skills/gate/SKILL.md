@@ -74,7 +74,7 @@ however long it runs. A heavy check waiting in `heavy.sh` for a slot is not stal
 when it gets the slot. Without `stall_minutes` nothing changes; a value that is not a positive whole
 number is off, with a warning. Pick it above the longest silence of a healthy run (a suite that prints
 nothing until it ends needs its whole run time). `DEV_LOOP_STALL_UNIT_SECONDS` (default 60) is the length
-of one such minute, for tests.
+of one such minute, for tests (anything but a positive whole number: 60, with a warning).
 
 ## The gate's own rules
 
