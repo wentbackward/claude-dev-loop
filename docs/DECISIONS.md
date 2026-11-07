@@ -495,3 +495,67 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a MISSING line (would block every project that chose to stay without docs); printing
   the note only when a `docs` folder exists (a guess about the project); replacing the one-time rebuild
   with the gradual path (more steps than a small project needs).
+
+## 2026-11-07 — Permissions (#54): the permission rule syntax, and where the plugin-script rules live
+
+- **Decision:** the loop's rules use the Claude Code permission rule syntax as documented at
+  code.claude.com/docs/en/permissions, permission-modes and settings (read on 2026-11-07, Claude Code
+  2.1.x): `Bash(<command>)`, where `*` may stand anywhere and matches any text, spaces and slashes
+  included; a trailing `:*` equals a trailing ` *`; a trailing ` *` that is the only wildcard also matches
+  the bare command and keeps a word boundary (`Bash(ls *)` matches `ls` and `ls -la`, not `lsof`). A
+  compound command (`&&`, `||`, `;`, `|`, `&`) is checked per part: every part needs an allow, a deny or
+  ask on any part applies, so `permissions.sh` writes one exact rule per part of `fast_check` and of each
+  check. Rules are checked deny, then ask, then allow, across all settings files merged; a deny anywhere
+  wins. Deny rules block and ask rules ask in every mode, `bypassPermissions` included; allow rules have no
+  effect in bypass mode. `${CLAUDE_PLUGIN_ROOT}` is not expanded in permission rules (the docs list where it
+  is substituted, and permission rules are not among them; it is not exported to Bash tool commands), and
+  `~` is documented only for Read and Edit rules. So `permissions.sh` resolves the plugin's path when it
+  runs and writes the script rules with the version directory as a wildcard
+  (`<cache>/<marketplace>/dev-loop/*/scripts/<script>.sh` and the same with ` *`), outside the plugin cache
+  the plain path. Those rules hold a machine path, so they go to `.claude/settings.local.json`, which the
+  script adds to `.gitignore`; everything else goes to the shared `.claude/settings.json`. `doctor.sh`
+  matches rules with the same semantics (`scripts/lib/permissions.sh`).
+- **Reason:** a literal `${CLAUDE_PLUGIN_ROOT}` rule would match nothing; a path with the version in it
+  goes stale on every plugin update; a rule with a leading `*` (`Bash(*/scripts/gate-train.sh *)`) would
+  also allow any command that merely names the script (`rm ... /x/scripts/gate-train.sh`). A machine path
+  in a committed file would leak the user's home directory into a public repository.
+- **Wildcards cannot exclude arguments:** `Bash(git push -u origin feat/*)` would also match
+  `git push -u origin feat/x:refs/heads/main`, `... --force` or `... :feat/b` (a delete). So the only push
+  allowed is the exact `git push -u <remote> HEAD`, and the implementer brief and the `dev-loop` skill push
+  in that form (an exact rule carries no extra argument; `repush.sh` and `merge-train.sh` push inside
+  scripts, where rules do not apply). As a second line, the template denies force pushes and asks for
+  tag, `refs/`, mirror, all, delete and base-branch pushes with patterns that match anywhere and between
+  `git` and `push` (`Bash(*git*push*--force*)` also catches `git -c a=b push --force` and
+  `git -C . push -f`). A colon refspec cannot be matched in general: a rule ending in `:*` is read as a
+  trailing ` *`, so `Bash(*git*push*:*)` would ask for every push; the script names the colon forms it
+  needs instead (`:<base>`, `:<base> *`, `:<branch pattern>`, and `refs/`). `heavy.sh` and `as-role.sh`
+  run any command they are given, so they get exact rules for the loop's uses only (`heavy.sh <project
+  command>`, `as-role.sh implementer git push -u <remote> HEAD`); other uses ask in the default mode. A deny
+  on `*git*push*--force*` or `*gh pr merge*--admin*` also refuses a command that merely contains those
+  strings (a commit message or PR body quoting one); the agent writes the message without the literal flag
+  or passes it in a file (`git commit -F`, `gh pr create --body-file`). Options that make git run a
+  command of its own ask, matched anywhere: `git rebase --exec`/`-x`, `git fetch`/`git pull`
+  `--upload-pack`, and `git -c <key>=<value>` before `fetch` or `pull`. The project's commands become
+  exact allow rules as written, so a `*` in one is a wildcard in its rule and a trailing `:*` a prefix; the
+  project's commands are trusted, and the README says so. `git diff`, `git log` and
+  `git show` with `--output=<file>`, and `git fetch +<ref>:<ref>`, stay allowed: they write only inside the
+  repository. The `Read`/`Edit` deny rules on `.env` do not stop `cat .env` through Bash; a Bash ask rule
+  on `*.env*` would also ask for `.env.example` and every path with `.env` in it, so the README states the
+  limit and `CLAUDE.md`'s rule stays the guard. Releases, tags and tag pushes ask in every mode; other
+  commands outside the repository are in no allow rule, so they ask in the default mode, the classifier
+  judges them in auto mode, and in bypass mode only the stop conditions hold them back (the issue's "still
+  ask in every mode" holds for what the rules can name).
+- **Other choices:** the merge is a script (`permissions.sh`, dry run by default) instead of a jq line in
+  the setup skill, so it is tested and doctor shares its rule list. It appends missing rules after the
+  existing ones in each list and never removes or reorders one; an invalid settings file is left untouched
+  (exit 2). The allow list adds `git add`, `git commit`, `gh issue close`, `gh pr diff` and `gh pr checks`
+  to the issue's list (the loop runs them) and leaves out `git branch`, `git checkout` and `gh pr merge`
+  (they delete or discard; merges happen inside `merge-train.sh`). `cleanup.sh` is allowed, `cleanup.sh
+  --apply` asks. `scenario-stage.sh` is not listed: the gate runs it, not the Bash tool. Doctor's checks
+  are exact-string: a broader rule the user wrote does not count as covering a loop rule (a note, never a
+  problem). Doctor tests each deny rule against a fixed set of sample loop commands plus the project's
+  commands.
+- **Alternatives:** a PreToolUse hook that approves the plugin's scripts (hook commands do expand
+  `${CLAUDE_PLUGIN_ROOT}`): more moving parts, and a hook's allow is still overridden by deny rules, so the
+  doctor check would be the same; rules on `bash <script>` (would change every command the skills print);
+  `Bash(*/scripts/*.sh *)` (allows any command that names such a path).

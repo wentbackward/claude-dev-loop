@@ -74,9 +74,10 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
 6. Self-review your diff (`git diff <remote>/<base>...HEAD`) against the acceptance criteria and CLAUDE.md:
    every criterion tested, no dead or commented-out code, no debug output, no secrets.
 7. Run your targeted tests and the fast check once more; both green.
-8. Push your branch: `git push -u <remote> <branch>`. In identity mode (`.dev-loop.json` has
+8. Push your branch from its worktree, exactly in this form (the project's allow rule is this exact
+   command): `git push -u <remote> HEAD`. In identity mode (`.dev-loop.json` has
    `identities`), push only through the role wrapper the orchestrator named:
-   `<plugin>/scripts/as-role.sh implementer git push -u <remote> <branch>`; the guard hook refuses a raw
+   `<plugin>/scripts/as-role.sh implementer git push -u <remote> HEAD`; the guard hook refuses a raw
    push. The orchestrator opens the PR from your notes file.
 9. Write the PR notes file at the path the orchestrator gave you (outside git; do not commit it):
    - line 1: a plain title, no leading `#`, e.g. `feat(scope): what changed (#<n>)`;

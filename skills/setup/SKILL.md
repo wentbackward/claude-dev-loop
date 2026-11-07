@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Bootstrap a project for the dev loop - write CLAUDE.md from the template, docs/DECISIONS.md, .dev-loop.json (check, format and gate commands), .claude/settings.json deny rules and missing Makefile targets, asking only for what cannot be inferred. Use when starting the dev loop in a new or existing repository, or when doctor.sh reports missing setup.
+description: Bootstrap a project for the dev loop - write CLAUDE.md from the template, docs/DECISIONS.md, .dev-loop.json (check, format and gate commands), the loop's permission rules in .claude/settings.json and missing Makefile targets, asking only for what cannot be inferred. Use when starting the dev loop in a new or existing repository, or when doctor.sh reports missing setup.
 ---
 
 # Set up a project for the dev loop
@@ -71,10 +71,14 @@ running system against holdout scenarios". Skip any question whose answer you al
    project's own rules.
 3. **`docs/DECISIONS.md`** from `templates/DECISIONS.md` if missing; add a first entry recording the setup
    choices you made without asking.
-4. **`.claude/settings.json`**: merge the `permissions.deny` rules of `templates/settings.json` into the
-   existing file (union, no duplicates), e.g.
-   `jq -s '.[0] * {permissions: {deny: ((.[0].permissions.deny // []) + .[1].permissions.deny | unique)}}' .claude/settings.json ${CLAUDE_PLUGIN_ROOT}/templates/settings.json`.
-   The plugin's hooks come with the plugin; do not copy them into the project.
+4. **Permissions** (`.claude/settings.json` and `.claude/settings.local.json`), after `.dev-loop.json`:
+   run `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` (a dry run that lists the missing rules), show the
+   user the list, then `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply`. It only adds rules: the
+   allow, ask and deny rules of `templates/settings.json`, the loop's one push (`git push -u <remote> HEAD`), one exact rule per
+   `fast_check` and `checks` command into `.claude/settings.json`; the plugin's scripts at this machine's
+   plugin path into `.claude/settings.local.json` (added to `.gitignore`). Run it again whenever
+   `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission modes"
+   says what each rule is for. The plugin's hooks come with the plugin; do not copy them into the project.
 5. **Makefile targets**, only the missing ones, as thin wrappers around the toolchain: `setup`, `fmt`,
    `fmt-check`, `lint`, `typecheck`, `test`, `cov`, `check`, `e2e`. For example (Python with uv):
    `fmt-check: ; uv run ruff format --check .`, `check: fmt-check lint typecheck cov`. Skip this step for
