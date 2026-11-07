@@ -56,6 +56,26 @@ check named `affected`, are a configuration error (`doctor.sh` reports them).
 A stopped or skipped check is not a result: after fixing the failure, the re-run still has to pass every
 check before the train is green.
 
+## Stall timeout (opt-in)
+
+A check that hangs (a test waiting forever, a server that never stops) keeps the train running until
+someone notices. `stall_minutes` in a check entry (and in `affected` or `scenarios`) bounds the silence,
+not the run time:
+
+```json
+{"name": "e2e", "command": "make e2e", "stall_minutes": 20}
+```
+
+The stage then runs in its own process group (also without `parallel`), and when its log has not grown
+for that many minutes the gate stops the group as `fail_fast` does (SIGTERM, SIGKILL after the grace
+period) and prints `<name> stalled: no output for <n> min (log: ...)`; the train is `TRAIN RED`, and
+with `fail_fast` the checks not started are skipped. A check whose log keeps growing is never stopped,
+however long it runs. A heavy check waiting in `heavy.sh` for a slot is not stalled: its clock starts
+when it gets the slot. Without `stall_minutes` nothing changes; a value that is not a positive whole
+number is off, with a warning. Pick it above the longest silence of a healthy run (a suite that prints
+nothing until it ends needs its whole run time). `DEV_LOOP_STALL_UNIT_SECONDS` (default 60) is the length
+of one such minute, for tests.
+
 ## The gate's own rules
 
 The gate reads its settings from the main checkout's `.dev-loop.json`, so a branch's edits to them apply

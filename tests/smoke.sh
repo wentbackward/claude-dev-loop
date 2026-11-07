@@ -4182,7 +4182,7 @@ for phrase in "watchdog.wake_minutes" '"watchdog": false' "DEV_LOOP_STALL_UNIT_S
 done
 awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#56" && pass "watchdog: CHANGELOG has an Unreleased entry for #56" ||
   fail "watchdog: no Unreleased #56 entry"
-grep -qF '(#56)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
+grep -qE '^## .*\(#56\)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
