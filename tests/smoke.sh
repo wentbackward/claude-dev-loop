@@ -3510,6 +3510,40 @@ gh pr create --head fix/702-other --title "other" --body-file /dev/null >/dev/nu
 "$plugin/scripts/open-pr.sh" fix/702-other >/dev/null
 expect "open-pr: a branch without a version suffix closes nothing" OPEN "$(pr_state fix/702-other)"
 rm -f "$FAKE_GH_DIR"/fix_702-other.*
+# A name that only looks like a version closes nothing: neither a Supersedes line nor ancestry links it.
+rbranch feat/708-api && gh pr create --head feat/708-api --title api --body-file /dev/null >/dev/null
+rbranch feat/708-api-v2 && printf 'feat: api v2 (#708)\n\nCloses #708\n' >"$(rnotes feat/708-api-v2)"
+"$plugin/scripts/open-pr.sh" feat/708-api-v2 >/dev/null 2>"$work/openpr.err"
+expect "open-pr: an unrelated PR whose name looks like an earlier version stays open" OPEN "$(pr_state feat/708-api)"
+grep -qF "left the PR of feat/708-api open" "$work/openpr.err" && pass "open-pr: says why it left that PR open" ||
+  fail "open-pr: no warning for the PR it left open"
+# Ancestry alone is enough: the new version builds on the old PR's head.
+rbranch feat/710-grow && gh pr create --head feat/710-grow --title grow --body-file /dev/null >/dev/null
+git checkout -q -B feat/710-grow-v2 feat/710-grow && echo more >>f-feat_710-grow.txt && git commit -q -am "feat: more" &&
+  git push -q -u origin feat/710-grow-v2 && git checkout -q main
+printf 'feat: grow (#710)\n\nCloses #710\n' >"$(rnotes feat/710-grow-v2)"
+"$plugin/scripts/open-pr.sh" feat/710-grow-v2 >/dev/null 2>&1
+expect "open-pr: an earlier version whose head the new one contains is closed" CLOSED "$(pr_state feat/710-grow)"
+# Without the new PR's number nothing is closed, with a warning.
+rbranch feat/709-n && gh pr create --head feat/709-n --title n --body-file /dev/null >/dev/null
+rbranch feat/709-n-v2 && printf 'feat: n (#709)\n\nSupersedes `feat/709-n`\n' >"$(rnotes feat/709-n-v2)"
+FAKE_GH_FAIL_NUMBER=1 "$plugin/scripts/open-pr.sh" feat/709-n-v2 >/dev/null 2>"$work/openpr.err"
+expect "open-pr: without the new PR's number no superseded PR is closed" "OPEN OPEN" \
+  "$(pr_state feat/709-n) $(pr_state feat/709-n-v2)"
+grep -qF "could not read the PR number of feat/709-n-v2" "$work/openpr.err" &&
+  pass "open-pr: warns when it cannot read the new PR's number" || fail "open-pr: no warning without the PR number"
+
+# repush.sh warns visibly when the notes copy fails; the push stands.
+git worktree add -q -b fix/711-ro "$work/repush-711" origin/main
+(cd "$work/repush-711" && echo r >r.txt && git add r.txt && git commit -q -m "fix: r" && git push -q -u origin fix/711-ro)
+printf 'fix: ro (#711)\n' >"$(rnotes fix/711-ro)"
+chmod a-w "$("$plugin/scripts/paths.sh" notes-dir)"
+repush "$work/repush-711" fix/711-ro
+chmod u+w "$("$plugin/scripts/paths.sh" notes-dir)"
+expect "repush: a failed notes copy does not undo the push" "0 fix/711-ro-v2" "$rc $(remote_tip fix/711-ro-v2 | sed 's/.\{1,\}/fix\/711-ro-v2/')"
+grep -qF "notes file could not be written" "$work/repush.err" &&
+  pass "repush: warns visibly when the notes copy fails" || fail "repush: no warning for a failed notes copy"
+git worktree remove --force "$work/repush-711"
 
 # The gate and merge take the new name; merge-train opens the PR from the new branch's notes.
 out=$("$plugin/scripts/gate-train.sh" fix/701-thing-v5 2>&1)

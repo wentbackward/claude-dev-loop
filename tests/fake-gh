@@ -18,7 +18,8 @@ case "${1:-} ${2:-}" in
     case "${5:-}" in
       state) cat "$dir/$(key "$branch").state" ;;
       reviewDecision) if [ -f "$dir/$(key "$branch").approved" ]; then echo APPROVED; else echo REVIEW_REQUIRED; fi ;;
-      number) cat "$dir/$(key "$branch").number" ;;
+      number) [ "${FAKE_GH_FAIL_NUMBER:-}" != 1 ] || exit 1; cat "$dir/$(key "$branch").number" ;;
+      headRefOid) cat "$dir/$(key "$branch").head" ;;
       mergeCommit) cat "$dir/$(key "$branch").merge" 2>/dev/null ;;
     esac
     ;;
