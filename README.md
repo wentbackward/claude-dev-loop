@@ -236,10 +236,11 @@ every merge:
 - **The `doc-auditor`** (read-only by its brief; its tools include Bash, which can write, and the role
   guard covers only GitHub writes) compares each current-state doc and component card with the code and,
   where it is safe, the running system (CLI help, endpoints, config keys, jobs), and opens one ticket per
-  drift with the evidence; housekeeping goes in its report as a maintenance list instead. It runs every `audit_every` merges (default 10), when the user asks, and before
-  a release; before a release the orchestrator also checks the planned list and Features against the
-  tickets merged since the last one. The orchestrator records each audit in
-  `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one UTC time).
+  drift with the evidence; housekeeping goes in its report as a maintenance list instead. It runs every
+  `audit_every` merges (default 10), when the user asks, and before a release; before a release the
+  orchestrator also checks the planned list and Features against the tickets merged since the last one.
+  The orchestrator records each audit in `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one
+  UTC time).
 - **`doctor.sh`** prints the aspects, the planned list, the PRD files and the map; reports a missing aspect
   path or PRD file as MISSING; notes files and journals over `max_lines` and map rules that match no
   tracked file; and prints the merges since the last audit (from the merge ledger and the audit marker),
@@ -254,13 +255,15 @@ every merge:
   text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
   access one note says the rows were not checked.
 - **Docs maintenance.** The auditor finds, a normal implementer cleans up. On the audit's cadence, right
-  after it, the orchestrator opens one `docs: maintenance` ticket listing `doctor.sh`'s docs notes and the
-  auditor's maintenance list: planned rows to move or remove, journals over budget (`docs-archive.sh
-  journal`, then refresh `## Standing decisions`), finished specs (`docs-archive.sh spec`) and at most one
-  oversized doc to split per ticket. Stale tickets are closed as not planned, with a comment, the same way
-  as cleanup's closed and stale branches: with the user's OK in collaborative mode, without asking in
-  `factory: dark`. The ticket is implemented, reviewed and gated like any other, and skipped when there is
-  nothing to do (the `dev-loop` skill, section 7a).
+  after it, the orchestrator opens one `docs: maintenance` ticket listing `doctor.sh`'s docs notes at that
+  time (it prints them on every run; they become a ticket only on this cadence) and the auditor's
+  maintenance list: planned rows to move or remove, journals over budget (`docs-archive.sh journal`, then
+  refresh `## Standing decisions`), finished specs (`docs-archive.sh spec`) and at most one oversized doc to
+  split per ticket. Stale tickets are closed as not planned, with a comment, the same way as cleanup's
+  closed and stale branches: with the user's OK in collaborative mode, without asking in `factory: dark`; a
+  declined one keeps its row, and the next `doctor.sh` run notes it again. The ticket is implemented,
+  reviewed and gated like any other, and skipped when there is nothing to do (the `dev-loop` skill, section
+  7a).
 
 ### Journals and the archive
 

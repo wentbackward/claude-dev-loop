@@ -234,7 +234,8 @@ approve again, then re-run merge-train with the remaining branches.
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
 line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
-notes `doc audit due`, run the doc audit and then the docs maintenance (section 7a); when the planned list runs low, slice (section 1a).
+notes `doc audit due`, run the doc audit and then the docs maintenance (section 7a); when the planned
+list runs low, slice (section 1a).
 With `architecture`, when `doctor.sh` notes `architect due` (every `architecture.cadence` merges, or a
 signal over its threshold), run the architecture review (section 7b).
 A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
@@ -273,13 +274,16 @@ Report: what you checked, the tickets you opened, the maintenance list, what you
 
 On the doc audit's cadence (`docs.audit_every`), right after the audit, open **one** `docs: maintenance`
 ticket (label `docs` when it exists). The auditor finds; a normal implementer cleans up. Its body is a
-checklist of the housekeeping in `doctor.sh`'s docs notes and the auditor's maintenance list:
+checklist of the housekeeping in `doctor.sh`'s docs notes at audit time and the auditor's maintenance
+list. `doctor.sh` prints those notes on every run; they become a ticket only on this cadence, from the
+notes present when the audit runs:
 
 - **Planned rows** to move to Features (ticket closed as completed) or remove (closed as not planned, no
   ticket number, no such ticket). A stale ticket (open longer than `docs.planned_max_days` with no loop
   branch) you close as not planned, with a comment that says why, before the maintenance ticket starts:
   with the user's OK in collaborative mode, in dark mode (section 8a) without asking, the same rule as
-  cleanup's closed and stale branches. Its row goes in the maintenance branch.
+  cleanup's closed and stale branches. Its row goes in the maintenance branch. When the user declines,
+  the ticket stays open, its row stays, and the next `doctor.sh` run notes it again.
 - **Journals over budget:** `scripts/docs-archive.sh journal` (a dry run, then `--apply`), then refresh
   the journal's `## Standing decisions` section, one line per decision in force, linking its entry.
 - **Finished specs:** `scripts/docs-archive.sh spec <file>` (a dry run, then `--apply`).
