@@ -70,6 +70,8 @@ train_ended() {
 }
 trap 'train_ended $?' EXIT
 dl_event gate train-started pid="$$" branches="$*"
+# The stages' heavy.sh jobs name this gate in their events, so status.sh can tell them from other jobs.
+export DL_GATE_PID=$$
 
 # Stale train refs: everything but this train and the unmerged branches of a waiting green train.
 keep_train=" $* "

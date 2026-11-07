@@ -19,11 +19,16 @@
 #   verdict: waiting on <what> (output <n>s ago)       a running gate stage, a heavy job of this repository,
 #                                                      or an orchestrator event whose name starts with
 #                                                      "waiting" (what: its detail, else the rest of the name)
+#   verdict: waiting on heavy slot (queued)          the running gate's own job waits in heavy.sh for a
+#                                                      slot (its queued event names the gate: gate_pid)
 #   verdict: possibly stalled: no event or output for <n> min
 # "Output" is the newest of: this repository's events, the running stage logs, train-running.txt, and the
 # commits and notes files of the loop worktrees; while the gate runs, only the gate-side evidence (stage
-# logs, train-running.txt, this repository's gate events), so other work (an implementer's commits or
-# heavy jobs) never hides a frozen stage. Other repositories' events never count. The threshold is watchdog.stall_minutes (default 30).
+# logs, train-running.txt, this repository's gate events, a live queued heavy job of the gate), so other
+# work (an implementer's commits or heavy jobs) never hides a frozen stage. Other repositories' events
+# never count. The threshold is watchdog.stall_minutes (default 30). A stage silent for longer than that
+# (a slow suite that prints nothing until it ends) reads as possibly stalled, so such a project needs a
+# higher stall_minutes; "possibly" is meant: a watchdog (#56) confirms before it acts on the verdict.
 #
 # --json prints one object (the contract; fields are only added, never renamed):
 #   {"repo", "now" (UTC),
@@ -32,8 +37,9 @@
 #    "gate": {"running": bool, "stale": bool (train-running.txt names a dead pid), "pid": n|null,
 #             "train": [branch], "elapsed_seconds": n|null,
 #             "stages": [{"name", "elapsed_seconds", "log", "log_bytes", "quiet_seconds"}]},
-#    "heavy": {"slots": n, "held": [{"slot", "pid", "repo", "seconds", "command"}],
-#              "waiting": [{"pid", "repo", "seconds", "command"}]},
+#    "heavy": {"slots": n, "held": [{"slot", "pid", "repo", "seconds", "command", "gate_pid"}],
+#              "waiting": [{"pid", "repo", "seconds", "command", "gate_pid"}]} (gate_pid: n|null, the
+#              gate whose stage runs the job),
 #    "worktrees": [{"branch", "path", "ticket", "merged", "commit_age_seconds", "notes_age_seconds",
 #                   "pushed", "unpushed_commits", "ahead", "behind"}],
 #    "last_merge": {"branch", "ticket", "merged_at", "age_seconds"}|null, "open_tickets": n|null,
@@ -94,7 +100,7 @@ except ValueError:
 }
 
 # events_tsv FILE...: each event of the files as "repo<TAB>epoch<TAB>who<TAB>event<TAB>branch<TAB>ticket
-# <TAB>stage<TAB>rc<TAB>slot<TAB>pid<TAB>log<TAB>detail" (repo: the name of the file's directory; "-" for a
+# <TAB>stage<TAB>rc<TAB>slot<TAB>pid<TAB>log<TAB>detail<TAB>gate_pid" (repo: the name of the file's directory; "-" for a
 # missing field; lines that are not JSON objects are skipped).
 events_tsv() {
   [ $# -gt 0 ] || return 0
@@ -102,7 +108,7 @@ events_tsv() {
     jq -R -r 'def f: if . == null or . == "" then "-" else tostring | gsub("[\t\n\r]"; " ") end;
       (input_filename | split("/") | .[-2]) as $repo | fromjson? | select(type == "object")
       | [$repo, (.t | strings | try fromdateiso8601 catch null), .who, .event, .branch, .ticket, .stage, .rc,
-         .slot, .pid, .log, .detail] | map(f) | join("\t")' "$@" 2>/dev/null
+         .slot, .pid, .log, .detail, .gate_pid] | map(f) | join("\t")' "$@" 2>/dev/null
   else
     python3 -I -c '
 import calendar, json, os, sys, time
@@ -128,7 +134,7 @@ for path in sys.argv[1:]:
             epoch = calendar.timegm(time.strptime(str(e.get("t")), "%Y-%m-%dT%H:%M:%SZ"))
         except ValueError:
             epoch = None
-        keys = ("who", "event", "branch", "ticket", "stage", "rc", "slot", "pid", "log", "detail")
+        keys = ("who", "event", "branch", "ticket", "stage", "rc", "slot", "pid", "log", "detail", "gate_pid")
         print("\t".join(f(v) for v in [repo, epoch] + [e.get(k) for k in keys]))
 ' "$@" 2>/dev/null
   fi
@@ -220,31 +226,33 @@ fi
 
 # --- Heavy slots: the heavy events of every repository's event log. ---
 heavy_slots=${DEV_LOOP_HEAVY_SLOTS:-$(cfg heavy.slots 2)}
-held_lines=() held_json="" waiting_json="" held_here=""
+held_lines=() held_json="" waiting_json="" held_here="" gate_queued=""
 heavy_files=()
 for file in "${DEV_LOOP_HOME:-$HOME/.dev-loop}"/*/events.jsonl; do [ -f "$file" ] && heavy_files+=("$file"); done
 
-# heavy_jobs: "held<TAB>repo<TAB>pid<TAB>slot<TAB>epoch<TAB>command" for slots acquired and not released,
-# "waiting<TAB>repo<TAB>pid<TAB>-<TAB>epoch<TAB>command" for jobs queued and not started.
+# heavy_jobs: "held<TAB>repo<TAB>pid<TAB>slot<TAB>epoch<TAB>command<TAB>gate_pid" for slots acquired and not
+# released, "waiting<TAB>repo<TAB>pid<TAB>-<TAB>epoch<TAB>command<TAB>gate_pid" for jobs queued and not started
+# (gate_pid: the pid of the gate that runs the job, "-" for a job outside a gate).
 heavy_jobs() {
   [ ${#heavy_files[@]} -gt 0 ] || return 0
   events_tsv "${heavy_files[@]}" | awk -F'\t' '
     $3 != "heavy" { next }
     { key = $1 "\t" $10 }
-    $4 == "queued" { q[key] = $2 "\t" $12 }
-    $4 == "slot-acquired" { delete q[key]; h[key] = $9 "\t" $2 "\t" $12 }
+    $4 == "queued" { q[key] = $2 "\t" $12 "\t" $13 }
+    $4 == "slot-acquired" { delete q[key]; h[key] = $9 "\t" $2 "\t" $12 "\t" $13 }
     $4 == "slot-released" { delete h[key] }
     END {
       for (k in h) print "held\t" k "\t" h[k]
-      for (k in q) { split(q[k], v, "\t"); print "waiting\t" k "\t-\t" v[1] "\t" v[2] }
+      for (k in q) { split(q[k], v, "\t"); print "waiting\t" k "\t-\t" v[1] "\t" v[2] "\t" v[3] }
     }' | sort -t "$(printf '\t')" -k4,4n
 }
 
-while IFS=$'\t' read -r kind repo pid slot epoch command; do
+while IFS=$'\t' read -r kind repo pid slot epoch command job_gate; do
   alive "$pid" || continue
   seconds=""
   case $epoch in "" | *[!0-9]*) ;; *) seconds=$((now - epoch)) ;; esac
-  entry="\"pid\":$(jnum "$pid"),\"repo\":$(dl_json_string "$repo"),\"seconds\":$(jnum "$seconds"),\"command\":$(dl_json_string "$command")"
+  [ "$job_gate" != - ] || job_gate=""
+  entry="\"pid\":$(jnum "$pid"),\"repo\":$(dl_json_string "$repo"),\"seconds\":$(jnum "$seconds"),\"command\":$(dl_json_string "$command"),\"gate_pid\":$(jnum "$job_gate")"
   if [ "$kind" = held ]; then
     held_lines+=("  slot $slot: pid $pid, $repo, $(dur "${seconds:-0}"): $command")
     held_json+="${held_json:+,}{\"slot\":$(jnum "$slot"),$entry}"
@@ -252,6 +260,8 @@ while IFS=$'\t' read -r kind repo pid slot epoch command; do
   else
     held_lines+=("  waiting: pid $pid, $repo, $(dur "${seconds:-0}"): $command")
     waiting_json+="${waiting_json:+,}{$entry}"
+    # Only the running gate's own queued job says the gate waits for a slot; any other job never does.
+    [ -z "$gate_running" ] || [ "$job_gate" != "$gate_pid" ] || gate_queued=yes
   fi
 done < <(heavy_jobs)
 
@@ -326,7 +336,7 @@ if [ -n "$use_gh" ]; then
 fi
 
 orch_line="orchestrator: no event yet" orch_json=null orch_event="" orch_detail="" orch_age=""
-IFS=$'\t' read -r _ o_epoch _ o_event _ o_ticket _ _ _ _ _ o_detail <<<"$(printf '%s\n' "$repo_events" |
+IFS=$'\t' read -r _ o_epoch _ o_event _ o_ticket _ _ _ _ _ o_detail _ <<<"$(printf '%s\n' "$repo_events" |
   awk -F'\t' '$3 == "orchestrator"' | tail -n 1)"
 if [ -n "${o_event:-}" ]; then
   orch_event=$o_event
@@ -353,7 +363,9 @@ fi
 [ -z "$gate_running" ] || quiet=$gate_quiet
 gate_died=false
 [ -z "$gate_pid" ] || [ -n "$gate_running" ] || gate_died=true
-if [ -z "$what" ] && [ "$active_worktrees" -eq 0 ] && { [ -z "$orch_age" ] || [ "$orch_age" -gt "$threshold" ]; }; then
+if [ -n "$gate_queued" ]; then
+  state=waiting what="heavy slot (queued)" verdict="waiting on heavy slot (queued)"
+elif [ -z "$what" ] && [ "$active_worktrees" -eq 0 ] && { [ -z "$orch_age" ] || [ "$orch_age" -gt "$threshold" ]; }; then
   state=idle verdict="idle"
   [ "$gate_died" = false ] || verdict="idle (the last gate died: train-running.txt is stale)"
 elif [ -n "$quiet" ] && [ "$quiet" -gt "$threshold" ]; then
