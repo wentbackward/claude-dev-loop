@@ -417,6 +417,7 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   share than the issue allows); dropping `<k>` from the red line (loses what the implementer needs);
   a `scenarios.stop` command (more config for a case a `trap` in `scenarios.run` covers); a cgroup or
   systemd scope for the system (Linux only).
+
 ## 2026-11-07 — Planned-list hygiene in doctor (#45): what a row is, one gh call, 0 is off
 
 - **Decision:** a planned row is a Markdown list item or a table body row (not the header, not inside a
