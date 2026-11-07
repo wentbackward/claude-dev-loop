@@ -4077,5 +4077,112 @@ grep -qF '(#57)' "$plugin/docs/DECISIONS.md" && pass "noforce: the decisions log
 export FAKE_GH_DIR="$work/gh"
 
 cd "$work/project" || exit 1
+
+# 23. Stall watchdog (#56): the gate's per-stage stall_minutes (off by default; a stage whose log has not
+# grown for that long is stopped and red, one whose log grows is not, one queued in heavy.sh for a slot is
+# not stalled) and the orchestrator heartbeat in the dev-loop skill. DEV_LOOP_STALL_UNIT_SECONDS=1 makes a
+# stall "minute" one second.
+wwork="$work/watchdog"
+git init -q --bare "$wwork/origin.git"
+git clone -q "$wwork/origin.git" "$wwork/project" 2>/dev/null
+cd "$wwork/project" || exit 1
+printf '{"base_branch": "main", "checks": ["true"]}\n' >.dev-loop.json
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+git checkout -q -b feat/9-stall
+echo two >>src.txt && git commit -q -am "feat: stall (Refs #9)" && git push -q -u origin feat/9-stall
+# wgate JSON_MEMBERS: gate feat/9-stall with these config members and a 1-second stall unit; sets out, rc,
+# elapsed.
+wgate() {
+  printf '{"base_branch": "main", %s, "heavy": {"slots": 1, "poll_seconds": 1}}\n' "$1" >"$wwork/gate.json"
+  rm -f "$wwork"/stall.pids "$wwork"/marker
+  local start
+  start=$(date +%s)
+  out=$(DEV_LOOP_HOME="$wwork/home" DEV_LOOP_LOCK_DIR="$wwork/locks" DEV_LOOP_CONFIG="$wwork/gate.json" \
+    DEV_LOOP_STALL_UNIT_SECONDS=1 SMOKE_WORK="$wwork" "$plugin/scripts/gate-train.sh" feat/9-stall 2>&1)
+  rc=$?
+  elapsed=$(($(date +%s) - start))
+  echo "$out"
+  echo "(gate took $elapsed s)"
+}
+wlines() { echo "$out" | grep -E '^[A-Za-z0-9_.-]+ (rc=[0-9]+|stopped|skipped|stalled:)' | cut -d' ' -f1-2 | paste -sd'|'; }
+wevents="$wwork/home/project/events.jsonl"
+
+# A check that prints, then sleeps beyond stall_minutes: stopped, red, with the reason; its processes gone.
+wgate '"checks": [{"name": "hang", "heavy": false, "stall_minutes": 2,
+  "command": "echo $$ >\"$SMOKE_WORK/stall.pids\"; echo started; sleep 60 & echo $! >>\"$SMOKE_WORK/stall.pids\"; wait"}]'
+expect "stall: a silent check is red with exit 1" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
+echo "$out" | grep -q '^hang stalled: no output for 2 min (log: ' && pass "stall: the stalled check says why" ||
+  fail "stall: no 'hang stalled: no output for 2 min' line"
+[ "$elapsed" -lt 15 ] && pass "stall: the silent check is stopped promptly ($elapsed s)" || fail "stall: took $elapsed s"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "stall: no process of the stalled check is left" "" "$(alive $(cat "$wwork/stall.pids" 2>/dev/null))"
+grep -q '"event":"stage-ended".*"stage":"hang".*"result":"stalled"' "$wevents" 2>/dev/null &&
+  pass "stall: the event log records the stalled stage" || fail "stall: no stage-ended result=stalled event"
+
+# A check whose log keeps growing for longer than stall_minutes is never stopped.
+wgate '"checks": [{"name": "busy", "heavy": false, "stall_minutes": 2,
+  "command": "for i in 1 2 3 4 5 6 7 8 9 10; do echo tick $i; sleep 0.5; done"}]'
+expect "stall: a check whose log grows is not stopped" "0 busy rc=0 TRAIN GREEN" "$rc $(wlines) $(echo "$out" | tail -1)"
+
+# Without stall_minutes nothing changes: a silent check runs to its end.
+wgate '"checks": [{"name": "quiet", "heavy": false, "command": "echo started; sleep 4; echo done"}]'
+expect "stall: without stall_minutes a silent check runs to its end" "0 quiet rc=0" "$rc $(wlines)"
+
+# A heavy check queued in heavy.sh behind a held slot is not stalled while it waits; its clock starts with
+# the slot.
+DEV_LOOP_LOCK_DIR="$wwork/locks" DEV_LOOP_CONFIG="$wwork/gate.json" "$plugin/scripts/heavy.sh" sleep 6 \
+  >/dev/null 2>&1 &
+holder=$!
+sleep 1
+wgate '"checks": [{"name": "queued", "stall_minutes": 2, "command": "echo got the slot; sleep 1; echo done"}]'
+wait "$holder" 2>/dev/null
+expect "stall: a check queued for a slot longer than stall_minutes is not stalled" "0 queued rc=0" "$rc $(wlines)"
+[ "$elapsed" -ge 4 ] && pass "stall: the queued check did wait for the slot ($elapsed s)" ||
+  fail "stall: the queued check did not wait ($elapsed s)"
+
+# Sequential with fail_fast: a stalled check fails the train like a failure, the next is skipped.
+wgate '"fail_fast": true, "checks": [
+  {"name": "hang", "heavy": false, "stall_minutes": 1, "command": "echo started; sleep 60"},
+  {"name": "next", "heavy": false, "command": "touch \"$SMOKE_WORK/marker\""}]'
+expect "stall: with fail_fast the checks after a stalled one are skipped" "1 hang stalled:|next skipped no" \
+  "$rc $(wlines) $([ -e "$wwork/marker" ] && echo yes || echo no)"
+
+# Parallel: only the silent stage stalls; a growing sibling ends green; the train is red.
+wgate '"parallel": true, "checks": [
+  {"name": "hang", "heavy": false, "stall_minutes": 2, "command": "echo started; sleep 60"},
+  {"name": "busy", "heavy": false, "stall_minutes": 2, "command": "for i in 1 2 3 4 5 6 7 8; do echo tick $i; sleep 0.5; done"}]'
+expect "stall: in parallel only the silent check is stalled" "1 hang stalled:|busy rc=0" "$rc $(wlines)"
+[ "$elapsed" -lt 15 ] && pass "stall: the parallel gate ends promptly ($elapsed s)" || fail "stall: parallel took $elapsed s"
+
+# The affected stage takes stall_minutes too.
+wgate '"affected": {"command": "echo started; sleep 60", "heavy": false, "stall_minutes": 1},
+  "checks": [{"name": "unit", "heavy": false, "command": "true"}]'
+expect "stall: a silent affected stage is stalled" "1 affected stalled:|unit rc=0" "$rc $(wlines)"
+
+# A stall_minutes that is not a positive whole number is off, with a warning.
+wgate '"checks": [{"name": "odd", "heavy": false, "stall_minutes": "soon", "command": "echo started; sleep 3"}]'
+expect "stall: an invalid stall_minutes is off" "0 odd rc=0" "$rc $(wlines)"
+echo "$out" | grep -q 'stall_minutes' && pass "stall: an invalid stall_minutes is named" ||
+  fail "stall: no warning for an invalid stall_minutes"
+
+# The skill text: the heartbeat, the stall handling, what it may and may not stop.
+wskill=$(awk '/^## / {on = ($0 ~ /^## 2a\. /)} on' "$plugin/skills/dev-loop/SKILL.md")
+for phrase in "watchdog.wake_minutes" '"watchdog": false' "status.sh --json" "event.sh" "waiting" "stalled" \
+  "scheduling tool" "background command" "CPU" "log tail" "process group" "section 3a" "never" "loop's own"; do
+  printf '%s\n' "$wskill" | grep -qF -- "$phrase" && pass "watchdog: the heartbeat section names \"$phrase\"" ||
+    fail "watchdog: the heartbeat section does not name \"$phrase\""
+done
+grep -qF 'stall_minutes' "$plugin/skills/gate/SKILL.md" && pass "watchdog: the gate skill documents stall_minutes" ||
+  fail "watchdog: the gate skill does not name stall_minutes"
+wreadme=$(cat "$plugin/README.md")
+for phrase in "watchdog.wake_minutes" '"watchdog": false' "DEV_LOOP_STALL_UNIT_SECONDS" "stalled: no output for"; do
+  printf '%s\n' "$wreadme" | grep -qF -- "$phrase" && pass "watchdog: the README names \"$phrase\"" ||
+    fail "watchdog: the README does not name \"$phrase\""
+done
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#56" && pass "watchdog: CHANGELOG has an Unreleased entry for #56" ||
+  fail "watchdog: no Unreleased #56 entry"
+grep -qF '(#56)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
+cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
