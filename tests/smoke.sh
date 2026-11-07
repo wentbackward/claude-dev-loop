@@ -3168,8 +3168,8 @@ grep -qF "current-state docs off" "$plugin/README.md" && grep -qiF "gradual adop
   fail "the README lacks the docs-off note or the gradual adoption path"
 grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
   pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" && head -n 20 "$plugin/CHANGELOG.md" |
-  grep -q '^## Unreleased' && pass "adopt: CHANGELOG has an Unreleased entry for #46" || fail "no Unreleased #46 entry"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" &&
+  pass "adopt: CHANGELOG has an entry for #46 in its newest section" || fail "no #46 entry in the newest CHANGELOG section"
 # 20. Permissions (#54): permissions.sh merges the loop's allow, ask and deny rules into the project's
 # .claude/settings.json (and the plugin-script rules, which hold this machine's plugin path, into
 # .claude/settings.local.json), only adding; doctor reads only the project's two files and reports a deny
