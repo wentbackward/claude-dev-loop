@@ -31,7 +31,8 @@ first: language, toolchain, Makefile, CI, spec. Then it asks only for what it co
   rules;
 - `docs/DECISIONS.md`, the decisions log (date, decision, reason, alternatives);
 - `.dev-loop.json`, the project config (see below);
-- deny rules in `.claude/settings.json` (force pushes, `sudo`, `.env`, role credentials, ...);
+- permission rules in `.claude/settings.json`: what the loop runs is allowed, releases and tags ask, force
+  pushes, `sudo`, `.env` and role credentials are denied (see Permission modes);
 - Makefile targets that are missing (`fmt`, `fmt-check`, `lint`, `typecheck`, `test`, `cov`, `check`,
   `e2e`).
 
@@ -89,7 +90,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | kind | name | job |
 |------|------|-----|
 | skill | `dev-loop` | the orchestrator workflow, with the exact implementer and reviewer prompt templates |
-| skill | `setup` | bootstrap a project (CLAUDE.md, DECISIONS.md, `.dev-loop.json`, deny rules, Makefile) |
+| skill | `setup` | bootstrap a project (CLAUDE.md, DECISIONS.md, `.dev-loop.json`, permission rules, Makefile) |
 | skill | `gate` / `merge` | run the batch gate and the ordered merge, and read their results |
 | skill | `doctor` | check the machine and the project (`/dev-loop:doctor`), and explain each problem's fix |
 | agent | `implementer` | one ticket, test first, in its worktree; pushes and writes the notes file |
@@ -103,6 +104,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `docs-archive.sh` | moves the oldest journal entries and finished specs to `docs/archive/` (dry run by default; see Current-state docs) |
 | script | `arch-check.sh` | checks a commit against its component cards and the baseline (see Architecture ratchet) |
 | script | `arch-evidence.sh` | the architecture signals from the merge ledger, the cards and git (see Merge evidence and the architect) |
+| script | `permissions.sh` | merges the loop's permission rules into the project's settings (dry run by default; see Permission modes) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
@@ -812,6 +814,46 @@ The guarantees come from GitHub, not from the local guard. Token permissions dec
 do at all, and the rulesets decide what can reach the base branch. One gap is known: the implementer app
 has contents write, so it could merge a PR that already has the reviewer's approval and the gate's status.
 That is the same merge the gate would make.
+
+## Permission modes
+
+The loop runs the same in Claude Code's default, auto and bypass permission modes, because setup writes
+the rules it needs. `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` lists the missing rules (a dry run);
+`--apply` merges them. It only adds rules: every existing rule and key stays.
+
+- `.claude/settings.json` (shared, committed) gets the rules of `templates/settings.json` and the project's
+  own:
+  - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`,
+    `git commit`; `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
+    `gh pr diff`, `gh pr checks`); `git push -u <remote> <branch>` for the loop's branch patterns
+    (`github.feature_patterns`, default `feat/*`, `fix/*`, `chore/*`, `docs/*`); one exact rule for each
+    command of `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
+  - **ask:** `git tag`, `gh release`, pushes of tags (`--tags`, `--follow-tags`, `refs/tags/`), `--mirror`
+    and `--delete` pushes, a push that names the base branch, `git worktree remove --force`.
+  - **deny:** force pushes (`--force`, `--force-with-lease`, `-f`, `+<ref>`, anywhere in the command),
+    `gh repo delete`, `gh pr merge --admin`, `sudo`, `.env` and role credentials.
+- `.claude/settings.local.json` (this machine only; `permissions.sh --apply` adds it to `.gitignore`) gets
+  the plugin's scripts at this machine's plugin path, with the version as a wildcard
+  (`~/.claude/plugins/cache/<marketplace>/dev-loop/*/scripts/gate-train.sh *`, written as an absolute
+  path), so the rules outlive plugin updates; `cleanup.sh --apply` asks.
+
+In the **default** mode the allow list is what keeps background agents from stalling on a prompt. In
+**auto** mode the rules decide before the classifier does. In **bypass** mode allow rules have no effect,
+but deny rules still block and ask rules still ask. So in every mode releases, tags and tag pushes ask and
+force pushes are refused. Anything else outside the repository is in no allow rule, so it asks in the
+default mode; in auto mode the classifier judges it; in bypass mode only the stop conditions in `CLAUDE.md`
+hold it back.
+
+Claude Code merges the rules of every settings file, and a deny anywhere wins. `doctor.sh` reads only the
+project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`, never the user's
+own files): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
+lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
+nothing. Without `.claude/settings.json` it prints one note.
+
+A wildcard cannot exclude arguments: `git push -u origin feat/*` also matches
+`git push -u origin feat/x --tags`. The ask and deny rules therefore match the dangerous arguments anywhere
+in the command, and they also cover commands run through `heavy.sh` or `as-role.sh`, whose allow rules
+allow any command they wrap. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 
 ## Safety notes
 

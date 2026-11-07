@@ -4,6 +4,18 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Permissions (#54): `scripts/permissions.sh` merges the rules the loop needs into the project's settings,
+  only adding (a dry run by default, `--apply` writes): `templates/settings.json` gains an allow list (the
+  read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`, `git commit`, the `gh issue`
+  and `gh pr` reads and writes the loop uses) and ask rules (`git tag`, `gh release`, tag, mirror and delete
+  pushes, `git worktree remove --force`), and its deny rules now catch force pushes, `gh repo delete` and
+  `gh pr merge --admin` anywhere in a command. The script adds pushes of the loop's branches, a prompt for a
+  push naming the base branch and one exact rule per `fast_check` and `checks` command to
+  `.claude/settings.json`, and the plugin's scripts at this machine's plugin path (version as a wildcard)
+  to `.claude/settings.local.json`, which it adds to `.gitignore`. `doctor.sh` reads the `permissions` of
+  those two project files only: a deny rule that blocks a loop command is `MISSING`, a missing or stale
+  allow list is a note, complete rules print nothing, and without `.claude/settings.json` it prints one
+  note. The setup skill's step 4 is now "Permissions"; the README has a "Permission modes" section.
 - Docs maintenance (#47; only with `docs` configured): on the doc audit's cadence, right after the audit,
   the orchestrator opens one `docs: maintenance` ticket from `doctor.sh`'s docs notes and the auditor's
   new maintenance list (planned rows to move or remove, journals over budget, finished specs, at most one

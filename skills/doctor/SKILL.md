@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the current-state docs, the component map, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
+description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the project's permission rules, the current-state docs, the component map, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
 ---
 
 # Doctor
@@ -31,6 +31,9 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note <n> agent worktrees` | remove the merged ones (same step; ask first, save uncommitted work) |
 | `note ... train/replay refs ..., ... merged branches still local` | `cleanup.sh` (dry run), then `--apply` |
 | `note <n> local branches` | `cleanup.sh` (dry run): it classifies them; delete closed/stale only on the user's OK |
+| `note permissions: no .claude/settings.json` or `note permissions: no allow list` | the `setup` skill's Permissions step: `permissions.sh` (dry run), then `--apply` |
+| `note permissions: the allow list lacks the project commands: ...` or `lacks <n> of the loop's rules` | `fast_check` or `checks` changed, or the plugin moved: `permissions.sh --apply` |
+| `MISSING permissions: deny rule <rule> in <file> blocks "<command>"` | remove or narrow that deny rule in the project's settings file (the loop runs the command) |
 | `note current-state docs off: ...` | nothing is wrong; to adopt the docs, the `setup` skill's step 3b (gradual adoption for large existing docs) |
 | `MISSING docs aspect <name>: <path> does not exist` | create the doc (the `setup` skill's step 3b), or fix the path in `docs.aspects` |
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |
