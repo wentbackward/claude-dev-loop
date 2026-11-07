@@ -243,8 +243,9 @@ A replay conflict (exit 3): the implementer rebases and re-pushes with `repush.s
 review and gate the new `<branch>-vN`. When the PR of a `-vN` branch opens (`open-pr.sh`, also from
 merge-train), the PRs of the versions it supersedes are closed with a comment pointing to it.
 In identity mode it posts the required `dev-loop/gate` status and merges as the gate identity; exit 9
-means the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and
-approve again, then re-run merge-train with the remaining branches.
+means the merge commit pushed onto a branch behind the base dismissed the approval: have a fresh
+code-reviewer confirm it brings in only the base (`git diff <base> <head>` is the branch's own change) and
+approve again, then re-run merge-train with the remaining branches (it merges the pushed head, no second push).
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
 line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it

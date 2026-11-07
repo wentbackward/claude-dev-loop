@@ -9,9 +9,12 @@ description: Merge a green batch-gate train in order, one squash merge per branc
 ${CLAUDE_PLUGIN_ROOT}/scripts/merge-train.sh <branch-1> <branch-2> ...    # same branches, same order as the gate
 ```
 
-For each branch it replays the branch's own commits onto the current base, checks that the tree is exactly
-the tree the gate tested, pushes it (with a lease on the gated head), opens the PR if there is none (title =
-first line of the notes file, without a leading `#`; body = the rest), squash-merges exactly that head,
+For each branch it replays the branch's own commits onto the current base and checks that the tree is
+exactly the tree the gate tested. A branch that already contains the base with that tree merges as it is;
+a branch behind the base gets a merge commit with the gated tree (parents: the gated head and the base),
+pushed as a plain fast-forward of the branch, never forced, so the PR stays the same. It opens the PR if
+there is none (title = first line of the notes file, without a leading `#`; body = the rest), squash-merges
+exactly that head (its squash is the gated tree),
 confirms the PR is MERGED and deletes the branch. Then it records the merge in the ledger, deletes the
 local branch (removing its worktree first when that is clean), moves the notes file to `notes/merged/`, and
 once the whole train merged it deletes the train's `train-<branch>` refs. A "kept local ..." line names a
@@ -30,7 +33,7 @@ in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 | 6 | branch changed since the gate | someone pushed after the gate: review and re-gate |
 | 7 | PR not merged | read the message (branch protection, checks); fix and re-run |
 | 8 | not gated green | run the gate skill first, with exactly these branches |
-| 9 | approval missing (identity mode) | the replay dismissed the approval: have a fresh code-reviewer confirm with `git range-diff` and approve again, then re-run with the branches not merged yet |
+| 9 | approval missing (identity mode) | the pushed merge commit dismissed the approval: have a fresh code-reviewer confirm it brings in only the base (`git diff <base> <head>` is the branch's own change) and approve again, then re-run with the branches not merged yet (the re-run merges the pushed head, no second push) |
 
 Never merge by hand around a failure, and never with `--admin`. Never force-push a branch: a rebased one is
 re-pushed as `<branch>-vN` with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh`. When the PR of a `-vN` branch
