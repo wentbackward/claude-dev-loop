@@ -37,7 +37,11 @@ doctor_docs() {
   done < <(dl_docs_aspects)
   path=$(cfg docs.planned "")
   days=$(cfg docs.planned_max_days "")
-  case $days in "" | 0) days="" ;; *[!0-9]*) missing "docs.planned_max_days: \"$days\" is not a positive number"; days="" ;; esac
+  case $days in
+    "") ;;
+    *[!0-9]*) missing "docs.planned_max_days: \"$days\" is not a positive number"; days="" ;;
+    *) days=$((10#$days)) && [ "$days" -gt 0 ] || days="" ;;
+  esac
   if [ -n "$path" ]; then
     echo "        docs planned  $path"
     if [ -e "$DL_ROOT/$path" ]; then
