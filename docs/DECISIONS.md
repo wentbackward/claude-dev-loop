@@ -571,14 +571,19 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   only what it created when the push fails (exit 3). The notes file is copied with a trailing line
   ``Supersedes `<old>` ...``; a missing notes file is a warning, not a refusal, since the push is what
   must not be lost. `open-pr.sh` closes the open PRs of `<root>`, `<root>-v2`, ... below N, as the
-  implementer (it opened them), with a comment naming the new PR; a failure there is a warning.
+  implementer (it opened them), with a comment naming the new PR, but only those the new branch
+  supersedes: its notes name them on a `Supersedes` line (repush.sh writes one per re-push, and the copy
+  keeps the earlier ones), or their PR head is an ancestor of its head. Without the new PR's number it
+  closes nothing. A failure there is a warning. A failed notes copy in repush.sh is a visible warning,
+  not a failure: the push already happened.
   `cleanup.sh` classifies a loop branch `superseded` when a later version of the same root is in the
   ledger or has a merged PR; the check runs after the open-PR and merged checks (an open PR keeps the
   branch) and before the closed-PR check, so a branch whose PR `open-pr.sh` closed is deleted without
   `--include closed`. It is deleted with `--apply` like `merged`, with the same bundle archive first, and
   its notes file moves to `notes/merged/` once the branch is gone. A slug that itself ends in `-v<n>`
   (`feat/12-api-v2`) is read as version n of `feat/12-api`; both names carry the same ticket number, so
-  the only effect is on branches of that same ticket.
+  the only effect on cleanup is on branches of that same ticket, and `open-pr.sh` leaves the PR of an
+  unrelated `feat/12-api` open.
 - **Reason:** deny rules, Claude Code's auto mode and GitHub rulesets refuse force pushes, and the old
   branch is evidence until the new one merges. Deriving the predecessors from the name needs no extra
   state; the `Supersedes` line documents it in the PR body.

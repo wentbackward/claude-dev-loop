@@ -186,7 +186,9 @@ conflict, a stacked branch whose lower branch merged) is published under a new n
 (as the implementer in identity mode), switches the worktree to it, and copies the notes file with a
 `Supersedes` line. It refuses a dirty worktree and the base branch, never deletes or moves the old branch,
 and prints the new name last. `open-pr.sh` (also run by `merge-train.sh`) closes the open PRs of the
-versions a `-vN` branch supersedes, with a comment pointing to the new PR; `cleanup.sh` deletes the old
+earlier versions a `-vN` branch supersedes (its notes name them on a `Supersedes` line, or their head is
+an ancestor of its head), with a comment pointing to the new PR, and closes nothing when it cannot read
+the new PR's number; `cleanup.sh` deletes the old
 branches as `superseded` once the new one has merged, and moves their notes to `notes/merged/`. The
 tooling takes `<type>/<n>-<slug>-vN` names like any other: they match the feature patterns, and the
 ticket is still `<n>`.
