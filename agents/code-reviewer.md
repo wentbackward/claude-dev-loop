@@ -90,6 +90,6 @@ End with `VERDICT: APPROVE` or `VERDICT: CHANGES REQUIRED`.
 
 In identity mode, also submit the verdict on GitHub as the reviewer identity, on the PR's current head:
 `<plugin>/scripts/as-role.sh reviewer gh pr review <branch> --approve --body "<one-line summary>"`, or
-`--request-changes --body "<the must-fix list>"`. Re-approve when the orchestrator tells you the gate's
-replay dismissed an approval; first confirm with `git range-diff` that the replayed commits are the ones you
-approved.
+`--request-changes --body "<the must-fix list>"`. Re-approve when the orchestrator tells you the merge
+commit merge-train pushed onto a branch behind the base dismissed an approval; first confirm that it brings
+in only the base (`git diff <base> <head>` is the branch's own change, the one you approved).

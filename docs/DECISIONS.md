@@ -594,8 +594,8 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** reading the predecessor from the `Supersedes` line only (breaks when the notes file
   is missing or edited); deleting the old branch right after the re-push (loses it if the new one never
   merges); `-rN` or date suffixes (`-vN` is what was already used by hand). `merge-train.sh`'s own replay
-  push keeps its `--force-with-lease` on the gated head: that is the gate identity updating a branch it
-  has just verified, outside this ticket's scope.
+  push kept its `--force-with-lease` on the gated head at the time (superseded by #57: the merge now
+  pushes a fast-forward merge commit, never forced).
 
 ## 2026-11-07 — Status and the event log (#55)
 
@@ -648,7 +648,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   notes stay; no new branch names, no superseded PR to close, nothing extra for `cleanup.sh`. The ledger
   accepts both the gated head and the pushed one, so the original branch is classified `merged`. In
   identity mode the status is posted on the pushed head and the approval is needed on it, as with the
-  former force push (the ruleset dismisses stale approvals either way).
+  former force push (the ruleset dismisses stale approvals either way). The squash itself is still a
+  3-way merge against the base at merge time: if the base moves between the push and the merge, the
+  result can differ from the gated tree, the same exposure as before (`--match-head-commit` pins the
+  head, the ruleset's strict status check requires the head to be up to date with the base).
 - **Alternatives:** push the replay as `<branch>-vN` and open a new PR from the carried notes (a new PR
   per merge of a branch behind the base, a closed PR per merge, a Supersedes record and a cleanup pass for
   every one); push the squash commit to the base directly (needs a ruleset bypass; not by default); merge
