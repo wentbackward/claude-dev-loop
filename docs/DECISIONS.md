@@ -420,9 +420,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 ## 2026-11-07 — Planned-list hygiene in doctor (#45): what a row is, one gh call, 0 is off
 
 - **Decision:** a planned row is a Markdown list item or a table body row (not the header, not inside a
-  fenced code block); its ticket is the first `#n` that is not part of a word, a path, an HTML entity or
-  an anchor such as `#2-scope`. In a file with a heading that says "planned", only that section's rows
-  count, so a planned list kept at the end of the Features file (`templates/FEATURES.md`) does not judge
+  fenced code block, not a thematic break such as `* * *`); its ticket is the first `#n` that is not part of a word, a path, an HTML entity or
+  an anchor such as `#2-scope`. In a file with a heading whose text starts with the word "Planned" (not
+  "Unplanned things", not "Planned-list hygiene"), only that section's rows count, so a planned list kept at the end of the Features file (`templates/FEATURES.md`) does not judge
   the Features entries. The tickets come from one `gh issue list --state all --json
   number,state,stateReason,createdAt` call, made only when a row has a number. Only `NOT_PLANNED` reads
   as "not planned"; every other closed reason reads as completed. A number GitHub does not list as an issue

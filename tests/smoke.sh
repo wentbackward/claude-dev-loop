@@ -2774,6 +2774,13 @@ expect "planned: a table row's ticket is read" "note    planned row #107: ticket
   "$(pdoctor section | grep -F 'planned row #107')"
 cp "$pwork/issues-all.tsv" "$pwork/issues.tsv"
 
+printf '# Notes\n\n- Lambda (#199)\n\n## Unplanned things\n\n- Iota (#101)\n\n## Planned-list hygiene\n\n- Kappa (#102)\n\n* * *\n- - -\n***\n___\n' \
+  >docs/other.md
+pconfig other '"aspects": {"features": "docs/features.md"}, "planned": "docs/other.md"'
+out=$(pdoctor other)
+expect "planned: headings like Unplanned things or Planned-list hygiene do not open a planned section" 3 \
+  "$(echo "$out" | grep -cE 'planned row #(10[12]|199):')"
+expect "planned: a thematic break (* * *, - - -, ***) is not a row" "" "$(echo "$out" | grep -F 'no ticket number')"
 mkdir -p "$pwork/nogh" && printf '#!/usr/bin/env bash\nexit 1\n' >"$pwork/nogh/gh" && chmod +x "$pwork/nogh/gh"
 out=$(PATH="$pwork/nogh:$PATH" pdoctor aged)
 expect "planned: without gh access one note says the rows were not checked" 1 \

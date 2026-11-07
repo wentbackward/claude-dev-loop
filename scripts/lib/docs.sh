@@ -93,8 +93,9 @@ dl_docs_days_between() {
 }
 
 # dl_docs_planned_rows FILE...: the rows of the planned list, one "<file>\t<line>\t<ticket>\t<text>" each
-# (ticket empty when the row has no #n). A row is a list item or a table body row outside code blocks;
-# in a file with a heading that says "planned", only the rows of that section count.
+# (ticket empty when the row has no #n). A row is a list item or a table body row outside code blocks
+# (a rule like * * * is not one); in a file with a heading whose text starts with the word "Planned", only
+# the rows of that section count.
 dl_docs_planned_rows() {
   local file
   for file in "$@"; do
@@ -114,13 +115,15 @@ dl_docs_planned_rows() {
       /^#+[ \t]/ {
         match($0, /^#+/)
         if (section && RLENGTH <= level) section = 0
-        if (!section && tolower($0) ~ /planned/) { section = 1; level = RLENGTH; sections = 1 }
+        title = tolower($0); sub(/^#+[ \t]+/, "", title)
+        if (!section && title ~ /^planned([^a-z-]|$)/) { section = 1; level = RLENGTH; sections = 1 }
         next
       }
       /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/ && /-/ && /\|/ {
         if (n > 0 && line[n] == NR - 1 && table[n]) n--
         next
       }
+      /^[ \t]*([-*_][ \t]*)([-*_][ \t]*)([-*_][ \t]*)+$/ { next }
       /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/ || /^[ \t]*\|/ {
         text = $0; gsub(/^[ \t]+|[ \t]+$/, "", text)
         n++; line[n] = NR; table[n] = ($0 ~ /^[ \t]*\|/); row[n] = text; num[n] = ticket(text); in_section[n] = section

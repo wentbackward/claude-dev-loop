@@ -248,8 +248,8 @@ every merge:
   not planned (`remove the row`) or does not exist, and a row with no ticket number. With
   `planned_max_days`, it also notes a row whose ticket is open longer than that with no loop branch
   (`<type>/<n>-*`, local or remote): close it as not planned and remove the row. A row is a list item or
-  a table body row outside code blocks; in a file with a heading that says "planned" (the end of
-  `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
+  a table body row outside code blocks (a rule like `* * *` is not one); in a file with a heading whose
+  text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
   access one note says the rows were not checked.
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
   current-state docs once, one aspect at a time, each reviewed by the user. Templates:
