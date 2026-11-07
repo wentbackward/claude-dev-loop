@@ -262,6 +262,38 @@ dl_running_file() {
   printf '%s/train-running.txt\n' "$DL_STATE"
 }
 
+# dl_events_file: the event log, one JSON line per step of the gate, the merge, the heavy queue and the
+# orchestrator (read only by status.sh).
+dl_events_file() {
+  printf '%s/events.jsonl\n' "$DL_STATE"
+}
+
+# dl_event WHO EVENT [KEY=VALUE...]: append one line {"t": "<UTC>", "who", "event", KEY: VALUE...} to the event
+# log, every value a JSON string; KEY is lowercase letters, digits and _ (others, and t, who and event, are
+# dropped). One write per line (an atomic append); over DEV_LOOP_EVENTS_MAX_BYTES (default 1 MiB) the log
+# first moves to events.jsonl.1. Outside a repository it does nothing; it never prints and never fails.
+dl_event() {
+  [ -n "${DL_ROOT:-}" ] && [ -n "${DL_STATE:-}" ] && [ $# -ge 2 ] || return 0
+  local file="$DL_STATE/events.jsonl" line pair key size
+  line="{\"t\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"who\":$(dl_json_string "$1"),\"event\":$(dl_json_string "$2")"
+  shift 2
+  for pair in "$@"; do
+    [[ $pair == *=* ]] || continue
+    key=${pair%%=*}
+    case $key in "" | *[!a-z0-9_]* | t | who | event) continue ;; esac
+    line+=",\"$key\":$(dl_json_string "${pair#*=}")"
+  done
+  {
+    [ -d "$DL_STATE" ] || mkdir -p "$DL_STATE"
+    if [ -f "$file" ]; then
+      size=$(wc -c <"$file")
+      [ "$((size + 0))" -lt "${DEV_LOOP_EVENTS_MAX_BYTES:-1048576}" ] || mv -f "$file" "$file.1"
+    fi
+    printf '%s}\n' "$line" >>"$file"
+  } 2>/dev/null
+  return 0
+}
+
 # dl_ledger_file: one JSON line per branch merge-train.sh merged (the record cleanup.sh trusts first).
 dl_ledger_file() {
   printf '%s/merged.jsonl\n' "$DL_STATE"

@@ -32,6 +32,18 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   user deletes it by hand (`--include` does not touch it); a branch whose later version has not merged
   is never touched. The dev-loop, gate and merge skills and the implementer brief say to re-push with
   the helper and never to force-push.
+- Status (#55): `scripts/status.sh` and the `/dev-loop:status` skill show what the loop is doing without
+  waking its session, read-only: the gate (pid alive, train, each running stage with its elapsed time,
+  log and seconds since the log last grew), the heavy slots in use and their holders, each loop worktree
+  (ticket, commit and notes age, pushed, ahead/behind), the last merge, the open tickets (`--no-gh`
+  skips `gh`) and the orchestrator's last event, then a verdict: `idle`, `working`, `waiting on <what>
+  (output <n>s ago)`, `waiting on heavy slot (queued)` (the gate's own job waits for a heavy slot;
+  `heavy.sh` records the gate's pid as `gate_pid`) or `possibly stalled: no event or output for <n> min`
+  (new key `watchdog.stall_minutes`, default 30; raise it for stages that print nothing for longer). `--json` for machines. A new event log
+  `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`): `gate-train.sh`, `merge-train.sh` and `heavy.sh`
+  append one JSON line per step, the orchestrator through the new `scripts/event.sh`; rotated at 1 MiB
+  to `events.jsonl.1`; a failed write is ignored. `permissions.sh` allows `status.sh` and `event.sh` with
+  the other plugin scripts. Nothing else changes without new config.
 - Docs maintenance (#47; only with `docs` configured): on the doc audit's cadence, right after the audit,
   the orchestrator opens one `docs: maintenance` ticket from `doctor.sh`'s docs notes and the auditor's
   new maintenance list (planned rows to move or remove, journals over budget, finished specs, at most one

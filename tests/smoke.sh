@@ -126,6 +126,10 @@ gate=$("$plugin/scripts/paths.sh" gate)
 expect "train-feat/2-second carries only the two branch commits on main" 2 \
   "$(git -C "$gate" rev-list --count origin/main..train-feat/2-second)"
 echo "$out" | grep -q "^3 passed" && pass "gate prints the check summary" || fail "no check summary"
+gate_events="$("$plugin/scripts/paths.sh" events)"
+expect "the gate's heavy jobs carry the gate's pid (gate_pid) in their slot events" \
+  "$(jq -r 'select(.event == "train-started") | .pid' "$gate_events" | tail -n 1)" \
+  "$(jq -r 'select(.who == "heavy" and .event == "slot-acquired") | .gate_pid' "$gate_events" | tail -n 1)"
 
 # 5. merge-train.sh merges in order with the fake gh and strips a leading '#' from the title.
 out=$("$plugin/scripts/merge-train.sh" feat/1-first feat/2-second 2>&1)
@@ -3299,6 +3303,7 @@ for cmd in "git fetch origin" "git status" "git push -u origin HEAD" "git rebase
   "gh pr create --title x --body-file n.md" "gh pr comment 3 --body ok" "gh pr list" "make lint" "make check" \
   "$mroot/scripts/gate-train.sh feat/1-a feat/2-b" "$mroot/scripts/doctor.sh" "$mroot/scripts/cleanup.sh" \
   "$mroot/scripts/repush.sh feat/1-a" "$mroot/scripts/permissions.sh" "$mroot/scripts/heavy.sh make check" \
+  "$mroot/scripts/status.sh --json --no-gh" "$mroot/scripts/event.sh agent-started ticket=55" \
   "$mroot/scripts/as-role.sh implementer git push -u origin HEAD"; do
   expect "perm: the loop command \"$cmd\" is allowed" allow "$(mdecide "$cmd")"
 done
@@ -3643,6 +3648,341 @@ awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#53" && pass "docs:
 grep -qF 'repush.sh' "$plugin/docs/DECISIONS.md" && pass "docs: DECISIONS records the re-push naming" ||
   fail "DECISIONS has no #53 entry"
 export FAKE_GH_DIR="$work/gh"
+
+# 22. Status (#55): the event log (gate, merge, heavy and event.sh lines, valid JSON, rotated with one
+# old file kept, write errors ignored) and status.sh (read-only: the gate, the heavy slots, the loop
+# worktrees, the last merge, open tickets, the orchestrator's last event and a verdict; --json).
+swork="$work/status"
+shome="$swork/home"
+git init -q --bare "$swork/origin.git"
+git clone -q "$swork/origin.git" "$swork/project" 2>/dev/null
+cd "$swork/project" || exit 1
+cat >.dev-loop.json <<'EOF'
+{"base_branch": "main", "checks": [{"name": "unit", "command": "sleep 4; echo unit ok", "heavy": false}],
+ "heavy": {"slots": 2, "poll_seconds": 1}}
+EOF
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+sstate="$shome/project"
+sevents="$sstate/events.jsonl"
+# senv COMMAND...: run COMMAND with the status section's state, lock directory and fake gh store.
+senv() { DEV_LOOP_HOME="$shome" DEV_LOOP_LOCK_DIR="$swork/locks" FAKE_GH_DIR="$swork/gh" "$@"; }
+sstatus() { senv "$plugin/scripts/status.sh" --no-gh "$@" 2>&1; }
+# valid_lines FILE: "jq|python3" counts of the lines of FILE that parse as JSON objects (all of them: "n|n").
+valid_lines() {
+  printf '%s|%s' "$(jq -R 'fromjson? | objects | 1' "$1" 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(python3 -I -c '
+import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        n += isinstance(json.loads(line), dict)
+    except ValueError:
+        pass
+print(n)' "$1")"
+}
+# sjson FILTER [STATUS_ARGS...]: the jq FILTER of status.sh --json.
+sjson() {
+  local filter=$1
+  shift
+  sstatus --json "$@" | jq -r "$filter" 2>/dev/null
+}
+# wait_event EVENT [FILE]: wait (up to 15 s) until an event of that name is in the log.
+wait_event() {
+  local _i
+  for _i in $(seq 1 75); do grep -q "\"event\":\"$1\"" "${2:-$sevents}" 2>/dev/null && return 0; sleep 0.2; done
+  return 1
+}
+
+expect "status: paths.sh events is the event log in the state directory" "$sevents" \
+  "$(senv "$plugin/scripts/paths.sh" events)"
+
+# Idle: nothing ran yet, no event log; status reads nothing it cannot find and writes nothing.
+mkdir -p "$sstate"
+out=$(sstatus)
+echo "$out"
+expect "status: a fresh project is idle" "verdict: idle" "$(echo "$out" | tail -n 1)"
+echo "$out" | grep -q '^gate: not running' && pass "status: idle shows the gate not running" ||
+  fail "status: idle gate line"
+expect "status: status.sh creates no event log" "" "$(ls "$sstate")"
+expect "status: --json is valid for jq" idle "$(sjson .verdict.state)"
+sstatus --json | python3 -I -c 'import json, sys; v = json.load(sys.stdin); sys.exit(v["verdict"]["state"] != "idle")' &&
+  pass "status: --json is valid for python3" || fail "status: --json not valid for python3"
+expect "status: the python3 fallback gives the same verdict" idle \
+  "$(DEV_LOOP_NO_JQ=1 sstatus --json | jq -r .verdict.state)"
+expect "status: --json has every top-level key" "gate heavy last_merge now open_tickets orchestrator repo verdict worktrees" \
+  "$(sjson 'keys | join(" ")')"
+
+# event.sh: one valid JSON line per call, quotes, backslashes, tabs and other scripts kept, who fixed.
+senv "$plugin/scripts/event.sh" agent-started ticket=11 'detail=say "hi" \ back	tab é' who=gate t=x \
+  'bad key=1' novalue
+expect "status: event.sh exits 0" 0 $?
+expect "status: event lines are valid JSON for jq and python3" "1|1" "$(valid_lines "$sevents")"
+line=$(tail -n 1 "$sevents")
+expect "status: event.sh records who orchestrator, the event and its keys" \
+  'orchestrator|agent-started|11|say "hi" \ back	tab é|null|null' \
+  "$(printf '%s' "$line" | jq -r '[.who, .event, .ticket, .detail, .["bad key"], .novalue] | map(tostring) | join("|")')"
+printf '%s' "$line" | jq -e '.t | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' >/dev/null &&
+  pass "status: an event has a UTC time" || fail "status: event time $line"
+senv "$plugin/scripts/event.sh" 'na"me' 'detail=x"y' && expect "status: a quoted event name stays valid JSON" "2|2" \
+  "$(valid_lines "$sevents")"
+expect "status: event.sh without an event is a usage error" 2 "$(senv "$plugin/scripts/event.sh" 2>/dev/null; echo $?)"
+
+# Rotation: over the cap the log moves to events.jsonl.1 (one old file kept) and a new one starts.
+rot="$swork/rot"
+for n in $(seq 1 30); do
+  DEV_LOOP_EVENTS_MAX_BYTES=400 DEV_LOOP_HOME="$rot" "$plugin/scripts/event.sh" "step-$n" detail="event number $n"
+done
+[ -s "$rot/project/events.jsonl.1" ] && [ "$(wc -c <"$rot/project/events.jsonl" | tr -d ' ')" -lt 600 ] &&
+  pass "status: the log rotates at the cap and keeps the old file as .1" || fail "status: no rotation"
+expect "status: only one old file is kept" "events.jsonl events.jsonl.1" "$(cd "$rot/project" && echo *)"
+expect "status: the newest event is in the current log" step-30 "$(tail -n 1 "$rot/project/events.jsonl" | jq -r .event)"
+rot_lines=$(($(wc -l <"$rot/project/events.jsonl") + 0))
+expect "status: the rotated log is valid JSON" "$(wc -l <"$rot/project/events.jsonl.1" | tr -d ' ')|$(wc -l <"$rot/project/events.jsonl.1" | tr -d ' ')" \
+  "$(valid_lines "$rot/project/events.jsonl.1")"
+expect "status: the current log is valid JSON" "$rot_lines|$rot_lines" "$(valid_lines "$rot/project/events.jsonl")"
+
+# A write error never fails a step: the event log is a directory here.
+bad="$swork/bad"
+mkdir -p "$bad/project/events.jsonl"
+err=$(DEV_LOOP_HOME="$bad" "$plugin/scripts/event.sh" agent-started 2>&1)
+expect "status: event.sh ignores a write error" "0|" "$?|$err"
+err=$(DEV_LOOP_HOME="$bad" DEV_LOOP_LOCK_DIR="$swork/locks" "$plugin/scripts/heavy.sh" bash -c 'echo ran' 2>/dev/null)
+expect "status: heavy.sh runs its command when the event log cannot be written" "0|ran" "$?|$err"
+
+# A real gate with a slow stage: running, its stage and log, a waiting verdict; then the merge's events.
+git checkout -q -b feat/7-gated
+echo two >>src.txt && git commit -q -am "feat: two (Refs #7)" && git push -q -u origin feat/7-gated
+git checkout -q main
+mkdir -p "$(senv "$plugin/scripts/paths.sh" notes-dir)"
+printf 'feat: two (#7)\n\nCloses #7\n' >"$(senv "$plugin/scripts/paths.sh" notes feat/7-gated)"
+senv "$plugin/scripts/gate-train.sh" feat/7-gated >"$swork/gate.out" 2>&1 &
+gate_bg=$!
+wait_event stage-started || fail "status: the gate wrote no stage-started event"
+out=$(sstatus)
+echo "$out"
+echo "$out" | grep -qE "^gate: running, pid [0-9]+, .*train: feat/7-gated" && pass "status: shows the running gate and its train" ||
+  fail "status: no running gate line"
+echo "$out" | grep -qE "^  stage unit: .*output [0-9]+s ago.*log .*train-unit.log" &&
+  pass "status: shows the running stage, its output age and its log" || fail "status: no stage line"
+echo "$out" | tail -n 1 | grep -qE '^verdict: waiting on gate stage unit \(output [0-9]+s ago\)$' &&
+  pass "status: a running gate is a waiting verdict" || fail "status: verdict while the gate runs"
+expect "status: --json names the running stage" "true|unit|waiting" \
+  "$(sjson '[.gate.running, .gate.stages[0].name, .verdict.state] | map(tostring) | join("|")')"
+wait "$gate_bg"
+expect "status: the gate stays green with events" 0 $?
+grep -q '^TRAIN GREEN' "$swork/gate.out" && pass "status: the gate prints TRAIN GREEN as before" || fail "status: gate output"
+expect "status: the gate's events in order" "train-started stage-started:unit stage-ended:unit:0 train-ended:0:green" \
+  "$(jq -r 'select(.who == "gate") | [.event, .stage, .rc, .result] | map(select(. != null)) | join(":")' "$sevents" | paste -sd' ' -)"
+expect "status: train-started records the gate's pid and branches" "feat/7-gated|yes" \
+  "$(jq -r 'select(.event == "train-started") | [.branches, (.pid | test("^[0-9]+$") | if . then "yes" else "no" end)] | join("|")' "$sevents")"
+expect "status: after the gate the gate is not running" "gate: not running" "$(sstatus | grep '^gate:')"
+senv "$plugin/scripts/merge-train.sh" feat/7-gated >"$swork/merge.out" 2>&1
+expect "status: the merge is green with events" 0 $?
+expect "status: the merge's events" "merge-started:feat/7-gated merged:feat/7-gated:7 merge-ended:0" \
+  "$(jq -r 'select(.who == "merge") | [.event, .branches, .branch, .ticket, .rc] | map(select(. != null)) | join(":")' "$sevents" | paste -sd' ' -)"
+sstatus | grep -qE '^last merge: feat/7-gated #7, [0-9]+s ago' && pass "status: shows the last merge from the ledger" ||
+  fail "status: no last merge line"
+expect "status: all event lines so far are valid JSON" "$(wc -l <"$sevents" | tr -d ' ')|$(wc -l <"$sevents" | tr -d ' ')" \
+  "$(valid_lines "$sevents")"
+
+# A heavy job holds a slot: status names its slot, pid and repository; the slot is free after release.
+DEV_LOOP_HOME="$shome" DEV_LOOP_LOCK_DIR="$swork/locks" "$plugin/scripts/heavy.sh" bash -c 'sleep 4' >/dev/null 2>&1 &
+heavy_bg=$!
+wait_event slot-acquired || fail "status: heavy.sh wrote no slot-acquired event"
+out=$(sstatus)
+echo "$out"
+echo "$out" | grep -qE "^heavy: 1 of 2 slots in use" && pass "status: counts the heavy slots in use" || fail "status: heavy line"
+echo "$out" | grep -qE "^  slot 1: pid $heavy_bg, project, [0-9]+s: bash -c sleep 4" &&
+  pass "status: names the slot's holder" || fail "status: no slot holder line"
+echo "$out" | tail -n 1 | grep -qE '^verdict: waiting on heavy job in slot 1 \(output [0-9]+s ago\)$' &&
+  pass "status: a heavy job of this repository is a waiting verdict" || fail "status: heavy verdict"
+expect "status: --json lists the holder" "1|$heavy_bg|project" \
+  "$(sjson '.heavy.held[0] | [.slot, .pid, .repo] | map(tostring) | join("|")')"
+wait "$heavy_bg"
+expect "status: a released slot is free" "heavy: 0 of 2 slots in use" "$(sstatus | grep '^heavy:')"
+expect "status: heavy.sh records acquired and released with rc" "slot-acquired:1 slot-released:1:0" \
+  "$(jq -r 'select(.who == "heavy") | [.event, .slot, .rc] | map(select(. != null)) | join(":")' "$sevents" | paste -sd' ' -)"
+
+# Loop worktrees, with and without notes; the orchestrator's events drive the verdict.
+git worktree add -q -b feat/11-alpha "$swork/wt-alpha" origin/main
+(cd "$swork/wt-alpha" && echo a >a.txt && git add a.txt && git commit -q -m "feat: a (Refs #11)" && git push -q -u origin feat/11-alpha)
+printf 'feat: a (#11)\n\nCloses #11\n' >"$(senv "$plugin/scripts/paths.sh" notes feat/11-alpha)"
+git worktree add -q -b fix/12-beta "$swork/wt-beta" origin/main
+(cd "$swork/wt-beta" && echo b >b.txt && git add b.txt && git commit -q -m "fix: b (Refs #12)")
+senv "$plugin/scripts/event.sh" agent-started ticket=11
+out=$(sstatus)
+echo "$out"
+echo "$out" | grep -qE "^  feat/11-alpha #11: commit [0-9]+s ago, notes [0-9]+s ago, pushed, ahead 1 behind 0 \($swork/wt-alpha\)$" &&
+  pass "status: a worktree with notes, pushed" || fail "status: alpha worktree line"
+echo "$out" | grep -qE "^  fix/12-beta #12: commit [0-9]+s ago, no notes, not pushed, ahead 1 behind 0 \($swork/wt-beta\)$" &&
+  pass "status: a worktree without notes, not pushed" || fail "status: beta worktree line"
+echo "$out" | grep -qE '^orchestrator: agent-started #11, [0-9]+s ago$' && pass "status: shows the orchestrator's last event" ||
+  fail "status: orchestrator line"
+echo "$out" | grep -q '^worktrees: 2' && pass "status: the main checkout and the gate worktree are not loop worktrees" ||
+  fail "status: worktree count"
+expect "status: agents at work is a working verdict" "verdict: working" "$(echo "$out" | tail -n 1)"
+expect "status: --json worktrees" "feat/11-alpha:11:true:true fix/12-beta:12:false:false" \
+  "$(sjson '.worktrees[] | [.branch, .ticket, .pushed, (.notes_age_seconds != null)] | map(tostring) | join(":")' | paste -sd' ' -)"
+senv "$plugin/scripts/event.sh" waiting detail="agents for #11 #12"
+sstatus | tail -n 1 | grep -qE '^verdict: waiting on agents for #11 #12 \(output [0-9]+s ago\)$' &&
+  pass "status: a waiting event of the orchestrator is a waiting verdict" || fail "status: orchestrator waiting verdict"
+senv "$plugin/scripts/event.sh" waiting-review
+sstatus | tail -n 1 | grep -qE '^verdict: waiting on review \(output [0-9]+s ago\)$' &&
+  pass "status: waiting-<what> names what it waits on" || fail "status: waiting-<what> verdict"
+
+# Open tickets through gh (optional): --no-gh skips it.
+mkdir -p "$swork/gh"
+printf '11\tOPEN\t\n12\tOPEN\t\n13\tOPEN\t\n' >"$swork/gh/issues.tsv"
+expect "status: counts open tickets with gh" "open tickets: 3" \
+  "$(senv "$plugin/scripts/status.sh" 2>&1 | grep '^open tickets')"
+expect "status: --no-gh does not ask gh" "open tickets: not checked (--no-gh)" "$(sstatus | grep '^open tickets')"
+
+# A stalled gate (hand-made state): the train's pid lives, but neither its log nor its events moved.
+st_home="$swork/stalled"
+st_state="$st_home/project"
+mkdir -p "$st_state/logs"
+sleep 60 &
+stuck=$!
+printf '%s feat/8-stuck\n' "$stuck" >"$st_state/train-running.txt"
+printf 'e2e output\n' >"$st_state/logs/train-e2e.log"
+printf '{"t":"2020-01-01T00:00:00Z","who":"gate","event":"train-started","pid":"%s","branches":"feat/8-stuck"}\n{"t":"2020-01-01T00:00:01Z","who":"gate","event":"stage-started","stage":"e2e","log":"%s"}\n' \
+  "$stuck" "$st_state/logs/train-e2e.log" >"$st_state/events.jsonl"
+touch -t 202001010000 "$st_state/logs/train-e2e.log" "$st_state/events.jsonl" "$st_state/train-running.txt"
+git worktree remove --force "$swork/wt-alpha" && git worktree remove --force "$swork/wt-beta"
+stat_st() { DEV_LOOP_HOME="$st_home" DEV_LOOP_LOCK_DIR="$swork/locks" "$plugin/scripts/status.sh" --no-gh "$@" 2>&1; }
+out=$(stat_st)
+echo "$out"
+echo "$out" | grep -qE "^gate: running, pid $stuck, " && pass "status: a stalled gate still shows as running" ||
+  fail "status: stalled gate line"
+echo "$out" | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a stage log that stopped growing is possibly stalled" || fail "status: stalled verdict"
+expect "status: --json stalled" "stalled|e2e" "$(stat_st --json | jq -r '[.verdict.state, .gate.stages[0].name] | join("|")')"
+# While the gate runs, an implementer's fresh commit and notes do not hide the frozen stage.
+git worktree add -q -b feat/13-busy "$swork/wt-busy" origin/main
+(cd "$swork/wt-busy" && echo c >c.txt && git add c.txt && git commit -q -m "feat: c (Refs #13)")
+DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy >/dev/null
+printf 'feat: c (#13)\n\nCloses #13\n' >"$(DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy)"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a frozen stage with a fresh worktree commit is still possibly stalled" || fail "status: worktree activity hid a frozen stage"
+# A fresh heavy event of this repository (an implementer's heavy job) does not hide the frozen stage either.
+cp "$st_state/events.jsonl" "$swork/stalled-events.keep"
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"999999","detail":"implementer tests"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$st_state/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a frozen stage with a fresh heavy event of this repository is still possibly stalled" ||
+  fail "status: a heavy event hid a frozen stage"
+cp -p "$swork/stalled-events.keep" "$st_state/events.jsonl"
+touch -t 202001010000 "$st_state/events.jsonl"
+# The gate's own job queued in heavy.sh (gate_pid is the running gate's pid) is waiting, never stalled; an
+# implementer's queued job (no gate_pid, or another gate's) leaves the frozen stage possibly stalled.
+# qbg COMMAND... &: run COMMAND in the background with one heavy slot (exec, so $! is the command's pid).
+qbg() { DEV_LOOP_HOME="$st_home" DEV_LOOP_LOCK_DIR="$swork/locks-q" DEV_LOOP_HEAVY_SLOTS=1 exec "$@"; }
+qbg "$plugin/scripts/heavy.sh" sleep 60 >/dev/null 2>&1 &
+q_holder=$!
+wait_event slot-acquired "$st_state/events.jsonl" || fail "status: the slot holder wrote no slot-acquired event"
+DL_GATE_PID=$stuck qbg "$plugin/scripts/heavy.sh" true >/dev/null 2>&1 &
+q_gate=$!
+wait_event queued "$st_state/events.jsonl" || fail "status: the gate's queued job wrote no queued event"
+expect "status: heavy.sh records the gate's pid in its queued event" "$stuck" \
+  "$(jq -r 'select(.event == "queued") | .gate_pid' "$st_state/events.jsonl" | tail -n 1)"
+out=$(stat_st)
+echo "$out"
+expect "status: the gate's own job queued for a heavy slot is waiting, not stalled" \
+  "verdict: waiting on heavy slot (queued)" "$(echo "$out" | tail -n 1)"
+expect "status: --json names the gate's queued job" "waiting|$q_gate|$stuck" \
+  "$(stat_st --json | jq -r '[.verdict.state, .heavy.waiting[0].pid, .heavy.waiting[0].gate_pid] | map(tostring) | join("|")')"
+kill "$q_gate" 2>/dev/null
+wait "$q_gate" 2>/dev/null
+qbg "$plugin/scripts/heavy.sh" true >/dev/null 2>&1 &
+q_impl=$!
+for _i in $(seq 1 75); do [ "$(grep -c '"event":"queued"' "$st_state/events.jsonl")" -ge 2 ] && break; sleep 0.2; done
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: an implementer's queued heavy job plus a frozen stage stays possibly stalled" ||
+  fail "status: an implementer's queued job hid a frozen stage"
+sleep 60 &
+q_other_gate=$!
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"%s","gate_pid":"%s","detail":"another gate"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$q_other_gate" "$q_other_gate" >>"$st_state/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a queued job of another gate pid does not hide a frozen stage" ||
+  fail "status: another gate's queued job hid a frozen stage"
+mkdir -p "$st_home/other"
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"%s","gate_pid":"%s","detail":"same pid, other repo"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$q_other_gate" "$stuck" >"$st_home/other/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: another repository's queued job naming this gate's pid does not hide a frozen stage" ||
+  fail "status: another repository's queued job with this gate's pid hid a frozen stage"
+rm -rf "$st_home/other"
+kill "$q_impl" "$q_other_gate" 2>/dev/null
+wait "$q_impl" "$q_other_gate" 2>/dev/null
+pkill -P "$q_holder" 2>/dev/null
+wait "$q_holder" 2>/dev/null
+cp -p "$swork/stalled-events.keep" "$st_state/events.jsonl"
+touch -t 202001010000 "$st_state/events.jsonl"
+# Another repository sharing the heavy queue: its live slot and fresh event show, but never count here.
+sleep 60 &
+other=$!
+mkdir -p "$st_home/other"
+printf '{"t":"%s","who":"heavy","event":"slot-acquired","slot":"2","pid":"%s","detail":"other e2e"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$other" >"$st_home/other/events.jsonl"
+out=$(stat_st)
+echo "$out" | grep -qE "^  slot 2: pid $other, other, [0-9]+s: other e2e$" && pass "status: lists another repository's slot holder" ||
+  fail "status: no slot line for the other repository"
+echo "$out" | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: another repository's fresh heavy event does not mask a stall" || fail "status: other repository masked the stall"
+git worktree remove --force "$swork/wt-busy"
+mv "$st_state/train-running.txt" "$swork/train-running.keep"
+expect "status: another repository's live slot is not this repository's activity" idle \
+  "$(stat_st --json | jq -r .verdict.state)"
+mv "$swork/train-running.keep" "$st_state/train-running.txt"
+kill "$other" 2>/dev/null
+wait "$other" 2>/dev/null
+rm -rf "$st_home/other"
+printf '{"watchdog": {"stall_minutes": 99999999}, "checks": ["true"]}\n' >"$swork/patient.json"
+DEV_LOOP_CONFIG="$swork/patient.json" stat_st | tail -n 1 | grep -qE '^verdict: waiting on gate stage e2e' &&
+  pass "status: watchdog.stall_minutes sets the threshold" || fail "status: stall_minutes ignored"
+printf 'more\n' >>"$st_state/logs/train-e2e.log"
+stat_st | tail -n 1 | grep -qE '^verdict: waiting on gate stage e2e \(output [0-9]+s ago\)$' &&
+  pass "status: a growing stage log is waiting again" || fail "status: growing log verdict"
+kill "$stuck" 2>/dev/null
+wait "$stuck" 2>/dev/null
+stat_st | grep -qE "^gate: not running \(train-running.txt names pid $stuck, which has ended\)" &&
+  pass "status: a dead gate pid is not running" || fail "status: dead gate pid"
+expect "status: a dead gate is said in the idle verdict" "verdict: idle (the last gate died: train-running.txt is stale)" \
+  "$(stat_st | tail -n 1)"
+expect "status: --json flags the dead gate" "idle|true|true" \
+  "$(stat_st --json | jq -r '[.verdict.state, .verdict.gate_died, .gate.stale] | map(tostring) | join("|")')"
+expect "status: --json without a dead gate has the flags false" "false|false" \
+  "$(sjson '[.verdict.gate_died, .gate.stale] | map(tostring) | join("|")')"
+
+# Read-only: no file in the state directories or the lock directory changes while status runs.
+snapshot() { find "$shome" "$st_home" "$swork/locks" -exec ls -ld {} + 2>/dev/null | LC_ALL=C sort | cksum; }
+before=$(snapshot)
+touch "$swork/marker"
+sleep 1
+sstatus >/dev/null
+sstatus --json >/dev/null
+senv "$plugin/scripts/status.sh" >/dev/null 2>&1
+stat_st >/dev/null
+DEV_LOOP_NO_JQ=1 sstatus --json >/dev/null
+expect "status: status.sh changes no file in the state or lock directories" "$before|" \
+  "$(snapshot)|$(find "$shome" "$st_home" "$swork/locks" -newer "$swork/marker" 2>/dev/null)"
+
+# Docs: README section, the skill, CHANGELOG and decisions.
+status_readme=$(awk '/^## / {on = ($0 ~ /^## Status/)} on' "$plugin/README.md")
+for phrase in "status.sh" "--json" "--no-gh" "event.sh" "events.jsonl" "watchdog.stall_minutes" "possibly stalled" \
+  "/dev-loop:status"; do
+  printf '%s\n' "$status_readme" | grep -qF -- "$phrase" && pass "status: the README section names \"$phrase\"" ||
+    fail "status: the README section does not name \"$phrase\""
+done
+grep -q '^name: status$' "$plugin/skills/status/SKILL.md" 2>/dev/null && grep -qF 'status.sh' "$plugin/skills/status/SKILL.md" &&
+  pass "status: the status skill runs status.sh" || fail "status: no status skill"
+grep -qF 'event.sh' "$plugin/skills/dev-loop/SKILL.md" && pass "status: the dev-loop skill records orchestrator events" ||
+  fail "status: the dev-loop skill does not name event.sh"
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#55" && pass "status: CHANGELOG has an Unreleased entry for #55" ||
+  fail "status: no Unreleased #55 entry"
+grep -qF '(#55)' "$plugin/docs/DECISIONS.md" && pass "status: the decisions log has #55" || fail "status: no #55 decision"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

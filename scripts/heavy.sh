@@ -10,7 +10,9 @@
 # Config (.dev-loop.json, all optional): heavy.slots (2), heavy.memory_max ("" = no cap, e.g. "8G"),
 # heavy.port_env, heavy.port_base (8600), heavy.port_step (10), heavy.clean_temp (globs of stale temp
 # entries to delete), heavy.clean_temp_minutes (120), heavy.poll_seconds (10).
-# Environment: DEV_LOOP_LOCK_DIR overrides the lock directory, DEV_LOOP_HEAVY_SLOTS the slot count.
+# Environment: DEV_LOOP_LOCK_DIR overrides the lock directory, DEV_LOOP_HEAVY_SLOTS the slot count;
+# DL_GATE_PID (exported by gate-train.sh to its stages) is recorded as gate_pid in the queued and
+# slot-acquired events, so status.sh knows the job is the gate's.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -77,6 +79,7 @@ run_in_slot() {
     export "$port_env=$((port_base + slot * port_step))"
   fi
   echo "[heavy.sh] slot $slot/$slots acquired: $*" >&2
+  dl_event heavy slot-acquired slot="$slot" pid="$$" ${DL_GATE_PID:+"gate_pid=$DL_GATE_PID"} detail="$(heavy_label "$@")"
   if [ -z "$memory_max" ]; then
     without_fd "$lock_fd" "$@"
   elif have_memory_cap; then
@@ -85,6 +88,15 @@ run_in_slot() {
     dl_warn "heavy.sh: no systemd user manager; running without the $memory_max memory cap"
     without_fd "$lock_fd" "$@"
   fi
+  local rc=$?
+  dl_event heavy slot-released slot="$slot" pid="$$" rc="$rc"
+  return "$rc"
+}
+
+# heavy_label COMMAND...: the command as one line of at most 200 characters, for the event log.
+heavy_label() {
+  local label="$*"
+  printf '%s' "${label:0:200}"
 }
 
 # without_fd FD COMMAND...: run the command with descriptor FD closed (FD empty: nothing to close).
@@ -158,6 +170,7 @@ while true; do
   done
   if [ -z "$waiting_said" ]; then
     echo "[heavy.sh] all $slots slots busy, waiting: $*" >&2
+    dl_event heavy queued pid="$$" ${DL_GATE_PID:+"gate_pid=$DL_GATE_PID"} detail="$(heavy_label "$@")"
     waiting_said=yes
   fi
   sleep "$poll_seconds"
