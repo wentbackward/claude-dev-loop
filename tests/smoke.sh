@@ -4141,6 +4141,40 @@ expect "stall: a check queued for a slot longer than stall_minutes is not stalle
 [ "$elapsed" -ge 4 ] && pass "stall: the queued check did wait for the slot ($elapsed s)" ||
   fail "stall: the queued check did not wait ($elapsed s)"
 
+# A default (heavy) check that prints, then hangs: stalled once it holds its slot; nothing is left, the
+# slot is free again.
+wgate '"checks": [{"name": "hheavy", "stall_minutes": 2,
+  "command": "echo $$ >\"$SMOKE_WORK/stall.pids\"; echo started; sleep 60 & echo $! >>\"$SMOKE_WORK/stall.pids\"; wait"}]'
+expect "stall: a silent heavy check is stalled and red" "1 hheavy stalled: TRAIN RED" "$rc $(wlines) $(echo "$out" | tail -1)"
+[ "$elapsed" -lt 15 ] && pass "stall: the silent heavy check is stopped promptly ($elapsed s)" ||
+  fail "stall: the heavy check took $elapsed s"
+# shellcheck disable=SC2046  # the pid list splits on purpose
+expect "stall: no process of the stalled heavy check is left" "" "$(alive $(cat "$wwork/stall.pids" 2>/dev/null))"
+DEV_LOOP_LOCK_DIR="$wwork/locks" DEV_LOOP_CONFIG="$wwork/gate.json" "$plugin/scripts/heavy.sh" \
+  bash -c 'echo "slot $DEV_LOOP_SLOT"' >"$wwork/slot.out" 2>/dev/null &
+slot_job=$!
+for _ in $(seq 25); do kill -0 "$slot_job" 2>/dev/null || break; sleep 0.2; done
+kill "$slot_job" 2>/dev/null
+wait "$slot_job" 2>/dev/null
+expect "stall: the stalled heavy check's slot is free again" "slot 1" "$(cat "$wwork/slot.out" 2>/dev/null)"
+# heavy.sh's "acquired" line is the one the gate waits for (both use common.sh's definitions).
+acquired_re=$(bash -c '. "$1/scripts/lib/common.sh"; printf "%s" "$DL_HEAVY_ACQUIRED_RE"' _ "$plugin")
+DEV_LOOP_LOCK_DIR="$wwork/locks" DEV_LOOP_CONFIG="$wwork/gate.json" "$plugin/scripts/heavy.sh" true 2>&1 |
+  grep -qE "$acquired_re" && [ -n "$acquired_re" ] && pass "stall: heavy.sh prints the line the gate's stall clock waits for" ||
+  fail "stall: heavy.sh's acquired line does not match DL_HEAVY_ACQUIRED_RE ('$acquired_re')"
+
+# An invalid DEV_LOOP_STALL_UNIT_SECONDS falls back to 60 with a warning; the gate still runs to its end.
+for unit in abc 0; do
+  printf '{"base_branch": "main", "checks": [{"name": "unit", "heavy": false, "stall_minutes": 1, "command": "echo started; sleep 3"}]}\n' \
+    >"$wwork/gate.json"
+  out=$(DEV_LOOP_HOME="$wwork/home" DEV_LOOP_LOCK_DIR="$wwork/locks" DEV_LOOP_CONFIG="$wwork/gate.json" \
+    DEV_LOOP_STALL_UNIT_SECONDS=$unit "$plugin/scripts/gate-train.sh" feat/9-stall 2>&1)
+  rc=$?
+  expect "stall: DEV_LOOP_STALL_UNIT_SECONDS=$unit falls back to 60" "0 unit rc=0" "$rc $(wlines)"
+  echo "$out" | grep -q "DEV_LOOP_STALL_UNIT_SECONDS \"$unit\" is not a positive whole number; using 60" &&
+    pass "stall: DEV_LOOP_STALL_UNIT_SECONDS=$unit is named" || fail "stall: no warning for DEV_LOOP_STALL_UNIT_SECONDS=$unit"
+done
+
 # Sequential with fail_fast: a stalled check fails the train like a failure, the next is skipped.
 wgate '"fail_fast": true, "checks": [
   {"name": "hang", "heavy": false, "stall_minutes": 1, "command": "echo started; sleep 60"},
