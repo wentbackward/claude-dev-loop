@@ -22,8 +22,8 @@
 #   verdict: possibly stalled: no event or output for <n> min
 # "Output" is the newest of: this repository's events, the running stage logs, train-running.txt, and the
 # commits and notes files of the loop worktrees; while the gate runs, only the gate-side evidence (stage
-# logs, train-running.txt, this repository's gate and heavy events), so other work never hides a frozen
-# stage. Other repositories' events never count. The threshold is watchdog.stall_minutes (default 30).
+# logs, train-running.txt, this repository's gate events), so other work (an implementer's commits or
+# heavy jobs) never hides a frozen stage. Other repositories' events never count. The threshold is watchdog.stall_minutes (default 30).
 #
 # --json prints one object (the contract; fields are only added, never renamed):
 #   {"repo", "now" (UTC),
@@ -140,8 +140,8 @@ dur() {
 }
 
 # quiet_seen SECONDS [gate]: count one piece of evidence; quiet is the age of the newest, gate_quiet the
-# age of the newest gate-side evidence (stage logs, train-running.txt, this repository's gate and heavy
-# events), the only evidence for the verdict while the gate runs.
+# age of the newest gate-side evidence (stage logs, train-running.txt, this repository's gate events; the
+# gate's own heavy jobs show in their stage logs), the only evidence for the verdict while the gate runs.
 quiet="" gate_quiet=""
 quiet_seen() {
   case ${1:-} in "" | *[!0-9]*) return 0 ;; esac
@@ -164,7 +164,7 @@ newest_event() {
 }
 newest=$(newest_event)
 [ -z "$newest" ] || quiet_seen "$((now - newest))"
-newest=$(newest_event gate heavy)
+newest=$(newest_event gate)
 [ -z "$newest" ] || quiet_seen "$((now - newest))" gate
 
 # --- The gate: train-running.txt and its pid, the stages started since its train-started event. ---

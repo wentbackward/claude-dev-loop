@@ -3860,6 +3860,15 @@ DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy >/dev/nul
 printf 'feat: c (#13)\n\nCloses #13\n' >"$(DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy)"
 stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: a frozen stage with a fresh worktree commit is still possibly stalled" || fail "status: worktree activity hid a frozen stage"
+# A fresh heavy event of this repository (an implementer's heavy job) does not hide the frozen stage either.
+cp "$st_state/events.jsonl" "$swork/stalled-events.keep"
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"999999","detail":"implementer tests"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$st_state/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a frozen stage with a fresh heavy event of this repository is still possibly stalled" ||
+  fail "status: a heavy event hid a frozen stage"
+cp -p "$swork/stalled-events.keep" "$st_state/events.jsonl"
+touch -t 202001010000 "$st_state/events.jsonl"
 # Another repository sharing the heavy queue: its live slot and fresh event show, but never count here.
 sleep 60 &
 other=$!
