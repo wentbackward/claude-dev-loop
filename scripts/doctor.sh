@@ -234,7 +234,7 @@ doctor_scenarios() {
 # (never the user's own files): a deny rule that blocks a loop command is MISSING; a missing or incomplete
 # allow list is a note; nothing is printed when the rules are complete. Without .claude/settings.json one note.
 doctor_permissions() {
-  local root rel file rule cmd allow missing lacking=0 samples
+  local root rel file rule cmd allow commands="" lacking=0 samples
   if [ ! -f "$DL_ROOT/.claude/settings.json" ]; then
     optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
     return
@@ -257,16 +257,15 @@ doctor_permissions() {
     optional "permissions: no allow list: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
     return
   fi
-  missing=""
   while IFS= read -r cmd; do
-    printf '%s\n' "$allow" | grep -qxF -- "Bash($cmd)" || missing="${missing:+$missing, }Bash($cmd)"
+    printf '%s\n' "$allow" | grep -qxF -- "Bash($cmd)" || commands="${commands:+$commands, }Bash($cmd)"
   done < <(dl_perm_project_commands)
-  [ -n "$missing" ] &&
-    optional "permissions: the allow list lacks the project commands: $missing (permissions.sh --apply)"
+  [ -n "$commands" ] &&
+    optional "permissions: the allow list lacks the project commands: $commands (permissions.sh --apply)"
   while IFS=$'\t' read -r _ rule; do
     printf '%s\n' "$allow" | grep -qxF -- "$rule" || lacking=$((lacking + 1))
   done < <({ dl_perm_wanted "$root" shared; dl_perm_wanted "$root" local; } | awk -F'\t' '$1 == "allow"' |
-    grep -vxF -f <(dl_perm_project_commands | sed 's/^/allow\tBash(/; s/$/)/'))
+    grep -vxF -f <(dl_perm_project_commands | awk '{ print "allow\tBash(" $0 ")" }'))
   [ "$lacking" -gt 0 ] &&
     optional "permissions: the allow list lacks $lacking of the loop's rules (permissions.sh lists them; --apply adds them)"
   return 0
