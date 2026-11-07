@@ -4078,7 +4078,7 @@ export FAKE_GH_DIR="$work/gh"
 
 cd "$work/project" || exit 1
 
-# 23. Stall watchdog (#56): the gate's per-stage stall_minutes (off by default; a stage whose log has not
+# 24. Stall watchdog (#56): the gate's per-stage stall_minutes (off by default; a stage whose log has not
 # grown for that long is stopped and red, one whose log grows is not, one queued in heavy.sh for a slot is
 # not stalled) and the orchestrator heartbeat in the dev-loop skill. DEV_LOOP_STALL_UNIT_SECONDS=1 makes a
 # stall "minute" one second.
