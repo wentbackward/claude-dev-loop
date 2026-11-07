@@ -614,7 +614,15 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   and the orchestrator's last event is older than the threshold. While the gate runs, only gate-side
   evidence counts (stage logs, `train-running.txt`, this repository's gate events; the gate's own heavy
   jobs show in their stage logs), so an implementer's commits or heavy jobs never hide a frozen stage; other repositories' heavy events never count as this
-  repository's activity. A dead gate pid in `train-running.txt` (a killed gate) is said in the idle
+  repository's activity. A gate job queued in `heavy.sh` behind a busy machine writes nothing while it
+  waits, so it is linked to the gate deterministically: `gate-train.sh` exports its pid as `DL_GATE_PID`
+  to its stages, `heavy.sh` records it as `gate_pid` in its `queued` and `slot-acquired` events, and a
+  live queued job whose `gate_pid` equals the running gate's pid gives `waiting on heavy slot (queued)`,
+  never a stall; a queued job without it (an implementer's) or with another pid counts for nothing.
+  Walking `ps` parent chains from the heavy job to the gate was rejected: it differs between Linux and
+  macOS and breaks when a process in between exits or re-parents. A stage silent for longer than
+  `watchdog.stall_minutes` still reads as possibly stalled; a slow silent suite needs a higher value,
+  and a watchdog confirms before acting. A dead gate pid in `train-running.txt` (a killed gate) is said in the idle
   verdict and flagged in `--json` (`verdict.gate_died`, `gate.stale`). The orchestrator's `waiting` events name
   what it waits on (`detail`, else the rest of the event name). `status.sh` does not fetch (a fetch
   writes refs), so pushed and ahead/behind use the local remote-tracking refs.

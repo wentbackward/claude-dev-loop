@@ -162,11 +162,16 @@ session, read-only: it never writes, signals or locks anything.
 - **The last merge** (the ledger), the **open tickets** count (`gh issue list`; `--no-gh` skips it), and
   the **orchestrator's last event** with its age.
 - **The verdict**, the last line: `idle`, `working`, `waiting on <what> (output <n>s ago)` (a running gate
-  stage, a heavy job of this repository, or the orchestrator's last `waiting` event), or
+  stage, a heavy job of this repository, or the orchestrator's last `waiting` event),
+  `waiting on heavy slot (queued)` (the running gate's own job waits in `heavy.sh` for a free slot, for
+  example behind another repository's long job), or
   `possibly stalled: no event or output for <n> min`, when the newest evidence (an event, a stage log, a
   worktree commit or notes file) is older than `watchdog.stall_minutes` (default 30). While the gate
-  runs, only its own evidence counts (stage logs, `train-running.txt`, this repository's gate events), so
-  an implementer's commits or heavy jobs never hide a frozen stage; other repositories' events never count.
+  runs, only its own evidence counts (stage logs, `train-running.txt`, this repository's gate events, a
+  live queued heavy job of this gate), so an implementer's commits or heavy jobs never hide a frozen
+  stage; other repositories' events never count. A stage that prints nothing for longer than
+  `stall_minutes` reads as possibly stalled, so a project with slow silent suites needs a higher
+  `stall_minutes`; a watchdog (#56) should confirm before it acts on the verdict.
   A gate killed without cleaning up shows as `idle (the last gate died: train-running.txt is stale)`.
 - **`--json`** prints one object for machines; its fields are listed at the top of `scripts/status.sh`
   and are only ever added to.
@@ -177,7 +182,7 @@ The **event log** `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`) has one 
 `stage-ended` (`stage`, `rc`, or `result: stopped`) and `train-ended` (`rc`, `result`: green, red,
 conflict, error); `merge-train.sh` writes `merge-started`, `merged` (`branch`, `ticket`) and `merge-ended`
 (`rc`); `heavy.sh` writes `queued`, `slot-acquired` and `slot-released` (`slot`, `pid`, `rc`, the command as
-`detail`). The orchestrator records its own steps with `scripts/event.sh <event> [key=value ...]` (for
+`detail`, and `gate_pid` when the gate runs the job: `gate-train.sh` exports its pid as `DL_GATE_PID`). The orchestrator records its own steps with `scripts/event.sh <event> [key=value ...]` (for
 example `event.sh agent-started ticket=12`, `event.sh waiting detail="gate train feat/12-x"`). Each line is
 one append; at 1 MiB the log moves to `events.jsonl.1` (one old file kept). A failed write is ignored, so
 the log never fails a gate, and nothing but `status.sh` reads it.
@@ -712,7 +717,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `heavy.port_env`, `heavy.port_base`, `heavy.port_step` | none, `8600`, `10` | the per-slot port variable |
 | `heavy.clean_temp`, `heavy.clean_temp_minutes` | `[]`, `120` | stale temp globs (`$USER` is expanded) and their age |
 | `heavy.poll_seconds` | `10` | how often a waiting command retries |
-| `watchdog.stall_minutes` | `30` | `status.sh`: minutes without an event or output before the verdict is `possibly stalled` |
+| `watchdog.stall_minutes` | `30` | `status.sh`: minutes without an event or output before the verdict is `possibly stalled`; a stage silent for longer (a slow suite that prints nothing until it ends) reads as stalled, so raise it for such suites; a watchdog should confirm before acting |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |

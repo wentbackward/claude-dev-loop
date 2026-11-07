@@ -37,8 +37,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   log and seconds since the log last grew), the heavy slots in use and their holders, each loop worktree
   (ticket, commit and notes age, pushed, ahead/behind), the last merge, the open tickets (`--no-gh`
   skips `gh`) and the orchestrator's last event, then a verdict: `idle`, `working`, `waiting on <what>
-  (output <n>s ago)` or `possibly stalled: no event or output for <n> min` (new key
-  `watchdog.stall_minutes`, default 30). `--json` for machines. A new event log
+  (output <n>s ago)`, `waiting on heavy slot (queued)` (the gate's own job waits for a heavy slot;
+  `heavy.sh` records the gate's pid as `gate_pid`) or `possibly stalled: no event or output for <n> min`
+  (new key `watchdog.stall_minutes`, default 30; raise it for stages that print nothing for longer). `--json` for machines. A new event log
   `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`): `gate-train.sh`, `merge-train.sh` and `heavy.sh`
   append one JSON line per step, the orchestrator through the new `scripts/event.sh`; rotated at 1 MiB
   to `events.jsonl.1`; a failed write is ignored. Nothing else changes without new config.
