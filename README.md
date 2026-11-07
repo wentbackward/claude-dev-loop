@@ -831,7 +831,8 @@ the rules it needs. `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` lists the mis
   - **ask**, matched anywhere in a command (also after `git -C <dir>` or `git -c <key>=<value>`): `git tag`,
     `gh release`, pushes with `--tags`, `--follow-tags`, `refs/` (tags and heads), `--mirror`, `--all`,
     `--delete` or `-d`, a push naming the base branch (`<base>`, `:<base>`), a push deleting a loop branch
-    (`:feat/...`), `git worktree remove --force` or `-f`.
+    (`:feat/...`), `git worktree remove --force` or `-f`, `git rebase --exec` or `-x`, `git fetch` and
+    `git pull` with `--upload-pack` or after `git -c <key>=<value>` (each runs a command of its own).
   - **deny**, matched anywhere the same way: force pushes (`--force`, `--force-with-lease`, `-f`, `+<ref>`,
     `:+<ref>`), `gh repo delete`, `gh pr merge --admin`, `sudo`, `.env` and role credentials.
 - `.claude/settings.local.json` (this machine only; `permissions.sh --apply` adds it to `.gitignore`) gets
@@ -858,10 +859,20 @@ A wildcard cannot exclude arguments: `git push -u origin feat/*` would also matc
 `git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask
 and deny rules match dangerous arguments anywhere as a second line. The same limit applies to the other
 wildcard allow rules: `git diff`, `git log` and `git show` accept `--output=<file>` (they write a file),
-and `git fetch +<ref>:<ref>` force-updates a local branch; both stay inside the repository. The `Read` and
+and `git fetch +<ref>:<ref>` force-updates a local branch; both stay inside the repository. Options that
+run a command (`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` or `-c`) ask instead. The `Read` and
 `Edit` deny rules on `.env` cover only those tools: a Bash command such as `cat .env` is not stopped by
 them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.md` rule not to read
-`.env` files stays the guard. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
+`.env` files stays the guard.
+
+The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
+commit message or PR body that quotes such a command. Write those messages without the literal flag, or
+pass the text in a file (`git commit -F <file>`, `gh pr create --body-file <file>`).
+
+The project's own commands are trusted: `fast_check` and each `checks` command become allow rules as they
+are written. A command containing `*`, `?` or ending in `:*` becomes a wildcard in its rule (`*` matches any
+text; a trailing `:*` matches any arguments), so keep those commands free of such characters or accept the
+broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 
 ## Safety notes
 

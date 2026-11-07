@@ -531,8 +531,13 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   needs instead (`:<base>`, `:<base> *`, `:<branch pattern>`, and `refs/`). `heavy.sh` and `as-role.sh`
   run any command they are given, so they get exact rules for the loop's uses only (`heavy.sh <project
   command>`, `as-role.sh implementer git push -u <remote> HEAD`); other uses ask in the default mode. A deny
-  on `*git*push*--force*` also refuses a command that merely contains the three strings (a commit message
-  or PR body quoting a force push); the agent rewords it or uses `--body-file`. `git diff`, `git log` and
+  on `*git*push*--force*` or `*gh pr merge*--admin*` also refuses a command that merely contains those
+  strings (a commit message or PR body quoting one); the agent writes the message without the literal flag
+  or passes it in a file (`git commit -F`, `gh pr create --body-file`). Options that make git run a
+  command of its own ask, matched anywhere: `git rebase --exec`/`-x`, `git fetch`/`git pull`
+  `--upload-pack`, and `git -c <key>=<value>` before `fetch` or `pull`. The project's commands become
+  exact allow rules as written, so a `*` in one is a wildcard in its rule and a trailing `:*` a prefix; the
+  project's commands are trusted, and the README says so. `git diff`, `git log` and
   `git show` with `--output=<file>`, and `git fetch +<ref>:<ref>`, stay allowed: they write only inside the
   repository. The `Read`/`Edit` deny rules on `.env` do not stop `cat .env` through Bash; a Bash ask rule
   on `*.env*` would also ask for `.env.example` and every path with `.env` in it, so the README states the
