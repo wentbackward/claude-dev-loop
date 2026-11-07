@@ -519,13 +519,24 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   goes stale on every plugin update; a rule with a leading `*` (`Bash(*/scripts/gate-train.sh *)`) would
   also allow any command that merely names the script (`rm ... /x/scripts/gate-train.sh`). A machine path
   in a committed file would leak the user's home directory into a public repository.
-- **Wildcards cannot exclude arguments:** `Bash(git push -u origin feat/*)` also matches
-  `git push -u origin feat/x --force` or `... --tags` or `... main`. The template therefore denies force
-  pushes and asks for tag, mirror and delete pushes with patterns that match the argument anywhere
-  (`Bash(*git push*--force*)`), and the script asks for any push that ends in the base branch. The same
-  patterns cover commands wrapped by `heavy.sh` and `as-role.sh`, whose allow rules allow any command they
-  run. A deny on `*git push*--force*` also refuses a command that merely contains both strings (a commit
-  message quoting one); the agent rewords it. Releases, tags and tag pushes ask in every mode; other
+- **Wildcards cannot exclude arguments:** `Bash(git push -u origin feat/*)` would also match
+  `git push -u origin feat/x:refs/heads/main`, `... --force` or `... :feat/b` (a delete). So the only push
+  allowed is the exact `git push -u <remote> HEAD`, and the implementer brief and the `dev-loop` skill push
+  in that form (an exact rule carries no extra argument; `repush.sh` and `merge-train.sh` push inside
+  scripts, where rules do not apply). As a second line, the template denies force pushes and asks for
+  tag, `refs/`, mirror, all, delete and base-branch pushes with patterns that match anywhere and between
+  `git` and `push` (`Bash(*git*push*--force*)` also catches `git -c a=b push --force` and
+  `git -C . push -f`). A colon refspec cannot be matched in general: a rule ending in `:*` is read as a
+  trailing ` *`, so `Bash(*git*push*:*)` would ask for every push; the script names the colon forms it
+  needs instead (`:<base>`, `:<base> *`, `:<branch pattern>`, and `refs/`). `heavy.sh` and `as-role.sh`
+  run any command they are given, so they get exact rules for the loop's uses only (`heavy.sh <project
+  command>`, `as-role.sh implementer git push -u <remote> HEAD`); other uses ask in the default mode. A deny
+  on `*git*push*--force*` also refuses a command that merely contains the three strings (a commit message
+  or PR body quoting a force push); the agent rewords it or uses `--body-file`. `git diff`, `git log` and
+  `git show` with `--output=<file>`, and `git fetch +<ref>:<ref>`, stay allowed: they write only inside the
+  repository. The `Read`/`Edit` deny rules on `.env` do not stop `cat .env` through Bash; a Bash ask rule
+  on `*.env*` would also ask for `.env.example` and every path with `.env` in it, so the README states the
+  limit and `CLAUDE.md`'s rule stays the guard. Releases, tags and tag pushes ask in every mode; other
   commands outside the repository are in no allow rule, so they ask in the default mode, the classifier
   judges them in auto mode, and in bypass mode only the stop conditions hold them back (the issue's "still
   ask in every mode" holds for what the rules can name).

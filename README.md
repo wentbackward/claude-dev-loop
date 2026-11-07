@@ -825,17 +825,21 @@ the rules it needs. `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` lists the mis
   own:
   - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`,
     `git commit`; `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
-    `gh pr diff`, `gh pr checks`); `git push -u <remote> <branch>` for the loop's branch patterns
-    (`github.feature_patterns`, default `feat/*`, `fix/*`, `chore/*`, `docs/*`); one exact rule for each
-    command of `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
-  - **ask:** `git tag`, `gh release`, pushes of tags (`--tags`, `--follow-tags`, `refs/tags/`), `--mirror`
-    and `--delete` pushes, a push that names the base branch, `git worktree remove --force`.
-  - **deny:** force pushes (`--force`, `--force-with-lease`, `-f`, `+<ref>`, anywhere in the command),
-    `gh repo delete`, `gh pr merge --admin`, `sudo`, `.env` and role credentials.
+    `gh pr diff`, `gh pr checks`); exactly `git push -u <remote> HEAD`, the one push the loop makes (the
+    implementer pushes its checked-out branch in this form); one exact rule for each command of
+    `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
+  - **ask**, matched anywhere in a command (also after `git -C <dir>` or `git -c <key>=<value>`): `git tag`,
+    `gh release`, pushes with `--tags`, `--follow-tags`, `refs/` (tags and heads), `--mirror`, `--all`,
+    `--delete` or `-d`, a push naming the base branch (`<base>`, `:<base>`), a push deleting a loop branch
+    (`:feat/...`), `git worktree remove --force` or `-f`.
+  - **deny**, matched anywhere the same way: force pushes (`--force`, `--force-with-lease`, `-f`, `+<ref>`,
+    `:+<ref>`), `gh repo delete`, `gh pr merge --admin`, `sudo`, `.env` and role credentials.
 - `.claude/settings.local.json` (this machine only; `permissions.sh --apply` adds it to `.gitignore`) gets
   the plugin's scripts at this machine's plugin path, with the version as a wildcard
   (`~/.claude/plugins/cache/<marketplace>/dev-loop/*/scripts/gate-train.sh *`, written as an absolute
-  path), so the rules outlive plugin updates; `cleanup.sh --apply` asks.
+  path), so the rules outlive plugin updates; `cleanup.sh --apply` asks. `heavy.sh` and `as-role.sh` run
+  the command they are given, so they are allowed only for the loop's own uses: `heavy.sh <command>` for
+  each project command, and `as-role.sh implementer git push -u <remote> HEAD`.
 
 In the **default** mode the allow list is what keeps background agents from stalling on a prompt. In
 **auto** mode the rules decide before the classifier does. In **bypass** mode allow rules have no effect,
@@ -850,10 +854,14 @@ own files): a deny rule that blocks a command the loop runs is `MISSING`; a miss
 lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
 nothing. Without `.claude/settings.json` it prints one note.
 
-A wildcard cannot exclude arguments: `git push -u origin feat/*` also matches
-`git push -u origin feat/x --tags`. The ask and deny rules therefore match the dangerous arguments anywhere
-in the command, and they also cover commands run through `heavy.sh` or `as-role.sh`, whose allow rules
-allow any command they wrap. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
+A wildcard cannot exclude arguments: `git push -u origin feat/*` would also match
+`git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask
+and deny rules match dangerous arguments anywhere as a second line. The same limit applies to the other
+wildcard allow rules: `git diff`, `git log` and `git show` accept `--output=<file>` (they write a file),
+and `git fetch +<ref>:<ref>` force-updates a local branch; both stay inside the repository. The `Read` and
+`Edit` deny rules on `.env` cover only those tools: a Bash command such as `cat .env` is not stopped by
+them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.md` rule not to read
+`.env` files stays the guard. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 
 ## Safety notes
 

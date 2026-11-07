@@ -74,7 +74,7 @@ running system against holdout scenarios". Skip any question whose answer you al
 4. **Permissions** (`.claude/settings.json` and `.claude/settings.local.json`), after `.dev-loop.json`:
    run `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` (a dry run that lists the missing rules), show the
    user the list, then `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply`. It only adds rules: the
-   allow, ask and deny rules of `templates/settings.json`, pushes of the loop's branches, one exact rule per
+   allow, ask and deny rules of `templates/settings.json`, the loop's one push (`git push -u <remote> HEAD`), one exact rule per
    `fast_check` and `checks` command into `.claude/settings.json`; the plugin's scripts at this machine's
    plugin path into `.claude/settings.local.json` (added to `.gitignore`). Run it again whenever
    `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission modes"
