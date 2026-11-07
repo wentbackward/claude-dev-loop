@@ -28,7 +28,8 @@
 # work (an implementer's commits or heavy jobs) never hides a frozen stage. Other repositories' events
 # never count. The threshold is watchdog.stall_minutes (default 30). A stage silent for longer than that
 # (a slow suite that prints nothing until it ends) reads as possibly stalled, so such a project needs a
-# higher stall_minutes; "possibly" is meant: a watchdog (#56) confirms before it acts on the verdict.
+# higher stall_minutes; "possibly" is meant: the heartbeat (dev-loop skill, section 2a) confirms before it
+# acts.
 #
 # --json prints one object (the contract; fields are only added, never renamed):
 #   {"repo", "now" (UTC),

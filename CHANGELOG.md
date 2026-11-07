@@ -13,6 +13,19 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   merges the head already pushed without another push (the merge commit is recorded before its push, a
   sixth field, so a run that stopped right after the push resumes too), and the ledger and the
   local-branch cleanup use the gated head. Exit codes are unchanged; exit 9's advice now says how to confirm the merge commit.
+- Stall watchdog (#56): `stall_minutes` in a gate check entry (and in `affected` and `scenarios`), off by
+  default, runs that stage in its own process group and stops it (SIGTERM, SIGKILL after the grace
+  period, as `fail_fast` does) when its log has not grown for that many minutes; it prints `<name>
+  stalled: no output for <n> min (log: ...)`, records `stage-ended` with `result: stalled`, the train is
+  red, and with `fail_fast` the checks not started are skipped. A stage whose log grows is never stopped,
+  and a heavy stage queued in `heavy.sh` for a slot is not stalled (its clock starts with the slot). A
+  value that is not a positive whole number is off, with a warning. `DEV_LOOP_STALL_UNIT_SECONDS`
+  (default 60) shortens the minute for tests. The `dev-loop` skill has a heartbeat (section 2a): while
+  the orchestrator only waits it records `waiting` with `event.sh` and schedules a fallback wake-up in
+  `watchdog.wake_minutes` (default 25); on waking it runs `status.sh --json`, waits again when something
+  moved, and on `stalled` confirms (CPU of the stage's processes, agent worktree changes) before it stops
+  a hung loop command (only the gate's own stage processes) or resumes or replaces an agent per section
+  3a, recording what it did. `"watchdog": false` turns the heartbeat off.
 - Permissions (#54): `scripts/permissions.sh` merges the rules the loop needs into the project's settings,
   only adding (a dry run by default, `--apply` writes): `templates/settings.json` gains an allow list (the
   read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`, `git commit`, the `gh issue`

@@ -144,6 +144,11 @@ or the kernel kills processes. The plugin makes "one heavy job at a time, per sl
   anything else, `parallel` runs the checks side by side (each heavy one in its own slot), and
   `fail_fast` stops the rest of the train at the first failure, killing the running checks' process
   groups so their servers and slots are freed. All three are off by default; see the `gate` skill.
+- **A hung check is stopped (opt-in).** With `stall_minutes` in a check entry (or `affected`,
+  `scenarios`), the gate stops a stage whose log has not grown for that many minutes (its whole process
+  group, as `fail_fast` does) and reports `<name> stalled: no output for <n> min`; the train is red. A
+  check whose log keeps growing is never stopped, and a heavy check queued in `heavy.sh` for a slot is not
+  stalled (its clock starts with the slot). Off by default; see the `gate` skill.
 - **Implementers run targeted tests only.** The agent brief and the loop say so: tests for what they
   touched plus the fast check. Anything heavy goes through `heavy.sh` or is left to the gate.
 - **The Stop hook runs only `fast_check`**, which takes seconds. Running the full suite on every stop
@@ -173,7 +178,7 @@ session, read-only: it never writes, signals or locks anything.
   live queued heavy job of this gate), so an implementer's commits or heavy jobs never hide a frozen
   stage; other repositories' events never count. A stage that prints nothing for longer than
   `stall_minutes` reads as possibly stalled, so a project with slow silent suites needs a higher
-  `stall_minutes`; a watchdog (#56) should confirm before it acts on the verdict.
+  `stall_minutes`; the orchestrator's heartbeat (below) confirms before it acts on the verdict.
   A gate killed without cleaning up shows as `idle (the last gate died: train-running.txt is stale)`.
 - **`--json`** prints one object for machines; its fields are listed at the top of `scripts/status.sh`
   and are only ever added to.
@@ -188,6 +193,17 @@ conflict, error); `merge-train.sh` writes `merge-started`, `merged` (`branch`, `
 example `event.sh agent-started ticket=12`, `event.sh waiting detail="gate train feat/12-x"`). Each line is
 one append; at 1 MiB the log moves to `events.jsonl.1` (one old file kept). A failed write is ignored, so
 the log never fails a gate, and nothing but `status.sh` reads it.
+
+**The heartbeat (stall watchdog).** Background notifications wake the orchestrator when a job ends, not
+when a command hangs or an agent never reports. So when it only waits, the `dev-loop` skill (section 2a)
+has it record `waiting` with `event.sh` and schedule a fallback wake-up in `watchdog.wake_minutes`
+(default 25) with the session's scheduling tool (or a background command that waits that long and
+exits). On waking it runs `status.sh --json`: something moved, it waits again; `stalled`, it confirms
+first (is the stage's process tree still using CPU? did the agent's worktree change?) and only then acts:
+a hung loop command is stopped after reading its log tail (only the gate's own stage processes and the
+heavy jobs its gate started), an agent with no report is resumed or replaced. It records what it did
+with `event.sh`, and never kills anything that is not the loop's own. `"watchdog": false` turns the
+heartbeat off.
 
 ## Branch lifecycle
 
@@ -719,7 +735,10 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `heavy.port_env`, `heavy.port_base`, `heavy.port_step` | none, `8600`, `10` | the per-slot port variable |
 | `heavy.clean_temp`, `heavy.clean_temp_minutes` | `[]`, `120` | stale temp globs (`$USER` is expanded) and their age |
 | `heavy.poll_seconds` | `10` | how often a waiting command retries |
-| `watchdog.stall_minutes` | `30` | `status.sh`: minutes without an event or output before the verdict is `possibly stalled`; a stage silent for longer (a slow suite that prints nothing until it ends) reads as stalled, so raise it for such suites; a watchdog should confirm before acting |
+| `watchdog.stall_minutes` | `30` | `status.sh`: minutes without an event or output before the verdict is `possibly stalled`; a stage silent for longer (a slow suite that prints nothing until it ends) reads as stalled, so raise it for such suites; the heartbeat confirms before acting |
+| `watchdog.wake_minutes` | `25` | the orchestrator's heartbeat: the fallback wake-up while it waits (see Status) |
+| `watchdog` | on | `"watchdog": false` turns the heartbeat off (`status.sh` still reads `stall_minutes`, default 30) |
+| `stall_minutes` (in a check entry, `affected`, `scenarios`) | none (off) | the gate stops a stage whose log has not grown for this many minutes: `<name> stalled: no output for <n> min`, the train is red; a stage queued for a heavy slot is not stalled |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
@@ -776,7 +795,8 @@ stage's default judge, which passes `models.scenario-judge` to `claude --model`.
 
 Environment overrides: `DEV_LOOP_CONFIG` (config path), `DEV_LOOP_HOME` (state, default `~/.dev-loop`),
 `DEV_LOOP_LOCK_DIR`, `DEV_LOOP_HEAVY_SLOTS`, `DEV_LOOP_NO_JQ=1` (read JSON with python3),
-`DEV_LOOP_STOP_GRACE_SECONDS` (how long `fail_fast` waits after SIGTERM before SIGKILL, default 10).
+`DEV_LOOP_STOP_GRACE_SECONDS` (how long `fail_fast` waits after SIGTERM before SIGKILL, default 10),
+`DEV_LOOP_STALL_UNIT_SECONDS` (the length of one `stall_minutes` minute, default 60; for tests).
 
 Script exit codes are documented at the top of each script and in the `gate` and `merge` skills.
 

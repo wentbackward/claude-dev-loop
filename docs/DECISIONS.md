@@ -659,3 +659,27 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   every one); push the squash commit to the base directly (needs a ruleset bypass; not by default); merge
   the PR as is and accept a 3-way merge result (the merged tree would no longer be guaranteed to equal the
   gated one).
+
+## 2026-11-07 — Stall watchdog: the gate's stall timeout and the heartbeat (#56)
+
+- **Decision:** `stall_minutes` is per stage (a check entry, `affected`, `scenarios`), a positive whole
+  number of minutes; anything else is off with a warning, so a typo never stops a healthy check. A stage
+  with it always runs in its own process group (also in sequential mode, through the parallel runner for
+  that one stage), since only a group can be stopped with everything it started; stages without it run as
+  before. "Has not grown" is the log's byte count, sampled every half second by the gate's own poll loop
+  (no background process). A heavy stage counts as started only once its log has `heavy.sh`'s `slot ...
+  acquired` line, so time queued for a slot never counts. A stall counts as a failure for `fail_fast`.
+  The unit is overridable with `DEV_LOOP_STALL_UNIT_SECONDS` (environment only, for tests), like
+  `DEV_LOOP_STOP_GRACE_SECONDS`. The heartbeat is skill text, not a script: the orchestrator schedules a
+  fallback wake-up with whatever scheduling tool the session has (else a background command that waits
+  and exits), reads `status.sh --json`, and confirms a stall (CPU time of the stage's processes growing,
+  worktree changes) before acting; it may stop only the gate's own stage processes and the heavy jobs its
+  gate started. `"watchdog": false` turns the heartbeat off; `status.sh` keeps its default threshold.
+- **Reason:** the stall timeout bounds silence, not run time, so long healthy suites that print are never
+  killed, and it reuses the `fail_fast` stop path. A scheduling tool differs between sessions, so the
+  skill names the behaviour, not one tool; confirming before acting keeps a slow silent suite from being
+  killed on `status.sh`'s "possibly".
+- **Alternatives:** a total timeout per check (kills slow but healthy suites); a separate watchdog daemon
+  (a process outside the session that would need its own lifecycle and permissions); the log's
+  modification time instead of its size (the same signal, but needs python3 or perl per poll); acting on
+  `possibly stalled` without confirming.
