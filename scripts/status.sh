@@ -260,8 +260,8 @@ while IFS=$'\t' read -r kind repo pid slot epoch command job_gate; do
   else
     held_lines+=("  waiting: pid $pid, $repo, $(dur "${seconds:-0}"): $command")
     waiting_json+="${waiting_json:+,}{$entry}"
-    # Only the running gate's own queued job says the gate waits for a slot; any other job never does.
-    [ -z "$gate_running" ] || [ "$job_gate" != "$gate_pid" ] || gate_queued=yes
+    # Only the running gate's own queued job (this repository, its pid) says the gate waits for a slot.
+    [ -z "$gate_running" ] || [ "$repo" != "$DL_REPO" ] || [ "$job_gate" != "$gate_pid" ] || gate_queued=yes
   fi
 done < <(heavy_jobs)
 

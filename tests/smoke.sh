@@ -3906,6 +3906,13 @@ printf '{"t":"%s","who":"heavy","event":"queued","pid":"%s","gate_pid":"%s","det
 stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: a queued job of another gate pid does not hide a frozen stage" ||
   fail "status: another gate's queued job hid a frozen stage"
+mkdir -p "$st_home/other"
+printf '{"t":"%s","who":"heavy","event":"queued","pid":"%s","gate_pid":"%s","detail":"same pid, other repo"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$q_other_gate" "$stuck" >"$st_home/other/events.jsonl"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: another repository's queued job naming this gate's pid does not hide a frozen stage" ||
+  fail "status: another repository's queued job with this gate's pid hid a frozen stage"
+rm -rf "$st_home/other"
 kill "$q_impl" "$q_other_gate" 2>/dev/null
 wait "$q_impl" "$q_other_gate" 2>/dev/null
 pkill -P "$q_holder" 2>/dev/null
