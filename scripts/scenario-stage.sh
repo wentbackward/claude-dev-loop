@@ -11,11 +11,13 @@
 # Green needs every required scenario at >= pass and the mean at >= scenarios.min_satisfaction.
 #
 # The output never holds scenario text: an unsatisfied scenario is named with the judge's "missing" line, and
-# the sealed share (scenarios.sealed, chosen by id) is only counted. A judge that runs longer than
-# scenarios.judge_seconds (default 600) is stopped and counts as invalid. Each judge result is recorded in
+# the sealed share (scenarios.sealed, chosen by id) is only counted: the red line's required count holds only
+# the scenarios that are not sealed, and a sealed required failure is red through the sealed count alone.
+# A judge that runs longer than scenarios.judge_seconds (default 600) is stopped and counts as invalid. Each judge result is recorded in
 # train-scenario-results.jsonl in the logs directory, the judge's own output in train-scenario-judge/, the
 # output of scenarios.run in train-scenarios-run.log. The system and a running judge are stopped (their
-# process groups, KILL after 2 s) when the stage ends, also on SIGTERM, SIGINT or SIGHUP.
+# process groups, KILL after 2 s) when the stage ends, also on SIGTERM, SIGINT or SIGHUP. A daemon that
+# scenarios.run starts in a new session of its own (setsid) leaves that group and is not stopped.
 #
 # Exit: 0 green, 1 red, 2 config error.
 set -u
@@ -180,7 +182,7 @@ if [ -z "$files" ]; then
 fi
 start_system || exit 1
 
-judged=0 sum=0 required_red=0 sealed_judged=0 sealed_red=0 index=0
+judged=0 sum=0 required_red=0 sealed_required_red=0 sealed_judged=0 sealed_red=0 index=0
 while IFS= read -r file; do
   index=$((index + 1))
   id=$(dl_scenario_field "$file" id)
@@ -202,10 +204,11 @@ while IFS= read -r file; do
     [ "$sealed" = true ] || echo "scenario $id satisfied ($score, $kind)"
     continue
   fi
-  [ "$kind" = required ] && required_red=$((required_red + 1))
   if [ "$sealed" = true ]; then
     sealed_red=$((sealed_red + 1))
+    [ "$kind" = required ] && sealed_required_red=$((sealed_required_red + 1))
   else
+    [ "$kind" = required ] && required_red=$((required_red + 1))
     echo "scenario $id unsatisfied ($score, $kind): $(reason_of "$best")"
   fi
 done <<<"$files"
@@ -214,7 +217,7 @@ stop_all
 [ "$sealed_judged" -eq 0 ] || echo "scenarios sealed: $sealed_judged judged, $sealed_red unsatisfied"
 mean=$(awk -v s="$sum" -v n="$judged" 'BEGIN { print s / n }')
 mean_text="mean $(awk -v m="$mean" 'BEGIN { printf "%.2f", m }')"
-if [ "$required_red" -eq 0 ] && dl_scenarios_at_least "$mean" "$min_satisfaction"; then
+if [ "$((required_red + sealed_required_red))" -eq 0 ] && dl_scenarios_at_least "$mean" "$min_satisfaction"; then
   echo "scenarios green: $judged judged, $mean_text"
   exit 0
 fi

@@ -400,3 +400,20 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a separate `scripts/lib/factory.sh` (one function did not need its own file);
   failing the gate before the checks in `gate-train.sh` (a second place that decides about scenarios);
   treating an unknown mode as an error everywhere (would stop the gate over a typo doctor already names).
+
+## 2026-11-07 — Scenario stage (#40): the red count leaves out sealed scenarios; setsid daemons escape the stop
+
+- **Decision:** the `<k> required unsatisfied` of the `scenarios red:` line counts only required scenarios
+  that are not sealed; a sealed required failure counts in `scenarios sealed: <n> judged, <k> unsatisfied`
+  only and still makes the stage red, so a train red only through a sealed scenario prints `0 required
+  unsatisfied`. A daemon that `scenarios.run` starts in a session of its own (`setsid`, a double fork)
+  leaves the process group the stage stops and keeps running; this is a documented limit (README,
+  Stopping), not handled by the stage.
+- **Reason:** counting a sealed required failure in `<k>` told the reader that a sealed scenario was
+  required, a small leak beyond the sealed count. Finding escaped daemons would need a process scan
+  (`ps`, `/proc`) that differs between Linux and macOS and could kill processes the stage did not start;
+  `scenarios.run` knows its own daemons and can stop them.
+- **Alternatives:** a separate sealed-required count on the sealed line (more detail about the sealed
+  share than the issue allows); dropping `<k>` from the red line (loses what the implementer needs);
+  a `scenarios.stop` command (more config for a case a `trap` in `scenarios.run` covers); a cgroup or
+  systemd scope for the system (Linux only).

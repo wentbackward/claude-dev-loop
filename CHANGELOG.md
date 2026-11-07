@@ -2,6 +2,13 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- The scenario stage's red line (`scenarios red: <n> judged, <k> required unsatisfied, ...`) counts only
+  the required scenarios that are not sealed; a sealed required failure is only in the `scenarios sealed`
+  count and still makes the train red. The README and `docs/DECISIONS.md` note that a daemon started by
+  `scenarios.run` in a session of its own (`setsid`) escapes the stage's stop (#40).
+
 ## 0.7.0 — 2026-11-05
 
 - The tool that reads NUL-separated file names (jq, python3 or bash) is chosen once per process tree,

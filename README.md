@@ -430,7 +430,8 @@ whenever `scenarios` is configured):
   is how to reach it (a URL, a command), passed to the judge as `DL_SCENARIO_TARGET`. It may keep running
   (a server in the foreground) or exit after printing. It is stopped when the stage ends. Ending before it
   prints a line, or printing nothing in `scenarios.run_seconds` (default 120), is red. Without `run` the
-  target is empty. Keep servers as its children: one that daemonizes into its own session is not stopped.
+  target is empty. Keep servers as its children: one that daemonizes into its own session (`setsid`, a
+  double fork) leaves the process group and is not stopped; stop it yourself (see Stopping below).
 - **`scenarios.judge`** judges one scenario, run once per scenario with `DL_SCENARIO_FILE`,
   `DL_SCENARIO_ID` and `DL_SCENARIO_TARGET`; its last line that starts with `{` is the verdict
   `{"id", "satisfied": 0..1, "required", "evidence", "missing"}`. The default is headless Claude Code with
@@ -444,11 +445,14 @@ whenever `scenarios` is configured):
   only when both runs fail.
 - **Green** needs every required scenario at `>= scenarios.pass` and the mean of all judged scenarios at
   `>= scenarios.min_satisfaction`. Red prints `scenario <id> unsatisfied (<score>, required|scored):
-  <missing>` for each unsatisfied scenario that is not sealed, then `scenarios red: ...` with the mean;
+  <missing>` for each unsatisfied scenario that is not sealed, then `scenarios red: <n> judged, <k>
+  required unsatisfied, mean ...`, where `<k>` counts only the required scenarios that are not sealed;
   `TRAIN RED` follows. The `missing` line is what goes back to the implementer; the scenario text never
   does, and the stage never prints it.
 - **Sealed:** `scenarios.sealed` is the share of scenarios that are only counted (`scenarios sealed: <n>
   judged, <k> unsatisfied`), never named and never described, as a check on overfitting to the feedback.
+  A sealed required failure makes the train red through this count alone; it is not in the red line's
+  required count.
   A scenario is sealed when the checksum of its id modulo 1000 is below `sealed * 1000`, so the choice
   depends only on the id; `dl_scenario_sealed <file|id> [share]` (default `scenarios.sealed`) tells.
 - **With `affected`:** only the scenarios with a `spec` or `tags` item that occurs in a path the train
@@ -465,7 +469,10 @@ whenever `scenarios` is configured):
 - **Stopping:** when the stage ends, or the gate stops it (`fail_fast`, or a signal), it stops the
   system's and a running judge's process groups: SIGTERM, SIGKILL after 2 s, inside the gate's grace
   period (`DEV_LOOP_STOP_GRACE_SECONDS`, default 10). With a grace period under 3 s the gate may kill the
-  stage first and the system's session is left running.
+  stage first and the system's session is left running. The stop reaches only the process group
+  `scenarios.run` started: a daemon that calls `setsid` (or otherwise starts a session of its own) escapes
+  it and keeps running. Have `scenarios.run` keep its servers in the foreground, or let it stop its own
+  daemons (a `trap` on TERM that kills them, or a pid file the next run reads).
 
 ### Isolation: the agent-type guard
 
