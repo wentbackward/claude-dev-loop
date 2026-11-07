@@ -171,7 +171,7 @@ then the issue its name points at (`<type>/<n>-...`):
 |---|---|---|
 | merged | in the ledger or a merged PR at this tip (or a replayed copy with the same changes); a local loop branch the base contains | deleted |
 | helper | local `train-*`/`replay-*` refs of loop branches outside a live train, local agent worktree branches without own commits | deleted |
-| superseded | a later version of it (`<branch>-vN` from `repush.sh`) merged, by the ledger or a merged PR, and that version's notes record ``Supersedes `<branch>` at <sha>`` with this tip; never while that version is unmerged or its own PR is open, and kept (with the reason) without a record or when the branch moved on since the re-push | deleted |
+| superseded | a later version (`<branch>-vN`, `repush.sh`) merged and its notes record this tip (``Supersedes `<branch>` at <sha>``); without a record or after new commits: kept until deleted by hand | deleted |
 | closed | PR closed unmerged at this tip, or its issue closed as not planned | with `--include closed` (the user's OK); automatic with `"factory": "dark"` |
 | stale | no PR, no open issue, idle for `cleanup.stale_days` (remote: loop branches only) | with `--include stale`; automatic with `"factory": "dark"` |
 | keep | open PR or issue, checked out in a worktree, a live train, recent, moved on after its PR, or a remote branch outside the loop (`develop`, `release-*`) | never |
@@ -184,14 +184,18 @@ conflict, a stacked branch whose lower branch merged) is published under a new n
 `scripts/repush.sh [<branch>]` (default: the checked-out branch) picks the next free `<branch>-v2`,
 `-v3`, ... (free on the remote, locally and in the notes directory), pushes it with a plain `git push -u`
 (as the implementer in identity mode), switches the worktree to it, and copies the notes file with a
-``Supersedes `<branch>` at <sha> [<sha>]`` line recording the old branch's local and remote tips. It refuses a dirty worktree and the base branch, never deletes or moves the old branch,
-and prints the new name last. `open-pr.sh` (also run by `merge-train.sh`) closes the open PRs of the
-earlier versions a `-vN` branch supersedes (its notes name them on a `Supersedes` line, or their head is
-an ancestor of its head), with a comment pointing to the new PR, and closes nothing when it cannot read
-the new PR's number; `cleanup.sh` deletes the old
-branches as `superseded` once the new one has merged, each ref only while its tip is a recorded one, and moves their notes to `notes/merged/`. The
-tooling takes `<type>/<n>-<slug>-vN` names like any other: they match the feature patterns, and the
-ticket is still `<n>`.
+``Supersedes `<branch>` at <sha> [<sha>]`` line recording the old branch's local and remote tips. It
+refuses a dirty worktree and the base branch, never deletes or moves the old branch, and prints the new
+name last. `open-pr.sh` (also run by `merge-train.sh`) closes the open PRs of the earlier versions a
+`-vN` branch supersedes (its notes name them on a `Supersedes` line, or their head is an ancestor of its
+head), with a comment pointing to the new PR, and closes nothing when it cannot read the new PR's number.
+`cleanup.sh` deletes the old branches as `superseded` once the new one has merged, each ref only while
+its tip is a recorded one, and moves their notes to `notes/merged/`. An old version without a record, or
+one that moved on since the re-push, is kept until the user deletes it by hand: `--include closed` and
+`--include stale` do not touch it. The record lives in the notes files, so once the merged version's
+archived notes are removed after `cleanup.keep_days` they no longer count as a record. The tooling takes
+`<type>/<n>-<slug>-vN` names like any other: they match the feature patterns, and the ticket is still
+`<n>`.
 
 Loop branches are the ones matching `github.feature_patterns` (default `feat/* fix/* chore/* docs/*`).
 Every deletion is conditional on the tip that was classified (`update-ref` with the old value, a push
