@@ -131,6 +131,22 @@ merge. Specs and the PRD are proposals; `docs/DECISIONS.md` stays the only histo
    aspect). Archive specs whose work has all merged (`docs-archive.sh spec <file>`, a dry run, then
    `--apply`). `doctor.sh` must then report no MISSING aspect; its notes name files over the budget and map
    rules that match nothing.
+6. **Gradual adoption** (an existing project with large hand-written docs: many files, some over
+   `docs.max_lines`, specs mixed with built state), instead of rebuilding everything at once, so the loop
+   never stalls. Each step is its own reviewed change; the loop keeps running between them.
+   1. Start with `docs` holding only the Features aspect and an empty `map`
+      (`"docs": {"aspects": {"features": "docs/features.md"}, "map": []}`): nothing turns red, and files
+      over the budget are only notes.
+   2. Split a mixed "built + planned" features file: built items into Features; unbuilt ones into the PRD
+      named in `docs.prd` (the intent), or into the planned list only when an item is sliced into a ticket.
+   3. Archive finished specs (`docs-archive.sh spec <file>`) and compact the journal once
+      (`docs-archive.sh journal`): a dry run first, then `--apply`, then write its `## Standing decisions`
+      section (the decisions still in force, one line each, linking their entries).
+   4. Add `map` rules one aspect at a time, each with its doc, so a rule turns on only for a doc that is
+      true.
+   5. Leave oversized docs to docs maintenance tickets: one split per ticket.
+
+   Without `docs`, `doctor.sh` prints one note (`current-state docs off: ...`) and stays ready.
 
 ## 3c. Component map and architecture ratchet (propose; the user decides)
 

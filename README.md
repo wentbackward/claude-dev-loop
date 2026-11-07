@@ -251,8 +251,9 @@ every merge:
   not planned (`remove the row`) or does not exist, and a row with no ticket number. With
   `planned_max_days`, it also notes a row whose ticket is open longer than that with no loop branch
   (`<type>/<n>-*`, local or remote): close it as not planned and remove the row. A row is a list item or
-  a table body row outside code blocks (a rule like `* * *` is not one); in a file with a heading whose
-  text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
+  a table body row outside code fences (CommonMark, the same rule as for links; a rule like `* * *` is
+  not one); in a file with a heading whose text starts with the word "Planned" (the end of
+  `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
   access one note says the rows were not checked.
 - **Docs maintenance.** The auditor finds, a normal implementer cleans up. On the audit's cadence, right
   after it, the orchestrator opens one `docs: maintenance` ticket listing `doctor.sh`'s docs notes at that
@@ -307,8 +308,18 @@ scripts/docs-archive.sh spec <file> [--no-pointer] [--force] [--apply]
 - **Setup** proposes the layout, the map and the planned list, and for an existing project rebuilds the
   current-state docs once, one aspect at a time, each reviewed by the user. Templates:
   `templates/FEATURES.md` and the "Documentation" section of `templates/CLAUDE.md`.
+- **Gradual adoption.** A project with large hand-written docs (many files, some over `max_lines`, specs
+  mixed with built state) adopts them in steps instead (setup step 3b.6), so the loop never stalls:
+  `docs` with only the Features aspect and an empty `map` first (nothing turns red; oversized files are
+  only notes); then a mixed "built + planned" file is split (built items to Features, unbuilt ones to the
+  PRD in `prd`, or to the planned list only when sliced into a ticket); finished specs are archived and
+  the journal compacted once (`docs-archive.sh`, a dry run, then `--apply`, then the `## Standing
+  decisions` section is written); `map` rules are added one aspect at a time; oversized docs are left to
+  docs maintenance tickets, one split per ticket.
 
-Without `docs` (or with no aspects, as in `templates/dev-loop.json`) none of this runs.
+Without `docs` (or with no aspects, as in `templates/dev-loop.json`) none of this runs, and `doctor.sh`
+prints one note: `current-state docs off: no docs check, no doc audit, no planned list; adopt them with
+the setup skill's step 3b`. It is a note, not MISSING: `doctor: ready` is unchanged.
 
 ## Architecture ratchet (optional)
 
@@ -653,7 +664,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `identities` | none (mode off) | per-role identities, see below |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
-| `docs.aspects` | none (docs off) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
+| `docs.aspects` | none (docs off; `doctor.sh` notes it) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
 | `docs.planned` | none | the planned list (built and planned are kept apart); `doctor.sh` notes rows whose ticket closed |
 | `docs.planned_max_days` | none (off) | `doctor.sh` notes a planned row whose ticket is open longer than this with no loop branch; `0` is off |
 | `docs.map` | `[]` | rules `{"paths": [globs], "docs": [aspect names]}`; `*` in a glob also matches `/` |
