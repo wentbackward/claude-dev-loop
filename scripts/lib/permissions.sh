@@ -195,5 +195,4 @@ dl_perm_loop_samples() {
   for name in $DL_PERM_SCRIPTS; do printf '%s/scripts/%s.sh\n' "$1" "$name"; done
   printf '%s/scripts/as-role.sh implementer git push -u %s HEAD\n' "$1" "$DL_REMOTE"
   dl_perm_project_commands | awk -v h="$1/scripts/heavy.sh" '{ print; print h " " $0 }'
-
 }

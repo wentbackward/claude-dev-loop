@@ -45,7 +45,13 @@
       "Bash(*git*push* -d *)",
       "Bash(*git*push* -d)",
       "Bash(*git*worktree*remove*--force*)",
-      "Bash(*git*worktree*remove* -f*)"
+      "Bash(*git*worktree*remove* -f*)",
+      "Bash(*git*rebase*--exec*)",
+      "Bash(*git*rebase* -x*)",
+      "Bash(*git*fetch*--upload-pack*)",
+      "Bash(*git*pull*--upload-pack*)",
+      "Bash(*git* -c *fetch*)",
+      "Bash(*git* -c *pull*)"
     ],
     "deny": [
       "Bash(sudo:*)",
