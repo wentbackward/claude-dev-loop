@@ -464,3 +464,16 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   rewrite); a header in each archive file (the check would have to strip it); a `docs.archive` key for the
   folder (no need yet); moving entries from both sides of a standing section placed in the middle (two
   insertion points to verify).
+
+## 2026-11-07 — Docs maintenance (#47): a subsection of the doc audit, closing stale tickets before it starts
+
+- **Decision:** "Docs maintenance" is a `###` subsection at the end of the `dev-loop` skill's section 7a
+  (the doc audit), not a new numbered section, so the references to sections 7b and 7c (the doctor skill's
+  note table among them) stay true. The orchestrator closes stale planned tickets itself before the
+  maintenance ticket starts (on the user's OK in collaborative mode, without asking in dark mode); the
+  implementer only removes their rows, so closing issues stays an orchestrator action. An oversized doc
+  is one over `docs.max_lines`, the budget `doctor.sh` already notes.
+- **Reason:** one cadence and one place to read; implementers never change other tickets' state.
+- **Alternatives:** renumbering 7b and 7c (breaks cross-references in files another ticket edits); a new
+  `docs.maintenance_every` key (no need: the audit's cadence is what the ticket asks for); letting the
+  implementer close stale tickets (an issue write outside its own ticket).

@@ -234,7 +234,8 @@ approve again, then re-run merge-train with the remaining branches.
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
 line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
-notes `doc audit due`, run the doc audit (section 7a); when the planned list runs low, slice (section 1a).
+notes `doc audit due`, run the doc audit and then the docs maintenance (section 7a); when the planned
+list runs low, slice (section 1a).
 With `architecture`, when `doctor.sh` notes `architect due` (every `architecture.cadence` merges, or a
 signal over its threshold), run the architecture review (section 7b).
 A ticket closed without a merge (dropped, superseded): close its PR, then its branch goes with `cleanup.sh --apply --include closed`, after the
@@ -261,13 +262,37 @@ Stacked branches: after the lower branch merges, rebase the upper one with
 Audit the docs of <absolute path of the main checkout> (on the latest <remote>/<base>), against the code
 and, where it is safe and read-only, the running system. Merges since the last audit: <the PRs or tickets>.
 Open one ticket per drift, with the evidence <identity mode: as the tester, <plugin>/scripts/as-role.sh
-tester gh issue create ...>. Never edit files.
-Report: what you checked, the tickets you opened, what you could not check.
+tester gh issue create ...>; list housekeeping in your report instead. Never edit files.
+Report: what you checked, the tickets you opened, the maintenance list, what you could not check.
 ```
 
 - After its report, record the audit:
   `date -u +%Y-%m-%dT%H:%M:%SZ >"$(${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh doc-audit)"`. Its tickets join
   the queue like any other.
+
+### Docs maintenance
+
+On the doc audit's cadence (`docs.audit_every`), right after the audit, open **one** `docs: maintenance`
+ticket (label `docs` when it exists). The auditor finds; a normal implementer cleans up. Its body is a
+checklist of the housekeeping in `doctor.sh`'s docs notes at audit time and the auditor's maintenance
+list. `doctor.sh` prints those notes on every run; they become a ticket only on this cadence, from the
+notes present when the audit runs:
+
+- **Planned rows** to move to Features (ticket closed as completed) or remove (closed as not planned, no
+  ticket number, no such ticket). A stale ticket (open longer than `docs.planned_max_days` with no loop
+  branch) you close as not planned, with a comment that says why, before the maintenance ticket starts:
+  with the user's OK in collaborative mode, in dark mode (section 8a) without asking, the same rule as
+  cleanup's closed and stale branches. Its row goes in the maintenance branch. When the user declines,
+  the ticket stays open, its row stays, and the next `doctor.sh` run notes it again.
+- **Journals over budget:** `scripts/docs-archive.sh journal` (a dry run, then `--apply`), then refresh
+  the journal's `## Standing decisions` section, one line per decision in force, linking its entry.
+- **Finished specs:** `scripts/docs-archive.sh spec <file>` (a dry run, then `--apply`).
+- **Oversized docs** (over `docs.max_lines`) to split: at most one per ticket; the others wait for the
+  next maintenance ticket.
+
+Skip it when there is nothing to do. It is implemented, reviewed and gated like any ticket (sections 3 to
+6), its `Docs:` line naming the files it touches. Real drift (a doc says X, the code does Y) is not
+maintenance: the auditor opens one ticket per drift.
 
 ## 7b. Architecture review (`architecture` in `.dev-loop.json`)
 
@@ -300,7 +325,7 @@ Report: the signals and what they mean, the tickets you opened, the ladder steps
 
 The release itself (version, tag, GitHub release) happens only on the user's go. Before it:
 
-- Run the doc audit (section 7a), and fix or ticket what it finds.
+- Run the doc audit (section 7a), and fix or ticket what it finds, its docs maintenance included.
 - Check that the planned list and Features agree with the tickets merged since the last release (`git log
   <last tag>..<remote>/<base>`): each merged ticket's entry is in Features, not in the planned list, and
   every planned entry links an open ticket.
@@ -328,7 +353,8 @@ conditions (section 8); it changes where the user looks, not who is responsible:
   The `code-reviewer` alone reviews the code; its APPROVE is still required.
 - **A ticket starts only when its scenarios exist:** run the `scenario-writer` when you create the ticket,
   and launch its implementer after the writer reported them.
-- **Cleanup:** `cleanup.sh --apply` also deletes the closed and stale branches, without asking.
+- **Cleanup:** `cleanup.sh --apply` also deletes the closed and stale branches, without asking; the docs
+  maintenance (section 7a) closes stale planned tickets as not planned, with a comment, without asking.
 
 ## 9. Talking to the user
 

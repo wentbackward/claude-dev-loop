@@ -96,7 +96,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
 | agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
-| agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift |
+| agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift, a maintenance list for housekeeping |
 | agent | `architect` | read-only architecture review from the merge evidence; refactoring tickets and extraction-ladder steps |
 | agent | `scenario-writer` | writes the holdout scenarios for a ticket in the scenario store, from the spec (see Holdout scenarios) |
 | script | `docs-check.sh` | checks a range keeps the current-state docs true (see Current-state docs) |
@@ -236,10 +236,11 @@ every merge:
 - **The `doc-auditor`** (read-only by its brief; its tools include Bash, which can write, and the role
   guard covers only GitHub writes) compares each current-state doc and component card with the code and,
   where it is safe, the running system (CLI help, endpoints, config keys, jobs), and opens one ticket per
-  drift with the evidence. It runs every `audit_every` merges (default 10), when the user asks, and before
-  a release; before a release the orchestrator also checks the planned list and Features against the
-  tickets merged since the last one. The orchestrator records each audit in
-  `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one UTC time).
+  drift with the evidence; housekeeping goes in its report as a maintenance list instead. It runs every
+  `audit_every` merges (default 10), when the user asks, and before a release; before a release the
+  orchestrator also checks the planned list and Features against the tickets merged since the last one.
+  The orchestrator records each audit in `~/.dev-loop/<repo>/doc-audit.txt` (`paths.sh doc-audit`, one
+  UTC time).
 - **`doctor.sh`** prints the aspects, the planned list, the PRD files and the map; reports a missing aspect
   path or PRD file as MISSING; notes files and journals over `max_lines` and map rules that match no
   tracked file; and prints the merges since the last audit (from the merge ledger and the audit marker),
@@ -253,6 +254,16 @@ every merge:
   a table body row outside code blocks (a rule like `* * *` is not one); in a file with a heading whose
   text starts with the word "Planned" (the end of `templates/FEATURES.md`), only that section's rows count. These are notes, never MISSING; without `gh`
   access one note says the rows were not checked.
+- **Docs maintenance.** The auditor finds, a normal implementer cleans up. On the audit's cadence, right
+  after it, the orchestrator opens one `docs: maintenance` ticket listing `doctor.sh`'s docs notes at that
+  time (it prints them on every run; they become a ticket only on this cadence) and the auditor's
+  maintenance list: planned rows to move or remove, journals over budget (`docs-archive.sh journal`, then
+  refresh `## Standing decisions`), finished specs (`docs-archive.sh spec`) and at most one oversized doc to
+  split per ticket. Stale tickets are closed as not planned, with a comment, the same way as cleanup's
+  closed and stale branches: with the user's OK in collaborative mode, without asking in `factory: dark`; a
+  declined one keeps its row, and the next `doctor.sh` run notes it again. The ticket is implemented,
+  reviewed and gated like any other, and skipped when there is nothing to do (the `dev-loop` skill, section
+  7a).
 
 ### Journals and the archive
 
@@ -587,6 +598,7 @@ stage and moves where the human looks.
 | PR review | the `code-reviewer` agent; the human may read any PR | the `code-reviewer` agent only; the orchestrator does not ask the human about diffs |
 | Scenario changes | optional | written by the `scenario-writer` at ticket creation; a ticket starts only when its scenarios exist |
 | `cleanup.sh --apply` | deletes closed and stale branches only with `--include` (the user's OK) | deletes them too |
+| stale planned tickets (docs maintenance) | closed as not planned on the user's OK | closed without asking |
 
 - **The preset only sets defaults.** An explicit option always wins: `"scenarios": false` (or `null`)
   keeps scenarios off in a dark factory, and a `scenarios` block sets the store and the stage as usual.
