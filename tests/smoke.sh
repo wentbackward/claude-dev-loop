@@ -3298,7 +3298,7 @@ for cmd in "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git
   "$mroot/scripts/as-role.sh implementer git push --force" "$mroot/scripts/heavy.sh gh release create v1" \
   "$mroot/scripts/cleanup.sh --apply --include closed" "git worktree remove --force ../p-54"; do
   decision=$(mdecide "$cmd")
-  case $decision in deny | ask) pass "perm: \"$cmd\" is never allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
+  case $decision in deny | ask | none) pass "perm: \"$cmd\" is never allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
 done
 # Over the template alone: no allow rule matches a force push, a repository delete, a release, a tag or an
 # admin merge at all.
@@ -3340,7 +3340,8 @@ rm .claude/settings.local.json
 out=$(mdoctor)
 printf '%s\n' "$out" | grep -qF 'note    permissions: no allow list' && pass "perm: doctor notes a missing allow list" ||
   fail "perm: no note for a missing allow list"
-expect "perm: a missing allow list is not a problem" "doctor: ready" "$(printf '%s\n' "$out" | tail -n 1)"
+expect "perm: a missing allow list adds no problem to the doctor's verdict" "$(printf '%s\n' "$complete_out" | tail -n 1)" \
+  "$(printf '%s\n' "$out" | tail -n 1)"
 # A deny rule that blocks a loop command is MISSING, in either project file; the user's file is never read.
 cp "$mwork/before.json" .claude/settings.json
 cp "$mwork/local-full.json" .claude/settings.local.json
@@ -3349,8 +3350,8 @@ printf '{"permissions": {"allow": [], "deny": ["Bash(gh pr:*)"]}}\n' >.claude/se
 out=$(mdoctor)
 printf '%s\n' "$out" | grep -qF 'MISSING permissions: deny rule Bash(gh pr:*) in .claude/settings.local.json blocks "gh pr' &&
   pass "perm: doctor reports a deny on gh pr as MISSING" || fail "perm: no MISSING for a deny on gh pr"
-printf '%s\n' "$out" | tail -n 1 | grep -q 'problem' && pass "perm: a blocking deny makes the doctor not ready" ||
-  fail "perm: a blocking deny left the doctor ready"
+[ "$(printf '%s\n' "$out" | tail -n 1)" != "$(printf '%s\n' "$complete_out" | tail -n 1)" ] &&
+  pass "perm: a blocking deny adds a problem to the doctor's verdict" || fail "perm: a blocking deny left the verdict unchanged"
 cp "$mwork/local-full.json" .claude/settings.local.json
 python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["permissions"]["deny"].append("Bash(*/scripts/gate-train.sh*)"); json.dump(d, open(sys.argv[1], "w"))' \
   .claude/settings.json

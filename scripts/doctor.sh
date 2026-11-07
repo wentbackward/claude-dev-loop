@@ -227,6 +227,51 @@ doctor_scenarios() {
   done < <(dl_scenarios_validate "$dir")
 }
 
+# shellcheck source=lib/permissions.sh
+. "$scripts_dir/lib/permissions.sh"
+
+# doctor_permissions: check the permissions of the project's .claude/settings.json and settings.local.json
+# (never the user's own files): a deny rule that blocks a loop command is MISSING; a missing or incomplete
+# allow list is a note; nothing is printed when the rules are complete. Without .claude/settings.json one note.
+doctor_permissions() {
+  local root rel file rule cmd allow missing lacking=0 samples
+  if [ ! -f "$DL_ROOT/.claude/settings.json" ]; then
+    optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
+    return
+  fi
+  root=$(cd "$scripts_dir/.." && pwd)
+  samples=$(dl_perm_loop_samples "$root")
+  for rel in .claude/settings.json .claude/settings.local.json; do
+    file="$DL_ROOT/$rel"
+    while IFS= read -r rule; do
+      while IFS= read -r cmd; do
+        if dl_perm_match "$rule" "$cmd"; then
+          missing "permissions: deny rule $rule in $rel blocks \"$cmd\", a command the loop runs (remove or narrow the rule)"
+          break
+        fi
+      done <<<"$samples"
+    done < <(dl_perm_rules "$file" deny)
+  done
+  allow=$(dl_perm_rules "$DL_ROOT/.claude/settings.json" allow; dl_perm_rules "$DL_ROOT/.claude/settings.local.json" allow)
+  if [ -z "$allow" ]; then
+    optional "permissions: no allow list: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
+    return
+  fi
+  missing=""
+  while IFS= read -r cmd; do
+    printf '%s\n' "$allow" | grep -qxF -- "Bash($cmd)" || missing="${missing:+$missing, }Bash($cmd)"
+  done < <(dl_perm_project_commands)
+  [ -n "$missing" ] &&
+    optional "permissions: the allow list lacks the project commands: $missing (permissions.sh --apply)"
+  while IFS=$'\t' read -r _ rule; do
+    printf '%s\n' "$allow" | grep -qxF -- "$rule" || lacking=$((lacking + 1))
+  done < <({ dl_perm_wanted "$root" shared; dl_perm_wanted "$root" local; } | awk -F'\t' '$1 == "allow"' |
+    grep -vxF -f <(dl_perm_project_commands | sed 's/^/allow\tBash(/; s/$/)/'))
+  [ "$lacking" -gt 0 ] &&
+    optional "permissions: the allow list lacks $lacking of the loop's rules (permissions.sh lists them; --apply adds them)"
+  return 0
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
@@ -315,6 +360,7 @@ else
     [ -f "$DL_ROOT/.claude/agents/$agent.md" ] &&
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done
+  doctor_permissions
   project_settings="$DL_ROOT/.claude/settings.json"
   if [ -f "$project_settings" ]; then
     for event in Stop PostToolUse; do
