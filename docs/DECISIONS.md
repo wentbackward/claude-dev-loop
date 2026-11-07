@@ -569,7 +569,7 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   branch checked out to the new name (the implementer keeps working there), refuses a worktree with any
   `git status --porcelain` output (untracked files too) and the base or a long-lived branch, and undoes
   only what it created when the push fails (exit 3). The notes file is copied with a trailing line
-  ``Supersedes `<old>` ...``; a missing notes file is a warning, not a refusal, since the push is what
+  ``Supersedes `<old>` at <local tip> [<remote tip>] ...`` (the old branch's tips at the re-push); a missing notes file is a warning, not a refusal, since the push is what
   must not be lost. `open-pr.sh` closes the open PRs of `<root>`, `<root>-v2`, ... below N, as the
   implementer (it opened them), with a comment naming the new PR, but only those the new branch
   supersedes: its notes name them on a `Supersedes` line (repush.sh writes one per re-push, and the copy
@@ -577,7 +577,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   closes nothing. A failure there is a warning. A failed notes copy in repush.sh is a visible warning,
   not a failure: the push already happened.
   `cleanup.sh` classifies a loop branch `superseded` when a later version of the same root is in the
-  ledger or has a merged PR; the check runs after the open-PR and merged checks (an open PR keeps the
+  ledger or has a merged PR and the notes of a merged later version (live, or archived in
+  `notes/merged/`) record this branch at exactly its current tip, each ref (local, remote) checked on
+  its own; ancestry cannot be used after a rebase. Without a record (a same-name branch of other work)
+  or at another tip (commits after the re-push) the branch is kept with that reason, unless the base
+  contains it, when the older rules decide as before; the check runs after the open-PR and merged checks (an open PR keeps the
   branch) and before the closed-PR check, so a branch whose PR `open-pr.sh` closed is deleted without
   `--include closed`. It is deleted with `--apply` like `merged`, with the same bundle archive first, and
   its notes file moves to `notes/merged/` once the branch is gone. A slug that itself ends in `-v<n>`

@@ -22,12 +22,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   conflict, a stacked branch whose lower branch merged) is published under a new name with the new
   `scripts/repush.sh [<branch>]`: it picks the next free `<branch>-v2` (`-v3`, ...), pushes it with a
   plain `git push -u` (as the implementer in identity mode), switches the worktree to it, copies the notes
-  file with a `Supersedes` line, refuses a dirty worktree and the base branch, and never deletes or moves
+  file with a ``Supersedes `<branch>` at <sha>`` line recording the old branch's local and remote tips, refuses a dirty worktree and the base branch, and never deletes or moves
   the old branch. `open-pr.sh` (also from `merge-train.sh`) closes the open PRs of the earlier versions a `-vN`
   branch supersedes (named on a `Supersedes` line of its notes, or whose head it contains), with a
   comment pointing to the new PR. `cleanup.sh` has a new class, `superseded`: a
-  branch whose later version merged (ledger or merged PR) is deleted with `--apply` like a merged one,
-  archived first, and its notes move to `notes/merged/`; a branch whose later version has not merged is
+  branch whose later version merged (ledger or merged PR) and recorded its current tip is deleted with
+  `--apply` like a merged one, archived first (without a record, or after new commits, it is kept), and its notes move to `notes/merged/`; a branch whose later version has not merged is
   never touched. The dev-loop, gate and merge skills and the implementer brief say to re-push with the
   helper and never to force-push.
 - Docs maintenance (#47; only with `docs` configured): on the doc audit's cadence, right after the audit,
