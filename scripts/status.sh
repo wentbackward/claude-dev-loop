@@ -13,20 +13,24 @@
 # The last line is the verdict:
 #   verdict: idle                                      no gate, no heavy job of this repository, no loop
 #                                                      worktree with unmerged work, no orchestrator event
-#                                                      within the threshold
+#                                                      within the threshold ("idle (the last gate died:
+#                                                      train-running.txt is stale)" when its pid has ended)
 #   verdict: working                                   activity within the threshold
 #   verdict: waiting on <what> (output <n>s ago)       a running gate stage, a heavy job of this repository,
 #                                                      or an orchestrator event whose name starts with
 #                                                      "waiting" (what: its detail, else the rest of the name)
 #   verdict: possibly stalled: no event or output for <n> min
 # "Output" is the newest of: this repository's events, the running stage logs, train-running.txt, and the
-# commits and notes files of the loop worktrees. The threshold is watchdog.stall_minutes (default 30).
+# commits and notes files of the loop worktrees; while the gate runs, only the gate-side evidence (stage
+# logs, train-running.txt, this repository's gate and heavy events), so other work never hides a frozen
+# stage. Other repositories' events never count. The threshold is watchdog.stall_minutes (default 30).
 #
 # --json prints one object (the contract; fields are only added, never renamed):
 #   {"repo", "now" (UTC),
 #    "verdict": {"state": "idle|working|waiting|stalled", "what": str|null, "quiet_seconds": n|null,
-#                "stall_minutes": n, "line": str},
-#    "gate": {"running": bool, "pid": n|null, "train": [branch], "elapsed_seconds": n|null,
+#                "stall_minutes": n, "line": str, "gate_died": bool},
+#    "gate": {"running": bool, "stale": bool (train-running.txt names a dead pid), "pid": n|null,
+#             "train": [branch], "elapsed_seconds": n|null,
 #             "stages": [{"name", "elapsed_seconds", "log", "log_bytes", "quiet_seconds"}]},
 #    "heavy": {"slots": n, "held": [{"slot", "pid", "repo", "seconds", "command"}],
 #              "waiting": [{"pid", "repo", "seconds", "command"}]},
@@ -135,11 +139,15 @@ dur() {
   if [ "$1" -lt 120 ]; then echo "${1}s"; elif [ "$1" -lt 7200 ]; then echo "$(($1 / 60))m"; else echo "$(($1 / 3600))h"; fi
 }
 
-# quiet_seen SECONDS: count one piece of evidence; quiet is the age of the newest.
-quiet=""
+# quiet_seen SECONDS [gate]: count one piece of evidence; quiet is the age of the newest, gate_quiet the
+# age of the newest gate-side evidence (stage logs, train-running.txt, this repository's gate and heavy
+# events), the only evidence for the verdict while the gate runs.
+quiet="" gate_quiet=""
 quiet_seen() {
   case ${1:-} in "" | *[!0-9]*) return 0 ;; esac
   if [ -z "$quiet" ] || [ "$1" -lt "$quiet" ]; then quiet=$1; fi
+  [ "${2:-}" = gate ] || return 0
+  if [ -z "$gate_quiet" ] || [ "$1" -lt "$gate_quiet" ]; then gate_quiet=$1; fi
 }
 
 # jnum VALUE / jstr VALUE: VALUE as a JSON number or string, null when empty.
@@ -149,8 +157,15 @@ jstr() { if [ -n "${1:-}" ]; then dl_json_string "$1"; else printf 'null'; fi; }
 events_file=$(dl_events_file)
 repo_events=""
 [ -f "$events_file" ] && repo_events=$(events_tsv "$events_file")
-newest_event=$(printf '%s\n' "$repo_events" | awk -F'\t' '$2 != "-" && $2 > m {m = $2} END {if (m) print m}')
-[ -z "$newest_event" ] || quiet_seen "$((now - newest_event))"
+# newest_event [WHO...]: the epoch of this repository's newest event (of these writers only, if named).
+newest_event() {
+  printf '%s\n' "$repo_events" | awk -F'\t' -v who=" $* " '
+    $2 != "-" && (who == "  " || index(who, " " $3 " ")) && $2 > m {m = $2} END {if (m) print m}'
+}
+newest=$(newest_event)
+[ -z "$newest" ] || quiet_seen "$((now - newest))"
+newest=$(newest_event gate heavy)
+[ -z "$newest" ] || quiet_seen "$((now - newest))" gate
 
 # --- The gate: train-running.txt and its pid, the stages started since its train-started event. ---
 gate_pid="" gate_train="" gate_running="" gate_elapsed="" gate_lines=() stage_json=""
@@ -181,7 +196,7 @@ add_stage() {
   case $epoch in "" | *[!0-9]*) ;; *) elapsed=$((now - epoch)) ;; esac
   [ -z "$log" ] || info=$(file_info "$log")
   [ -z "${info:-}" ] || read -r age bytes <<<"$info"
-  quiet_seen "$age"
+  quiet_seen "$age" gate
   gate_lines+=("  stage $name: ${elapsed:+$(dur "$elapsed"), }${age:+output ${age}s ago, }${bytes:+$bytes bytes, }log ${log:-unknown}")
   stage_json+="${stage_json:+,}{\"name\":$(dl_json_string "$name"),\"elapsed_seconds\":$(jnum "$elapsed"),\"log\":$(jstr "$log"),\"log_bytes\":$(jnum "$bytes"),\"quiet_seconds\":$(jnum "$age")}"
   [ -n "${first_stage:-}" ] || first_stage=$name
@@ -189,7 +204,7 @@ add_stage() {
 
 first_stage=""
 if [ -n "$gate_running" ]; then
-  quiet_seen "$(file_info "$running_file" | awk '{print $1}')"
+  quiet_seen "$(file_info "$running_file" | awk '{print $1}')" gate
   while IFS=$'\t' read -r kind a b c; do
     case $kind in
       start) case $a in "" | *[!0-9]*) ;; *) gate_elapsed=$((now - a)) ;; esac ;;
@@ -334,8 +349,13 @@ elif [[ "$orch_event" == waiting* ]]; then
   what=${what#[-_ ]}
   [ -n "$what" ] || what="something"
 fi
+# While the gate runs only its own evidence counts, so an implementer's commits never hide a frozen stage.
+[ -z "$gate_running" ] || quiet=$gate_quiet
+gate_died=false
+[ -z "$gate_pid" ] || [ -n "$gate_running" ] || gate_died=true
 if [ -z "$what" ] && [ "$active_worktrees" -eq 0 ] && { [ -z "$orch_age" ] || [ "$orch_age" -gt "$threshold" ]; }; then
   state=idle verdict="idle"
+  [ "$gate_died" = false ] || verdict="idle (the last gate died: train-running.txt is stale)"
 elif [ -n "$quiet" ] && [ "$quiet" -gt "$threshold" ]; then
   state=stalled verdict="possibly stalled: no event or output for $((quiet / 60)) min"
 elif [ -n "$what" ]; then
@@ -356,10 +376,10 @@ held_count=$(printf '%s\n' "${held_lines[@]+"${held_lines[@]}"}" | grep -c '^  s
 
 if [ -n "$json" ]; then
   printf '{"repo":%s,"now":%s,' "$(dl_json_string "$DL_REPO")" "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
-  printf '"verdict":{"state":"%s","what":%s,"quiet_seconds":%s,"stall_minutes":%s,"line":%s},' \
-    "$state" "$(jstr "$what")" "$(jnum "$quiet")" "$stall_minutes" "$(dl_json_string "verdict: $verdict")"
-  printf '"gate":{"running":%s,"pid":%s,"train":%s,"elapsed_seconds":%s,"stages":[%s]},' \
-    "$([ -n "$gate_running" ] && echo true || echo false)" "$(jnum "$gate_pid")" \
+  printf '"verdict":{"state":"%s","what":%s,"quiet_seconds":%s,"stall_minutes":%s,"line":%s,"gate_died":%s},' \
+    "$state" "$(jstr "$what")" "$(jnum "$quiet")" "$stall_minutes" "$(dl_json_string "verdict: $verdict")" "$gate_died"
+  printf '"gate":{"running":%s,"stale":%s,"pid":%s,"train":%s,"elapsed_seconds":%s,"stages":[%s]},' \
+    "$([ -n "$gate_running" ] && echo true || echo false)" "$gate_died" "$(jnum "$gate_pid")" \
     "$(printf '%s\n' "$gate_train" | tr ' ' '\n' | dl_json_list)" "$(jnum "$gate_elapsed")" "$stage_json"
   printf '"heavy":{"slots":%s,"held":[%s],"waiting":[%s]},' "$(jnum "$heavy_slots")" "$held_json" "$waiting_json"
   printf '"worktrees":[%s],"last_merge":%s,"open_tickets":%s,"orchestrator":%s}\n' \

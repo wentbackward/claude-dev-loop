@@ -3853,6 +3853,32 @@ echo "$out" | grep -qE "^gate: running, pid $stuck, " && pass "status: a stalled
 echo "$out" | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: a stage log that stopped growing is possibly stalled" || fail "status: stalled verdict"
 expect "status: --json stalled" "stalled|e2e" "$(stat_st --json | jq -r '[.verdict.state, .gate.stages[0].name] | join("|")')"
+# While the gate runs, an implementer's fresh commit and notes do not hide the frozen stage.
+git worktree add -q -b feat/13-busy "$swork/wt-busy" origin/main
+(cd "$swork/wt-busy" && echo c >c.txt && git add c.txt && git commit -q -m "feat: c (Refs #13)")
+DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy >/dev/null
+printf 'feat: c (#13)\n\nCloses #13\n' >"$(DEV_LOOP_HOME="$st_home" "$plugin/scripts/paths.sh" notes feat/13-busy)"
+stat_st | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: a frozen stage with a fresh worktree commit is still possibly stalled" || fail "status: worktree activity hid a frozen stage"
+# Another repository sharing the heavy queue: its live slot and fresh event show, but never count here.
+sleep 60 &
+other=$!
+mkdir -p "$st_home/other"
+printf '{"t":"%s","who":"heavy","event":"slot-acquired","slot":"2","pid":"%s","detail":"other e2e"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$other" >"$st_home/other/events.jsonl"
+out=$(stat_st)
+echo "$out" | grep -qE "^  slot 2: pid $other, other, [0-9]+s: other e2e$" && pass "status: lists another repository's slot holder" ||
+  fail "status: no slot line for the other repository"
+echo "$out" | tail -n 1 | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: another repository's fresh heavy event does not mask a stall" || fail "status: other repository masked the stall"
+git worktree remove --force "$swork/wt-busy"
+mv "$st_state/train-running.txt" "$swork/train-running.keep"
+expect "status: another repository's live slot is not this repository's activity" idle \
+  "$(stat_st --json | jq -r .verdict.state)"
+mv "$swork/train-running.keep" "$st_state/train-running.txt"
+kill "$other" 2>/dev/null
+wait "$other" 2>/dev/null
+rm -rf "$st_home/other"
 printf '{"watchdog": {"stall_minutes": 99999999}, "checks": ["true"]}\n' >"$swork/patient.json"
 DEV_LOOP_CONFIG="$swork/patient.json" stat_st | tail -n 1 | grep -qE '^verdict: waiting on gate stage e2e' &&
   pass "status: watchdog.stall_minutes sets the threshold" || fail "status: stall_minutes ignored"
@@ -3863,6 +3889,12 @@ kill "$stuck" 2>/dev/null
 wait "$stuck" 2>/dev/null
 stat_st | grep -qE "^gate: not running \(train-running.txt names pid $stuck, which has ended\)" &&
   pass "status: a dead gate pid is not running" || fail "status: dead gate pid"
+expect "status: a dead gate is said in the idle verdict" "verdict: idle (the last gate died: train-running.txt is stale)" \
+  "$(stat_st | tail -n 1)"
+expect "status: --json flags the dead gate" "idle|true|true" \
+  "$(stat_st --json | jq -r '[.verdict.state, .verdict.gate_died, .gate.stale] | map(tostring) | join("|")')"
+expect "status: --json without a dead gate has the flags false" "false|false" \
+  "$(sjson '[.verdict.gate_died, .gate.stale] | map(tostring) | join("|")')"
 
 # Read-only: no file in the state directories or the lock directory changes while status runs.
 snapshot() { find "$shome" "$st_home" "$swork/locks" -exec ls -ld {} + 2>/dev/null | LC_ALL=C sort | cksum; }
