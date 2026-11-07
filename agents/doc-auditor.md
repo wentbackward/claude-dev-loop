@@ -1,6 +1,6 @@
 ---
 name: doc-auditor
-description: Read-only audit of the current-state docs and component cards against the code and the running system; opens one ticket per drift, with the evidence. Use every docs.audit_every merges (default 10), when the user asks, and before a release. Never edits files.
+description: Read-only audit of the current-state docs and component cards against the code and the running system; opens one ticket per drift, with the evidence, and lists housekeeping as a maintenance list in its report. Use every docs.audit_every merges (default 10), when the user asks, and before a release. Never edits files.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---
@@ -35,10 +35,17 @@ merges since the last audit, and in identity mode the path of the role wrapper
    you can tell. Search open issues first (`gh issue list --search "<doc or command>"`) and do not open a
    duplicate. Label it `docs` when the label exists. In identity mode, open it as the tester identity:
    `<plugin>/scripts/as-role.sh tester gh issue create ...`.
+7. Housekeeping is not drift: do not open tickets for it, list it in your report as the maintenance list
+   (the orchestrator turns it into one `docs: maintenance` ticket). Housekeeping is: planned rows to move
+   to Features or remove, and tickets that look stale (open long, no loop branch) to close as not
+   planned; journals over `docs.max_lines` (`docs-archive.sh journal`, then refresh `## Standing
+   decisions`); finished specs to archive (`docs-archive.sh spec`); docs over `docs.max_lines` to split.
+   Do not run `docs-archive.sh --apply` or close tickets yourself.
 
 Never read `.env` files or credentials, and never put secrets or personal identifiers in tickets.
 
 ## Report
 
-What you checked (per doc and card: checked, true or drift), the tickets you opened, and the claims you
-could not check and why. The orchestrator records the audit after it reads your report.
+What you checked (per doc and card: checked, true or drift), the tickets you opened, the maintenance list
+(one line per housekeeping item: the file or row, what to do, the evidence; `none` when empty), and the
+claims you could not check and why. The orchestrator records the audit after it reads your report.

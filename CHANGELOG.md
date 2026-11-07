@@ -4,6 +4,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Docs maintenance (#47; only with `docs` configured): on the doc audit's cadence, right after the audit,
+  the orchestrator opens one `docs: maintenance` ticket from `doctor.sh`'s docs notes and the auditor's
+  new maintenance list (planned rows to move or remove, journals over budget, finished specs, at most one
+  oversized doc to split per ticket), implemented, reviewed and gated like any ticket, skipped when empty.
+  Stale planned tickets are closed as not planned with a comment, on the user's OK in collaborative mode,
+  without asking in dark mode. The `doc-auditor` lists housekeeping in its report instead of opening a
+  ticket for each; real drift still gets one ticket each, and the auditor stays read-only.
 - The scenario stage's red line (`scenarios red: <n> judged, <k> required unsatisfied, ...`) counts only
   the required scenarios that are not sealed; a sealed required failure is only in the `scenarios sealed`
   count and still makes the train red. The README and `docs/DECISIONS.md` note that a daemon started by
