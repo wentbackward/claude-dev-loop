@@ -4025,7 +4025,7 @@ expect "noforce: the merged head of a branch behind the base is a merge commit o
 expect "noforce: the second branch's merged head builds on its gated head and the first squash" \
   "$b_src $(git rev-parse origin/main~1)" "$(git log -1 --format=%P "$b_head")"
 expect "noforce: no -vN branch or PR is created" "" \
-  "$(git ls-remote origin 'refs/heads/*-v*'; ls "$FAKE_GH_DIR" | grep -e '-v[0-9]')"
+  "$(git ls-remote origin 'refs/heads/*-v*'; find "$FAKE_GH_DIR" -name '*-v[0-9]*')"
 expect "noforce: the ledger keeps the gated source head" "$a_src $a_head" \
   "$(jq -r 'select(.branch == "feat/801-a") | "\(.source_head) \(.head)"' "$DEV_LOOP_HOME/project/merged.jsonl")"
 expect "noforce: the merged branches are deleted locally and on the origin" "|" \
