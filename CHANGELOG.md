@@ -24,7 +24,7 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   break is refused, the link named. `doctor.sh` notes a journal over `docs.max_lines`;
   `templates/DECISIONS.md` has a `## Standing decisions` section. A journal must be newest last (a
   newest-first one is refused) and its newest entry always stays.
-- `docs-check.sh` follows CommonMark code fences: a ``` line inside a `~~~` block no longer ends it, and a
+- `docs-check.sh` follows CommonMark code fences: a backtick fence line inside a `~~~` block no longer ends it, and a
   line indented 4 spaces is not a fence; its link helpers moved to `scripts/lib/docs.sh`, shared with
   `docs-archive.sh` (#44).
 
