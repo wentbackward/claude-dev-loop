@@ -39,7 +39,7 @@ perm_merge() {
     python3 -I -c '
 import json, sys
 settings = json.load(open(sys.argv[1]))
-permissions = settings.setdefault("permissions", {})
+permissions = settings["permissions"] = settings.get("permissions") or {}
 for key, rules in json.loads(sys.argv[2]).items():
     permissions[key] = (permissions.get(key) or []) + rules
 sys.stdout.write(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
