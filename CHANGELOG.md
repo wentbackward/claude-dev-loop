@@ -4,6 +4,14 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Owner steps (#73): `permissions.sh`'s dry run ends with the one command the owner runs to apply it,
+  `! <plugin>/scripts/permissions.sh --apply` (the plugin's absolute path); the setup and doctor skills
+  show the owner that line and wait, and never edit `.claude/settings*.json` themselves (an agent may not
+  change its own permissions). `doctor.sh` reports a deny rule in the project's `.claude/settings.json`
+  or `settings.local.json` that blocks `git tag`, `gh release` or a tag push (`git push <remote> v*`,
+  `--tags`) as MISSING, with the fix: move it to `ask`. The setup skill makes a push to another public
+  repository the project depends on an owner step too.
+
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
   in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's

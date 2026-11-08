@@ -823,3 +823,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   strings and takes the earlier; `dl_branch_args` names a bare `--` (exit 2, as any other option);
   `repush.sh` treats the last non-blank line as the footer when it starts with the robot emoji and
   "Generated with ", drops the blank lines before it and writes body, blank, `Supersedes`, blank, footer.
+
+## 2026-11-08 — Permission changes and tag denies are owner steps (#73)
+
+- **Decision:** a deny rule in the project's settings that blocks a tag, a release or a tag push is
+  `MISSING` in `doctor.sh`, not a note. It is found by matching each project deny rule (`dl_perm_match`)
+  against sample commands: `git tag` (plain, `-a`, `-s`, `-m`), `gh release create v1.2.3`, and the tag
+  pushes `git push <remote> v1.2.3|refs/tags/v1.2.3|tag v1.2.3|--tags|--follow-tags`, `git push --tags
+  [<remote>]` and `git push --follow-tags` (the README lists them). A rule that also matches a loop command
+  is left to the loop-command check, so a broad deny such as `Bash(git push:*)` is reported once. `permissions.sh`'s dry run puts the owner's
+  apply command at the end of its last line (`... (dry run). The owner applies them in the session with:
+  ! <plugin>/scripts/permissions.sh --apply`), with the plugin's absolute scripts path.
+- **Reason:** the stop condition is "release on the owner's go", an ask; a deny beats every ask, and the
+  agent may not change its permissions, so the loop cannot make a release while the deny stands, which is
+  a problem to fix, not a remark. Sample commands reuse the existing matcher, so no new matching code. The
+  apply command stays on the summary line so the dry run's last line still says "dry run".
+- **Alternatives:** a note (the release would still stall); comparing the deny rules with the template's
+  ask rules textually (misses `git tag:*` against `git tag *` and `git push origin v*`, which no ask rule
+  names); the apply command on a line of its own after the summary (two last lines to keep in step).
