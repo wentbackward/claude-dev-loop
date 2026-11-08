@@ -683,3 +683,24 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   (a process outside the session that would need its own lifecycle and permissions); the log's
   modification time instead of its size (the same signal, but needs python3 or perl per poll); acting on
   `possibly stalled` without confirming.
+
+## 2026-11-07 — doctor checks the marketplace pin without the network (#64)
+
+- **Decision:** `doctor.sh` reads the `extraKnownMarketplaces.<marketplace>.source` entries of the user
+  settings (`$DEV_LOOP_CLAUDE_DIR/settings.json`, default `CLAUDE_CONFIG_DIR`, else `~/.claude`), the managed
+  settings (`/etc/claude-code/managed-settings.json` on Linux, `/Library/Application
+  Support/ClaudeCode/managed-settings.json` on macOS, or `DEV_LOOP_MANAGED_SETTINGS`) and the project's
+  `.claude/settings.json` and `settings.local.json`, and compares each with the marketplace in
+  `plugins/known_marketplaces.json` (source kind, repo or url or path, and ref, all exact). A mismatch is
+  MISSING (the state in which `marketplace add` fails); an entry with no configured marketplace is a note
+  with the add command, since Claude Code may still add it itself when the folder is trusted. The installed
+  version is the highest in `plugins/installed_plugins.json` at user scope or for this project; a pin older
+  than it is a note, once per ref. The add argument is `owner/repo@ref` for GitHub (the form that worked
+  in the reported case) and `url#ref` for a git URL. The latest release is not looked up: doctor makes no
+  network call.
+- **Reason:** the error comes from a mismatch between the settings entry and the configured marketplace,
+  which both files show without the network; a `gh release view` can hang offline and has no portable
+  timeout (no GNU `timeout` on macOS), and the installed version already shows a pin that was not moved.
+- **Alternatives:** `gh release view` for the latest tag (slow or failing offline); MISSING for an entry
+  not added yet (a fresh machine with copied settings is not broken); comparing the repo case-insensitively
+  (Claude Code compares the entry as written).

@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the project's permission rules, the current-state docs, the component map, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
+description: Check that this machine and repository are ready for the dev loop - prerequisites (git, gh login, jq or python3, flock, systemd scopes), the project config and its resolved paths, models per agent, the project's permission rules, the marketplace source and pin in the settings, the current-state docs, the component map, and leftovers of a hand-built loop - then explain each problem and how to fix it. Use when asked to run the doctor, check the dev-loop setup, or find out why the loop, the gate or a hook is not working.
 ---
 
 # Doctor
@@ -67,6 +67,10 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `MISSING factory: "<value>" is not collaborative or dark` | set `"factory"` to `collaborative` or `dark`, or remove it (collaborative) |
 | `MISSING factory dark: no scenario store with a valid required scenario` | the `setup` skill's go-dark step: write scenarios from the spec, at least one `required: true`; or set `"scenarios": false` |
 | `factory <mode>, scenarios on\|off (preset\|explicit\|default)` | where the scenarios setting came from: the dark preset, the config, or the default |
+| `MISSING marketplace <name>: the <scope> settings entry (<source>) does not match the configured marketplace (...)` | `marketplace add` fails until they match: run the `claude plugin marketplace add <source>` the line names (the user runs it; it is outside the repository), or change that entry's `ref` and add it from that ref |
+| `note marketplace <name> is in the <scope> settings but not added yet: ...` | the user runs the `claude plugin marketplace add` command the note names, then installs the plugin |
+| `note marketplace <name> is pinned to <ref>, older than the installed plugin <version>` | move the entry's `ref` to the tag the note names, add the marketplace from it, then `claude plugin update dev-loop@claude-dev-loop` (the README's Install section) |
+| `marketplace <scope> settings: <source>`, `configured: ...`, `installed: ...` | information: the entries found, the marketplace Claude Code configured, the installed version; nothing without entries |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's

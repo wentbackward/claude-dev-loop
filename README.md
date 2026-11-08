@@ -13,10 +13,33 @@ the spec leaves open go into a log, and the user hears results in plain language
 
 ## Install
 
+Pin the marketplace to a release tag (the latest is `v0.8.0`):
+
 ```text
-/plugin marketplace add wentbackward/claude-dev-loop
+/plugin marketplace add wentbackward/claude-dev-loop@v0.8.0
 /plugin install dev-loop@claude-dev-loop
 ```
+
+From a shell, the same is `claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.0`, then
+`claude plugin install dev-loop@claude-dev-loop` (add `--scope project` to enable it for one project).
+
+**Settings that already name the marketplace.** When the user, managed or project settings declare it in
+`extraKnownMarketplaces` (for example settings copied from another machine), Claude Code accepts
+`marketplace add` only from exactly the source that entry lists, including its `ref`. Any other source
+fails with:
+
+```text
+Error: Cannot add marketplace "claude-dev-loop": its source doesn't match its extraKnownMarketplaces entry in user or managed settings; add it from the source that entry lists, or change the entry.
+```
+
+The fix is to add it from the entry's source: an entry with `"repo": "wentbackward/claude-dev-loop"` and
+`"ref": "v0.8.0"` is added with `claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.0`; or
+change the entry's `"ref"` first and add it from that ref. `/dev-loop:doctor` prints the entries it finds
+and the exact command when they do not match the marketplace Claude Code configured.
+
+**Moving to a new release.** Change the `"ref"` in the settings entry to the new tag (when there is one),
+add the marketplace from the new tag (`claude plugin marketplace add wentbackward/claude-dev-loop@<new
+tag>`), then run `claude plugin update dev-loop@claude-dev-loop`.
 
 Requirements: `git` (2.31 or later), `gh` (logged in), `bash`, and `jq` or `python3`. Optional: `flock`
 and a systemd user session (`systemd-run --user`), which give the heavy-job queue its locks and memory cap.
@@ -37,7 +60,9 @@ first: language, toolchain, Makefile, CI, spec. Then it asks only for what it co
   `e2e`).
 
 `/dev-loop:doctor` (the script: `${CLAUDE_PLUGIN_ROOT}/scripts/doctor.sh`) checks the prerequisites and
-prints the paths it resolved.
+prints the paths it resolved, and the plugin's marketplace source and pin in the user, managed and project
+settings (read only; it prints only those entries). `DEV_LOOP_CLAUDE_DIR` (default `CLAUDE_CONFIG_DIR`,
+else `~/.claude`) and `DEV_LOOP_MANAGED_SETTINGS` point it at other files.
 
 ## The loop
 

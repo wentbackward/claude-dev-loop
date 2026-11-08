@@ -2,6 +2,19 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Marketplace pin (#64): the README installs from a release tag
+  (`/plugin marketplace add wentbackward/claude-dev-loop@v0.8.0`), explains the error Claude Code gives
+  when an `extraKnownMarketplaces` entry in the settings lists another source (add it from the entry's
+  source, or change the entry's `ref`), and how to move to a new release (change the `ref`, add from the
+  new tag, `claude plugin update dev-loop@claude-dev-loop`). `doctor.sh` prints the marketplace source and
+  pin it finds in the user, managed and project settings, the marketplace Claude Code configured and the
+  installed version (read only, nothing else from those files). An entry that does not match the configured
+  marketplace is MISSING with the exact `claude plugin marketplace add <source>`; an entry not added yet and
+  a pin older than the installed plugin are notes. Without any entry nothing new is printed.
+  `DEV_LOOP_CLAUDE_DIR` and `DEV_LOOP_MANAGED_SETTINGS` point it at other files.
+
 ## 0.8.0 — 2026-11-07
 
 - Merge without a force push (#57): `merge-train.sh` no longer force-pushes the replayed branch. A branch
