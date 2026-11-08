@@ -3289,7 +3289,7 @@ mdecide() {
 # Doctor without .claude/settings.json: one note, and otherwise the same output as with complete rules.
 no_settings=$(mdoctor)
 expect "perm: without .claude/settings.json doctor prints exactly one permissions line" 1 \
-  "$(printf '%s\n' "$no_settings" | grep -c 'permissions')"
+  "$(printf '%s\n' "$no_settings" | grep -c 'permissions: ')"
 printf '%s\n' "$no_settings" | grep -q '^note    permissions: no .claude/settings.json' &&
   pass "perm: the missing settings file is a note" || fail "perm: no note for a missing .claude/settings.json"
 
@@ -3428,8 +3428,9 @@ $(mmatch 'Bash(make lint)' 'make lint') $(mmatch 'Read(./.env)' 'cat .env')"
 # Doctor: complete rules print nothing new; the same output as without settings, less the one note.
 complete_out=$(mdoctor)
 expect "perm: doctor prints nothing about complete permissions" "" "$(printf '%s\n' "$complete_out" | grep 'permissions')"
-expect "perm: doctor output without settings is the complete output plus one note" \
-  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks')" "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: ')"
+expect "perm: doctor output without settings is the complete output plus one note and the uncovered notes dir" \
+  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks\|^doctor: ')" \
+  "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: \|^MISSING notes: \|^doctor: ')"
 # A stale allow list: the fast check changed.
 mconfig "make fmt-check lint"
 printf '%s\n' "$(mdoctor)" | grep -qF 'note    permissions: the allow list lacks the project commands: Bash(make fmt-check lint)' &&
@@ -3441,7 +3442,8 @@ printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >.claude/settings.local.js
 printf '%s\n' "$(mdoctor)" | grep -qE '^note    permissions: the allow list lacks [0-9]+ of the loop.s rules' &&
   pass "perm: doctor notes missing loop rules" || fail "perm: no note for missing loop rules"
 # No allow list at all.
-printf '{"permissions": {"deny": ["Bash(sudo:*)"]}}\n' >.claude/settings.json
+printf '{"permissions": {"deny": ["Bash(sudo:*)"], "additionalDirectories": ["%s"]}}\n' "$mwork/state/project/notes" \
+  >.claude/settings.json
 rm .claude/settings.local.json
 out=$(mdoctor)
 printf '%s\n' "$out" | grep -qF 'note    permissions: no allow list' && pass "perm: doctor notes a missing allow list" ||
@@ -4641,6 +4643,7 @@ git add . && git commit -q -m "chore: start" && git push -q -u origin main
 wroot=$("$plugin/scripts/paths.sh" root)
 wparent=$(dirname "$wroot")
 wdir="$wparent/project-worktrees"
+wnotes="$wwork/home/project/notes"
 # wenv CONFIG COMMAND...: run COMMAND in the project with the config CONFIG and the section's own state.
 wenv() { local c=$1; shift; (cd "$wwork/project" && DEV_LOOP_HOME="$wwork/home" DEV_LOOP_CONFIG="$wwork/$c.json" "$@" 2>&1); }
 wpaths() { local c=$1; shift; wenv "$c" "$plugin/scripts/paths.sh" "$@"; }
@@ -4669,8 +4672,8 @@ wdirs() { # wdirs FILE: the additionalDirectories of FILE, space separated
   bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_rules "$2" additionalDirectories' _ \
     "$plugin" "$1" | paste -sd' ' -
 }
-expect "wtd: without worktrees_dir permissions.sh adds no additionalDirectories" "" \
-  "$(wperm plain | grep additionalDirectories)"
+expect "wtd: without worktrees_dir permissions.sh adds only the notes dir to additionalDirectories" \
+  ".claude/settings.local.json: + additionalDirectories $wnotes" "$(wperm plain | grep additionalDirectories)"
 mkdir -p .claude
 printf '{"model": "custom", "permissions": {"allow": ["Bash(ls *)"], "additionalDirectories": ["%s/docs-elsewhere"]}, "env": {"A": "1"}}\n' \
   "$wwork" >"$wwork/local-before.json"
@@ -4681,10 +4684,12 @@ for nojq in "" 1; do
   out=$(DEV_LOOP_NO_JQ=$nojq wperm wtd)
   cmp -s .claude/settings.local.json "$wwork/local-before.json" && pass "wtd: the dry run changes nothing$label" ||
     fail "wtd: the dry run changed the local settings$label"
-  expect "wtd: the dry run lists the worktrees dir once, and not the gate inside it$label" \
-    ".claude/settings.local.json: + additionalDirectories $wdir" "$(printf '%s\n' "$out" | grep additionalDirectories)"
+  expect "wtd: the dry run lists the notes dir and the worktrees dir once, not the gate inside it$label" \
+    ".claude/settings.local.json: + additionalDirectories $wnotes|.claude/settings.local.json: + additionalDirectories $wdir" \
+    "$(printf '%s\n' "$out" | grep additionalDirectories | paste -sd'|' -)"
   DEV_LOOP_NO_JQ=$nojq wperm wtd --apply >/dev/null
-  expect "wtd: --apply appends the absolute worktrees dir after the existing entry$label" "$wwork/docs-elsewhere $wdir" \
+  expect "wtd: --apply appends the absolute notes and worktrees dirs after the existing entry$label" \
+    "$wwork/docs-elsewhere $wnotes $wdir" \
     "$(wdirs .claude/settings.local.json)"
   expect "wtd: --apply keeps the other keys and rules$label" "custom 1 Bash(ls *)" \
     "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["env"]["A"], d["permissions"]["allow"][0])' .claude/settings.local.json)"
@@ -4696,11 +4701,11 @@ expect "wtd: a gate_worktree outside the worktrees dir is listed too" \
   ".claude/settings.local.json: + additionalDirectories $wparent/elsewhere-gate" "$(printf '%s\n' "$out" | grep additionalDirectories)"
 cp "$wwork/local-before.json" .claude/settings.local.json
 printf '{"permissions": {"additionalDirectories": ["%s"]}}\n' "$wparent/project-worktrees/" >.claude/settings.json
-expect "wtd: an entry in the shared settings (trailing slash) already covers the dir" "" \
-  "$(wperm wtd | grep additionalDirectories)"
+expect "wtd: an entry in the shared settings (trailing slash) already covers the dir" \
+  ".claude/settings.local.json: + additionalDirectories $wnotes" "$(wperm wtd | grep additionalDirectories)"
 rm .claude/settings.json
 out=$(wperm wtd-parent --apply)
-expect "wtd: the project's parent directory is never added" "$wwork/docs-elsewhere" "$(wdirs .claude/settings.local.json)"
+expect "wtd: the project's parent directory is never added" "$wwork/docs-elsewhere $wnotes" "$(wdirs .claude/settings.local.json)"
 printf '%s\n' "$out" | grep -q "worktrees_dir.*holds the project" && pass "wtd: permissions.sh warns about a worktrees_dir that holds the project" ||
   fail "wtd: no warning for a worktrees_dir that holds the project ($out)"
 
@@ -4736,6 +4741,21 @@ printf '%s\n' "$out" | grep -qF 'MISSING worktrees_dir: ' && pass "wtd: doctor r
   fail "wtd: no MISSING for a worktrees_dir that holds the project"
 git worktree remove "$wparent/project-31" && git branch -q -D feat/31-old
 
+# The notes dir: implementers write their notes file there with the Write tool, so it is listed too, with or
+# without worktrees_dir; doctor reports it MISSING while uncovered; a notes_dir inside the project needs nothing.
+rm -f .claude/settings.json .claude/settings.local.json
+out=$(wdoctor plain)
+printf '%s\n' "$out" | grep -qF "MISSING notes: $wnotes is outside the working directory and not in additionalDirectories" &&
+  printf '%s\n' "$out" | grep -qF 'permissions.sh --apply' && pass "wtd: doctor reports an uncovered notes dir as MISSING with the fix" ||
+  fail "wtd: no MISSING for an uncovered notes dir ($out)"
+wperm plain --apply >/dev/null
+expect "wtd: --apply lists the notes dir without worktrees_dir" "$wnotes" "$(wdirs .claude/settings.local.json)"
+expect "wtd: doctor is quiet once the notes dir is covered" "" "$(wdoctor plain | grep '^MISSING notes')"
+printf '{"base_branch": "main", "checks": ["true"], "notes_dir": "notes"}\n' >"$wwork/notes-inside.json"
+rm .claude/settings.local.json
+expect "wtd: a notes_dir inside the project is not added" "" "$(wperm notes-inside | grep additionalDirectories)"
+expect "wtd: a notes_dir inside the project is not reported" "" "$(wdoctor notes-inside | grep '^MISSING notes')"
+
 # Status, cleanup and merge-train (dl_worktree_of) find a worktree of the new layout.
 wt12=$(wpaths wtd worktree 12)
 git worktree add -q "$wt12" -b feat/12-new origin/main
@@ -4743,7 +4763,7 @@ git worktree add -q "$wt12" -b feat/12-new origin/main
 wenv wtd "$plugin/scripts/status.sh" --no-gh | grep -qF "feat/12-new #12: " && pass "wtd: status lists a worktree of the new layout" ||
   fail "wtd: status does not list the new-layout worktree"
 wenv wtd "$plugin/scripts/cleanup.sh" >/dev/null
-wreport=$(ls -t "$wwork/home/project/logs"/cleanup-*.tsv 2>/dev/null | head -n 1)
+wreport=$(find "$wwork/home/project/logs" -name 'cleanup-*.tsv' 2>/dev/null | head -n 1)
 grep -qF "checked out in $wt12" "$wreport" 2>/dev/null && pass "wtd: cleanup keeps a branch checked out in the new layout" ||
   fail "wtd: cleanup did not find the new-layout worktree"
 expect "wtd: dl_worktree_of (merge-train) finds the new-layout worktree" "$wt12" \

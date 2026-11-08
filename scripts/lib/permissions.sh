@@ -180,8 +180,56 @@ dl_perm_wanted() {
       dl_perm_template_rules "$1/templates/settings.json"
       dl_perm_project_rules
       ;;
-    local) dl_perm_plugin_rules "$1" ;;
+    local)
+      dl_perm_plugin_rules "$1"
+      dl_perm_dirs | awk '{ print "additionalDirectories\t" $0 }'
+      ;;
   esac
+}
+
+# dl_perm_dir_entries FILE...: the permissions.additionalDirectories of the FILEs as absolute, normalized
+# paths (~ and paths relative to the project root resolved), one per line.
+dl_perm_dir_entries() {
+  local file entry
+  for file in "$@"; do
+    while IFS= read -r entry; do
+      [ -n "$entry" ] && dl_normalize "$(dl_resolve "$entry")"
+    done < <(dl_perm_rules "$file" additionalDirectories)
+  done
+}
+
+# dl_perm_dir_covered DIR FILE...: true when an additionalDirectories entry of the FILEs is DIR or holds it.
+dl_perm_dir_covered() {
+  local dir=$1 entry
+  shift
+  while IFS= read -r entry; do
+    dl_path_under "$dir" "$entry" && return 0
+  done < <(dl_perm_dir_entries "$@")
+  return 1
+}
+
+# dl_perm_holds_root DIR: true when DIR is the project root or one of its parents (listing it in
+# additionalDirectories would open every sibling project).
+dl_perm_holds_root() {
+  dl_path_under "$DL_ROOT" "$1"
+}
+
+# dl_perm_dirs: the directories the loop writes with the Write and Edit tools, for
+# permissions.additionalDirectories, one per line: the notes directory (implementers write their notes file
+# there), and with worktrees_dir that directory and a gate worktree outside it; never one inside the project
+# (the working directory already) or one that holds the project.
+dl_perm_dirs() {
+  local wdir gate
+  dl_perm_dir_ok "$(dl_normalize "$(dl_notes_dir)")"
+  wdir=$(dl_worktrees_dir) || return 0
+  dl_perm_dir_ok "$wdir"
+  gate=$(dl_normalize "$(dl_gate_dir)")
+  dl_path_under "$gate" "$wdir" || dl_perm_dir_ok "$gate"
+}
+
+# dl_perm_dir_ok DIR: print DIR unless it is inside the project or holds it.
+dl_perm_dir_ok() {
+  dl_path_under "$1" "$DL_ROOT" || dl_perm_holds_root "$1" || printf '%s\n' "$1"
 }
 
 # dl_perm_loop_samples ROOT: commands the loop runs, one per line, to test deny rules against.

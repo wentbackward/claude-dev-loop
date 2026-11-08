@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Print the dev-loop paths of the current repository, so prompts and notes use absolute paths.
 #
-# Usage: paths.sh notes <branch> | notes-dir | logs | events | gate | state | doc-audit | architect | scenarios | config | root
+# Usage: paths.sh notes <branch> | notes-dir | logs | events | gate | worktree <n> | worktrees | state | doc-audit |
+#        architect | scenarios | config | root
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -22,6 +23,11 @@ case "${1:-}" in
   logs) dl_logs_dir ;;
   events) dl_events_file ;;
   gate) dl_gate_dir ;;
+  worktree)
+    case ${2:-} in "" | *[!0-9]*) dl_die "usage: paths.sh worktree <ticket number>" ;; esac
+    dl_worktree_dir "$2"
+    ;;
+  worktrees) dl_worktrees_dir || dirname "$DL_ROOT" ;;
   state) printf '%s\n' "$DL_STATE" ;;
   doc-audit)
     mkdir -p "$DL_STATE"
@@ -34,5 +40,5 @@ case "${1:-}" in
   scenarios) dl_scenarios_dir ;;
   config) printf '%s\n' "$DL_CONFIG" ;;
   root) printf '%s\n' "$DL_ROOT" ;;
-  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | events | gate | state | doc-audit | architect | scenarios | config | root" ;;
+  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | events | gate | worktree <n> | worktrees | state | doc-audit | architect | scenarios | config | root" ;;
 esac
