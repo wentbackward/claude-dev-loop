@@ -68,16 +68,17 @@ fast_check=$(cfg fast_check "")
 require_clean=$(cfg stop_gate.require_clean_tree true)
 session_id=$(printf '%s' "$input" | json_get session_id)
 marker=""
+old_untracked=""
+if [ -n "$session_id" ]; then
+  marker=$(session_marker "$git_dir/dev-loop-sessions" "$session_id" \
+    "$(printf '%s' "$input" | json_get transcript_path)") || marker=""
+fi
 
 reason=""
 if [ -n "$fast_check" ] && ! output=$(bash -c "$fast_check" 2>&1); then
   reason="the fast check ($fast_check) is failing. Fix it before stopping. Last output:
 $(printf '%s\n' "$output" | tail -n 40)"
 elif [ "$require_clean" != false ]; then
-  if [ -n "$session_id" ]; then
-    marker=$(session_marker "$git_dir/dev-loop-sessions" "$session_id" \
-      "$(printf '%s' "$input" | json_get transcript_path)") || marker=""
-  fi
   sort_untracked "$marker"
   if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ "$new_untracked" -gt 0 ]; then
     reason="there are uncommitted changes. Commit them (Conventional Commits, reference the issue) or discard them before stopping."
