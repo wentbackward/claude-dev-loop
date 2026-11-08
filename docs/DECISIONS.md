@@ -919,3 +919,25 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after the
   settle window); a `--worktree <path>` override (a forced removal by another name); archiving the
   ignored files or the submodules too (large, and a submodule's git dir is a repository of its own).
+
+## 2026-11-08 — The git guard checks the parsed command (#71)
+
+- **Decision:** the role guard's git check runs on every Bash call in a project with `.dev-loop.json`
+  (resolved like the scenario check: the cwd's main worktree, else `CLAUDE_PROJECT_DIR`), off only with
+  `"guard": false`; an object under `guard` keeps it on. Long options resolve against an explicit list per
+  subcommand: an exact listed name is itself, a `--no-` name is a negation (never dangerous), and any other
+  name means every listed option it is a prefix of, so an ambiguous prefix that may mean a dangerous option
+  is refused (git would reject it anyway). `-c` or `--config-env` before any guarded subcommand is refused,
+  not only before `fetch` and `pull` (config such as `core.pager` or `core.sshCommand` runs a command for
+  each of them). A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
+  base). A push of a name that is a tag and not a branch is a tag push. The template allows only
+  `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
+  in `permissions.sh`, since the template does not know the remote and base. A stacked branch's
+  `git rebase --onto <remote>/<base> <old> <branch>` asks (it is rare and names three refs).
+- **Reason:** the stop conditions are about meaning, and git's grammar (prefixes, bundles, quoting) is
+  only visible after parsing; failing closed on what may be dangerous costs nothing for the loop's own
+  commands, which use exact options.
+- **Alternatives:** more text rules (cannot cover prefixes and bundles); calling git's own parser
+  (`git rev-parse --parseopt` needs each command's option spec and runs nothing safer); an allow rule for
+  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list).
+

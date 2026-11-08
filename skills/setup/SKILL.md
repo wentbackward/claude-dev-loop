@@ -83,7 +83,7 @@ running system against holdout scenarios". Skip any question whose answer you al
    runs it in the session as the owner), and wait until the owner has run it. Never edit
    `.claude/settings.json` or `.claude/settings.local.json` yourself, and never run `--apply`.
    `permissions.sh` only adds rules: the allow, ask and deny rules of `templates/settings.json`, the loop's
-   one push (`git push -u <remote> HEAD`), one exact rule per `fast_check` and `checks` command into
+   one push (`git push -u <remote> HEAD`) and rebase (`git rebase <remote>/<base>`), one exact rule per `fast_check` and `checks` command into
    `.claude/settings.json`; the plugin's scripts at this machine's plugin path into
    `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes directory and
    `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again

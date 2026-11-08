@@ -139,7 +139,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
-| hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
+| hook | role guard | in every loop project: refuses git commands that hit a stop condition (see Permission modes: the git guard; off with `"guard": false`); with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 Every script under `scripts/` prints its usage for `-h` or `--help` as its first argument and exits 0
 without touching anything; the scripts that take branches (`gate-train.sh`, `merge-train.sh`, `repush.sh`,
@@ -828,6 +828,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
 | `identities` | none (mode off) | per-role identities, see below |
+| `guard` | on | `"guard": false` turns off the role guard's git check (see Permission modes: the git guard); an object (`guard.agents`) keeps it on |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
 | `docs.aspects` | none (docs off; `doctor.sh` notes it) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
@@ -993,8 +994,9 @@ the owner that line and wait instead of editing the settings files.
 
 - `.claude/settings.json` (shared, committed) gets the rules of `templates/settings.json` and the project's
   own:
-  - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`,
-    `git commit`; `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
+  - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git add`, `git commit`; exactly
+    `git rebase <remote>/<base>`, `git rebase --continue`, `--abort` and `--skip` (any other rebase, such
+    as `--onto`, asks); `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
     `gh pr diff`, `gh pr checks`); exactly `git push -u <remote> HEAD`, the one push the loop makes (the
     implementer pushes its checked-out branch in this form); one exact rule for each command of
     `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
@@ -1050,11 +1052,44 @@ A wildcard cannot exclude arguments: `git push -u origin feat/*` would also matc
 `git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask
 and deny rules match dangerous arguments anywhere as a second line. The same limit applies to the other
 wildcard allow rules: `git diff`, `git log` and `git show` accept `--output=<file>` (they write a file),
-and `git fetch +<ref>:<ref>` force-updates a local branch; both stay inside the repository. Options that
-run a command (`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` or `-c`) ask instead. The `Read` and
+and `git fetch +<ref>:<ref>` force-updates a local branch. Options that run a command
+(`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` or `-c`) ask instead. Text rules miss
+other spellings of the same option, so the git guard below checks the parsed command as well. The `Read` and
 `Edit` deny rules on `.env` cover only those tools: a Bash command such as `cat .env` is not stopped by
 them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.md` rule not to read
 `.env` files stays the guard.
+
+### The git guard
+
+Git accepts many spellings of one option: a unique prefix (`--upl=<cmd>` is `--upload-pack`), bundled
+short flags (`-fx <cmd>` is `-f -x <cmd>`), quotes and backslashes (`'-f'`, `\-f`, `--fo\rce`). A text
+rule cannot see through them, and `git push -u <remote> HEAD` pushes the base branch when run from a
+checkout of it. So the role guard hook (PreToolUse) parses every Bash command in a loop project: it
+splits it into simple commands (`&&`, `||`, `;`, `|`, newlines, `bash -c '...'`), de-quotes each one,
+skips variable assignments and wrappers, follows `cd` and `git -C <dir>`, looks inside `as-role.sh` and
+`heavy.sh`, expands bundled short flags and resolves long-option prefixes against the options of
+`fetch`, `pull`, `rebase`, `diff`, `log`, `show`, `worktree remove` and `push` (a prefix that may mean a
+dangerous option counts as it). It refuses (exit 2, with the command, the stop condition and "ask the
+owner"):
+
+- `git -c <key>=<value>` or `--config-env` before any of these subcommands (config can run a command);
+- `fetch` or `pull` with `--upload-pack`, `push` with `--receive-pack` or `--exec`;
+- `rebase --exec`/`-x`, and a rebase whose rewritten branch is the base branch (the branch argument, else
+  the branch checked out where it runs; `--continue`, `--abort`, `--skip` and `--quit` pass);
+- `diff`, `log` or `show` with `--output`;
+- `worktree remove --force`/`-f`;
+- a push that forces (`--force`, `--force-with-lease`, `--force-if-includes`, `-f`, `+<ref>`), deletes
+  (`--delete`, `-d`, `:<ref>`, `--prune`), tags (`--tags`, `--follow-tags`, `refs/tags/...` or a tag
+  name), pushes everything (`--all`, `--branches`, `--mirror`), or whose source or destination is the base
+  branch (`<base>`, `heads/<base>`, `refs/heads/<base>`, and `HEAD`, `@` or no refspec when the base is
+  checked out in the command's directory, from `git rev-parse --abbrev-ref HEAD`).
+
+The base branch is `base_branch` from `.dev-loop.json` (default `main`). The check is on in every project
+with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`; it refuses
+only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
+best effort like the rest of the guard: it reads the command line, not environment variables
+(`GIT_CONFIG_*`), command substitutions or the scripts an agent writes. The ask and deny rules stay as a
+second layer.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
 commit message or PR body that quotes such a command. Write those messages without the literal flag, or
@@ -1070,6 +1105,8 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 - Agents never read `.env` or credential files, and never write secrets or personal identifiers (real user
   names, account numbers, emails, private hostnames) into the repository, commits, issues or PRs.
 - Merges happen only through `merge-train.sh` after a green gate, and never with `--admin`.
+- The role guard refuses git commands that hit a stop condition, however their options are spelled
+  (see Permission modes: the git guard); `"guard": false` turns that check off.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
   directory, and, in identity mode, `~/.config/dev-loop/`. `status.sh` only reads them.
 - The scripts never push to the base branch directly, and nothing in the loop force-pushes. The merge
