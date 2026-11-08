@@ -117,10 +117,30 @@ expect "stop gate's first run blocks on an untracked file made after the transcr
 rm during.txt
 # Without a transcript the hook's first run in the session marks its start.
 expect "stop gate's first run without a transcript does not block on older untracked files" 0 "$(stop_session s2)"
-sleep 1
 echo new >after.txt
+touch -t 209901010000 after.txt
 expect "stop gate blocks on an untracked file created after its first run" 2 "$(stop_session s2)"
 rm after.txt
+# A transcript without a timestamp falls back to the hook's first run.
+printf '{"type":"summary"}\n' >"$work/no-stamp.jsonl"
+expect "stop gate's first run with a timestamp-less transcript does not block on older files" 0 \
+  "$(stop_session s4 "$work/no-stamp.jsonl")"
+echo new >after.txt
+touch -t 209901010000 after.txt
+expect "stop gate with a timestamp-less transcript blocks on a file made after its first run" 2 \
+  "$(stop_session s4 "$work/no-stamp.jsonl")"
+rm after.txt
+# A file whose mtime is exactly the session's start second counts as the session's.
+TZ=UTC touch -t 202106011200.00 exact.txt
+expect "stop gate blocks on an untracked file at exactly the session's start" 2 "$(stop_session s1 "$transcript")"
+rm exact.txt
+# Leading-dash names are file names, not find options.
+touch -t 202001010000 -- -dash.txt
+expect "stop gate does not block on an older untracked leading-dash name" 0 "$(stop_session s1 "$transcript")"
+rm -- -dash.txt
+echo new >-new-dash.txt
+expect "stop gate blocks on a new untracked leading-dash name" 2 "$(stop_session s1 "$transcript")"
+rm -- -new-dash.txt
 echo new >"new file.txt"
 echo "line three" >>src.txt
 awk '{ sub(/"fast_check"/, "\"stop_gate\": {\"require_clean_tree\": false}, \"fast_check\""); print }' \
