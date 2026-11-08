@@ -138,10 +138,20 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
-| hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted; gives up after 5 blocks |
+| hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
 | hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 All hooks do nothing in a project without `.dev-loop.json`, so the plugin is safe to install globally.
+
+The stop gate blocks on an untracked file only when it is not older than the session's start: the first
+timestamp in the session's transcript, else (no transcript, or one without a timestamp) the hook's first
+run in that session, so then it only protects files created after the first stop. The start is a marker
+under the repository's git directory, `dev-loop-sessions/`. The comparison is by modification time, so a
+file the session made with an old mtime (`cp -p`, `mv`, an extracted archive) counts as older and does
+not block. Older untracked files, such as an owner's notes or
+another session's file, do not block; the hook lists them once per session as a note. Modified tracked
+files always block. Without a session id in the hook input every untracked file blocks, as before;
+`stop_gate.require_clean_tree: false` turns the tree check off.
 
 ## Testing without overloading the machine
 
@@ -773,7 +783,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `watchdog.wake_minutes` | `25` | the orchestrator's heartbeat: the fallback wake-up while it waits (see Status) |
 | `watchdog` | on | `"watchdog": false` turns the heartbeat off (`status.sh` still reads `stall_minutes`, default 30) |
 | `stall_minutes` (in a check entry, `affected`, `scenarios`) | none (off) | the gate stops a stage whose log has not grown for this many minutes: `<name> stalled: no output for <n> min`, the train is red; a stage queued for a heavy slot is not stalled |
-| `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules |
+| `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules; the tree check counts untracked files only when newer than the session |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |

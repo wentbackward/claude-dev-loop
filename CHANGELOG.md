@@ -2,6 +2,15 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
+  first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
+  in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's
+  file) are listed once per session as a note and do not block. Modified tracked files still block, a hook
+  input without a session id blocks on every untracked file as before, and
+  `stop_gate.require_clean_tree: false` still turns the tree check off.
+
 ## 0.8.2 — 2026-11-08
 
 - Status verdict (#67): `status.sh` no longer trusts a stale `waiting` event: a wait that names branches
