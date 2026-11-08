@@ -795,3 +795,31 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a glob `../<repo>-*` (undocumented); adding each worktree as it is created (a settings
   write per ticket, and stale entries); worktrees inside the project (they would sit in the repository's
   tree and its searches).
+
+## 2026-11-08 — A section selector for tests/smoke.sh, and the #74/#75 review follow-ups (#76)
+
+- **Decision:** `tests/smoke.sh --section <id or name>` keeps the suite one sequential file and finds the
+  sections in it instead of wrapping them in functions: a section starts at a line `# <n>. ` or
+  `# <n><letter>. ` whose number is not below the previous section's (the numbered list `# 1.`..`# 3.`
+  inside section 22 is not a section) and ends where the next starts; the lines before section 1 are the
+  shared setup, and the lines from `echo "smoke: ` on are the shared summary. The selected sections run
+  through `eval` in the same shell after the shared setup, in file order, with a `cd` into the shared
+  project before a section whose predecessor was skipped, then the summary. Many sections build on the
+  state of earlier ones (the shared project's config from section 2, the branches and merges of 4-12) or
+  call their helpers (`common_fn` from 16), so a table in the header, `smoke_needs`, lists each section's
+  direct needs and the runner adds them, transitively; a section not in the table runs alone. Unnumbered
+  blocks ("Scenario store (#30)") belong to the numbered section before them; "Script help (#75)" got
+  its own number, 25b, so it runs alone. A name selects the section holding the first comment line that
+  contains it. Each run makes a new `mktemp -d` work dir under `TMPDIR`, as the full run does. Every
+  section was run alone once to check the table.
+- **Reason:** the issue asks for a selector without changing what the suite tests; wrapping each of the
+  4800 lines' sections in a function would touch every section and conflict with every open branch that
+  appends one. Running a section with what it needs (instead of failing or documenting that it cannot run
+  alone) keeps the selector usable for every section.
+- **Alternatives:** split the suite into one file per section (a large move, the same state problem);
+  always run every earlier section (correct but as slow as the full run for late sections); record the
+  needs in each section's header line (edits every section).
+- **Follow-ups:** the stop gate compares the transcript's start with `date -u +%Y%m%d%H%M.%S` as fixed-width
+  strings and takes the earlier; `dl_branch_args` names a bare `--` (exit 2, as any other option);
+  `repush.sh` treats the last non-blank line as the footer when it starts with the robot emoji and
+  "Generated with ", drops the blank lines before it and writes body, blank, `Supersedes`, blank, footer.

@@ -58,7 +58,11 @@ issue number, and in identity mode the path of the role wrapper (`<plugin>/scrip
    is obviously temporary, e.g. `test_zz_review_tmp_*`), run it, record the result in your report, then
    delete it. Finish with `git status --porcelain` empty. Never commit.
 5. Run the targeted tests of the changed modules and the project's fast check, and report the results.
-   Do not run the full suite or e2e: the batch gate does that once for the whole train.
+   Do not run the full suite or e2e: the batch gate does that once for the whole train. When the suite can
+   run one part (a section selector such as the dev-loop plugin's own `tests/smoke.sh --section <id or
+   name>`, or the test runner's file or name filter), use it instead of copying tests into an ad-hoc
+   runner, from a fresh `mktemp -d` directory of your own (with `TMPDIR` set to it), never from the
+   worktree.
 
 ## Deeper checklist for safety-critical paths
 

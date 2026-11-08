@@ -29,6 +29,11 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
   once for a whole batch of ready branches (the batch gate). If you truly need one heavy run, run it through
   the heavy-job queue the orchestrator named (`<plugin>/scripts/heavy.sh <command>`), never directly and never
   with a `timeout` wrapper. It waits for a free machine-wide slot under a memory cap.
+- When the suite can run one part (a section selector such as the dev-loop plugin's own
+  `tests/smoke.sh --section <id or name>`, or the test runner's file or name filter), use it instead of
+  copying tests into an ad-hoc runner, and run it from a fresh `mktemp -d` directory of your own (with
+  `TMPDIR` set to it), never with the worktree as the working directory and never in a work dir that
+  another run shares.
 - Servers you start for tests use the ports the orchestrator gave you, never the gate's ports
   (`heavy.port_base` and the ports above it). Stop every server and background process you started.
 

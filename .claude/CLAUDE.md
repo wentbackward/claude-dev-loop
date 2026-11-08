@@ -29,8 +29,9 @@ source of truth for what it does is the open and closed GitHub issues plus `READ
    into numbered parts (5a, 5b, ...), each its own issue.
 2. **Branch per ticket:** `feat/<issue>-<slug>` (or `fix/`, `chore/`, `docs/`), each in its own worktree.
 3. **Test first:** failing smoke tests (`tests/smoke.sh`, `tests/identity.sh`) for each criterion.
-4. **Targeted checks while implementing:** `make lint`, and the test section you touched. The gate runs
-   `make check` once per batch.
+4. **Targeted checks while implementing:** `make lint`, and the test section you touched with
+   `tests/smoke.sh --section <id or name>` (`--list` names them), from a fresh `mktemp -d` directory with
+   `TMPDIR` set to it. The gate runs `make check` once per batch.
 5. **Commits:** small Conventional Commits, each `Refs #<n>`.
 6. **Review:** the `code-reviewer` agent on every branch; fix every must-fix item; a fresh reviewer per
    round until APPROVE.

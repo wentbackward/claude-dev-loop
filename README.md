@@ -292,7 +292,8 @@ conflict, a stacked branch whose lower branch merged) is published under a new n
 `scripts/repush.sh [<branch>]` (default: the checked-out branch) picks the next free `<branch>-v2`,
 `-v3`, ... (free on the remote, locally and in the notes directory), pushes it with a plain `git push -u`
 (as the implementer in identity mode), switches the worktree to it, and copies the notes file with a
-``Supersedes `<branch>` at <sha> [<sha>]`` line recording the old branch's local and remote tips. It
+``Supersedes `<branch>` at <sha> [<sha>]`` line recording the old branch's local and remote tips (before
+the notes' closing `Generated with` footer line when there is one, so the PR body still ends with it). It
 refuses a dirty worktree and the base branch, never deletes or moves the old branch, and prints the new
 name last. `open-pr.sh` (also run by `merge-train.sh`) closes the open PRs of the earlier versions a
 `-vN` branch supersedes (its notes name them on a `Supersedes` line, or their head is an ancestor of its
@@ -1041,6 +1042,17 @@ hooks, the heavy queue (3 jobs on 2 slots, a killed job's slot), the gate, the m
 tree check, a branch that moved, a conflict, the gate options (affected, parallel, fail_fast), and
 `status.sh` with the event log. `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
 `as-role.sh`, app JWTs and tokens, the guard, the ruleset plan, the manifest flow and identity-mode merges.
+
+Each run makes its own work dir under `TMPDIR`. To run part of the smoke test, name sections:
+
+```bash
+tests/smoke.sh --list                    # each section's id, the sections it needs, its title
+tests/smoke.sh --section 20 --section 'Script help'
+```
+
+`--section` takes a section number (`11`, `11b`) or text from one of the section's comment lines, and runs
+the shared setup, that section and the earlier sections it needs (`smoke_needs` in the script's header),
+then the summary. A new section that uses the state or helpers of an earlier one adds a line there.
 
 ## License
 
