@@ -57,6 +57,15 @@ SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
 GLOB_CHARS = set("*?[")
 
 
+class Unparsable(Exception):
+    """A command that names git but that the guard cannot split as bash would (an unbalanced quote)."""
+
+
+def text_names_git(text: str) -> bool:
+    """True when text has "git" once quotes, backslashes and line continuations are removed."""
+    return "git" in re.sub(r"[\\'\"]", "", text.replace("\\\n", ""))
+
+
 def refuse(reason: str) -> None:
     """Block the tool call and tell the agent why."""
     print(f"dev-loop guard: {reason}", file=sys.stderr)
@@ -311,12 +320,34 @@ def arithmetic_end(command: str, index: int) -> int:
     return index
 
 
+def ansi_c_end(command: str, index: int) -> int:
+    """The index after the $'...' string that starts at index, or -1 when it never closes (a backslash
+    escapes the next character inside it)."""
+    index += 2
+    while index < len(command):
+        if command[index] == "\\":
+            index += 2
+        elif command[index] == "'":
+            return index + 1
+        else:
+            index += 1
+    return -1
+
+
+def ansi_c_quoted(body: str) -> str:
+    """A $'...' body as a plain single-quoted word: escaped quotes and backslashes taken literally, other
+    escapes kept as written (they only change text, never where the word ends)."""
+    text = re.sub(r"\\([\\'\"])", r"\1", body)
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
 def strip_heredocs(command: str) -> str:
     """The command without its comments and the bodies of its here-documents (text, not run).
 
     A here-document starts only at an unquoted `<<` outside comments and arithmetic, so a quoted or
-    commented `<<WORD` hides nothing; the command substitutions of an unquoted body (which the shell runs)
-    are kept as lines of their own; a body whose end word never comes is kept as commands.
+    commented `<<WORD` hides nothing; an ANSI-C string ($'...') becomes a plain single-quoted word; the
+    command substitutions of an unquoted body (which the shell runs) are kept as lines of their own; a
+    body whose end word never comes is kept as commands.
     """
     out: list[str] = []
     extra: list[str] = []
@@ -339,6 +370,11 @@ def strip_heredocs(command: str) -> str:
             quote, step = "", 2
         elif quote:
             pass
+        elif command.startswith("$'", index) and ansi_c_end(command, index) > 0:
+            end = ansi_c_end(command, index)
+            out.append(ansi_c_quoted(command[index + 2 : end - 1]))
+            index = end
+            continue
         elif char in "'\"":
             quote = char
         elif char == "(" and stack:
@@ -425,7 +461,8 @@ def inner_command(segment: list[str]) -> str | None:
 
 def segments(command: str) -> list[list[str]]:
     """Split a shell command into simple commands (best effort): here-document bodies dropped, nested
-    bash -c and eval strings and command substitutions expanded."""
+    bash -c and eval strings and command substitutions expanded. Raises Unparsable when a command that
+    names git cannot be split (a quote read differently from bash would hide every later command)."""
     command = strip_heredocs(command.replace("\\\n", ""))
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
@@ -434,6 +471,8 @@ def segments(command: str) -> list[list[str]]:
     try:
         tokens = list(lexer)
     except ValueError:
+        if text_names_git(command):
+            raise Unparsable(command) from None
         tokens = command.split()
     result: list[list[str]] = [[]]
     for token in tokens:
@@ -490,6 +529,8 @@ def env_split_string(segment: list[str], index: int) -> list[str] | None:
             try:
                 words = shlex.split(value)
             except ValueError:
+                if text_names_git(" ".join([value] + segment[rest:])):
+                    raise Unparsable(value) from None
                 words = value.split()
             return words + segment[rest:]
         index += 2 if token in WRAPPERS["env"] else 1
@@ -917,7 +958,7 @@ def git_commands(command: str, cwd: str) -> list[tuple[list[str], str]]:
     """The git commands in a shell command with the directory each runs in (cd followed; as-role.sh and
     heavy.sh unwrapped)."""
     found = []
-    for tokens in segments(command):
+    for tokens in parsed_segments(command):
         program = os.path.basename(tokens[0])
         if program == "cd":
             cwd = expand(tokens[1], cwd) if len(tokens) > 1 else os.environ.get("HOME", cwd)
@@ -935,8 +976,25 @@ def names_git(event: dict) -> bool:
     """True when a Bash call may run git: "git" in its command once quotes and backslashes are removed."""
     if event.get("tool_name") != "Bash":
         return False
-    command = str((event.get("tool_input") or {}).get("command", ""))
-    return "git" in re.sub(r"[\\'\"]", "", command.replace("\\\n", ""))
+    return text_names_git(str((event.get("tool_input") or {}).get("command", "")))
+
+
+def refuse_unparsable(command: str) -> None:
+    """Refuse a command that names git but cannot be parsed."""
+    first = command.strip().splitlines()[0] if command.strip() else command
+    refuse(
+        f"'{first}' (and what follows) cannot be parsed by the guard (a quote it reads differently from"
+        " bash could hide a git command); ask the owner to run it"
+    )
+
+
+def parsed_segments(command: str) -> list[list[str]]:
+    """segments(command), refusing the call when a command that names git cannot be parsed."""
+    try:
+        return segments(command)
+    except Unparsable:
+        refuse_unparsable(command)
+        return []
 
 
 def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
@@ -992,7 +1050,7 @@ def main() -> None:
     agent_type = event.get("agent_type") or ""
     roles = agent_roles(config, agent_type)
     who = f"agent {agent_type}" if agent_type else "the main session"
-    for tokens in segments(command):
+    for tokens in parsed_segments(command):
         check_segment(tokens, roles, who)
 
 

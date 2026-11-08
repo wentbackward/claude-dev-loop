@@ -2531,8 +2531,7 @@ E
 git push origin main" "echo \$'\\'' <<E
 x
 E
-git push origin main" "env -S \"echo 'x\" git push origin main" "bash -c \"echo 'x\"
-git status"
+git push origin main" "env -S \"echo 'x\" git push origin main" "bash -c \"echo 'x; git push origin main\""
 gpassed "$gg/proj-1" "echo \$'it\\'s' && git status" "git commit -m \$'fix: a\\'b\\n\\nbody'" "echo \"\$'\" && git status" \
   "git status # it's fine" "gh pr create --title x --body \"\$(cat <<'EOF'
 it's done; never git push origin main
