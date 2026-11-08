@@ -274,6 +274,25 @@ doctor_permissions() {
   return 0
 }
 
+# doctor_release_denies: a deny rule in the project's .claude/settings.json or settings.local.json (never the
+# user's own files) that blocks a tag, a release or a tag push is MISSING: no release can be made while it
+# stands, even on the owner's go; the template asks for these instead.
+doctor_release_denies() {
+  local rel rule cmd samples
+  samples=$(printf '%s\n' "git tag v1.2.3" "git tag -a v1.2.3 -m v1.2.3" "gh release create v1.2.3" \
+    "git push $DL_REMOTE v1.2.3" "git push $DL_REMOTE --tags")
+  for rel in .claude/settings.json .claude/settings.local.json; do
+    while IFS= read -r rule; do
+      while IFS= read -r cmd; do
+        if dl_perm_match "$rule" "$cmd"; then
+          missing "permissions: deny rule $rule in $rel blocks \"$cmd\": no release can be made, even on the owner's go (move it to ask; the owner edits the settings)"
+          break
+        fi
+      done <<<"$samples"
+    done < <(dl_perm_rules "$DL_ROOT/$rel" deny)
+  done
+}
+
 # doctor_worktrees: print worktrees_dir; outside the working directory and not in the project's
 # permissions.additionalDirectories, auto mode asks on every edit there: MISSING for the configured directory
 # (or one that holds the project), and for loop worktrees outside it without the key; a note for loop
@@ -458,6 +477,7 @@ else
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done
   doctor_permissions
+  doctor_release_denies
   doctor_worktrees
   doctor_notes_dir
   project_settings="$DL_ROOT/.claude/settings.json"
