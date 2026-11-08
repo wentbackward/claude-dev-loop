@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Merge the permission rules the loop needs into the project's Claude Code settings, only adding: the template's
 # and the project's rules into .claude/settings.json, the plugin-script rules (this machine's plugin path) into
-# .claude/settings.local.json, with the absolute worktrees_dir and gate directory (permissions.additionalDirectories,
-# so auto mode edits there without a prompt). A dry run by default; --apply writes.
+# .claude/settings.local.json, with the absolute notes directory, worktrees_dir and gate directory in its
+# permissions.additionalDirectories (so auto mode edits there without a prompt). A dry run by default; --apply writes.
 #
 # Usage: permissions.sh [--apply]
 set -u
