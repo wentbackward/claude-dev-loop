@@ -426,8 +426,8 @@ def tool_paths(tool_input: dict) -> list[str]:
 
 
 # Git stop conditions: the options the guarded subcommands accept that matter for parsing, as
-# {long name: "none" | "value" | "optional"}, and their short forms as {letter: long name}. Every other
-# long option is left as is (an unknown one cannot be a prefix of a dangerous one, which are all listed).
+# {long name: "none" | "value" | "optional"}, and their short forms as {letter: long name}. Every dangerous
+# option is listed, so any abbreviation of one resolves to it; an option not listed is taken as written.
 GIT_LONG = {
     "fetch": {
         "upload-pack": "value", "all": "none", "append": "none", "atomic": "none", "depth": "value",
@@ -708,7 +708,10 @@ def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
     base = str(config.get("base_branch") or "main")
     command = str((event.get("tool_input") or {}).get("command", ""))
     for tokens, at in git_commands(command, cwd):
-        check_git(tokens, at, base)
+        try:
+            check_git(tokens, at, base)
+        except Exception as error:  # fail closed: a git command the guard cannot parse is not let through
+            git_refuse(" ".join(tokens), f"cannot be checked by the guard ({type(error).__name__})")
 
 
 def main() -> None:
