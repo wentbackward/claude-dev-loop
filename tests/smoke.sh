@@ -4038,6 +4038,15 @@ vlog orchestrator agent-reported 300 ticket 41
 expect "status: after one report the other agent in flight is working" "verdict: working" "$(vverdict)"
 vlog orchestrator agent-reported 200 ticket 42
 expect "status: when every agent reported it is idle" "verdict: idle" "$(vverdict)"
+# Only branch names count: punctuation around a branch is stripped; a file path or a URL never ends a wait.
+vreset
+vlog orchestrator waiting 600 detail "gate (feat/31-x), see docs/DECISIONS.md and https://example.invalid/a/b"
+printf '{"branch":"docs/DECISIONS.md","merged_at":"%s"}\n{"branch":"https://example.invalid/a/b","merged_at":"%s"}\n' \
+  "$(ago 300)" "$(ago 300)" >"$vstate/merged.jsonl"
+vverdict | grep -qE '^verdict: waiting on gate \(feat/31-x\), see' &&
+  pass "status: a file path or a URL in a wait's detail is not a branch" || fail "status: a path ended a wait"
+printf '{"branch":"feat/31-x","merged_at":"%s"}\n' "$(ago 200)" >>"$vstate/merged.jsonl"
+expect "status: a branch in parentheses in a wait's detail is matched" "verdict: idle" "$(vverdict)"
 
 # 2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
 vreset
@@ -4056,6 +4065,17 @@ expect "status: a reported agent is no longer in flight" "verdict: idle" "$(vver
 vevent agent-started ticket=52 branch=feat/52-m
 vlog merge merged 0 branch feat/52-m ticket 52
 expect "status: a merged ticket's agent is no longer in flight" "verdict: idle" "$(vverdict)"
+# The ledger ends an agent too (an agent-reported never recorded): only a merge after its agent-started.
+vreset
+printf '{"branch":"feat/61-n","ticket":"61","merged_at":"%s"}\n' "$(ago 900)" >"$vstate/merged.jsonl"
+vlog orchestrator agent-started 600 ticket 61
+expect "status: a ledger merge before the agent started does not end it" "verdict: working" "$(vverdict)"
+printf '{"branch":"feat/61-n","ticket":"61","merged_at":"%s"}\n' "$(ago 300)" >>"$vstate/merged.jsonl"
+expect "status: a ledger merge of the agent's ticket after it started ends it" "verdict: idle" "$(vverdict)"
+vreset
+vlog orchestrator agent-started 600 branch feat/62-o
+printf '{"branch":"feat/62-o","merged_at":"%s"}\n' "$(ago 300)" >"$vstate/merged.jsonl"
+expect "status: a ledger merge of the agent's branch ends it" "verdict: idle" "$(vverdict)"
 # An agent in flight with nothing moving for longer than the threshold is still possibly stalled.
 vreset
 vlog orchestrator agent-started 7200 ticket 53
