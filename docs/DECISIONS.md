@@ -795,3 +795,19 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** a glob `../<repo>-*` (undocumented); adding each worktree as it is created (a settings
   write per ticket, and stale entries); worktrees inside the project (they would sit in the repository's
   tree and its searches).
+
+## 2026-11-08 — Permission changes and tag denies are owner steps (#73)
+
+- **Decision:** a deny rule in the project's settings that blocks a tag, a release or a tag push is
+  `MISSING` in `doctor.sh`, not a note. It is found by matching each project deny rule (`dl_perm_match`)
+  against sample commands: `git tag v1.2.3`, `git tag -a v1.2.3 -m v1.2.3`, `gh release create v1.2.3`,
+  `git push <remote> v1.2.3`, `git push <remote> --tags`. `permissions.sh`'s dry run puts the owner's
+  apply command at the end of its last line (`... (dry run). The owner applies them in the session with:
+  ! <plugin>/scripts/permissions.sh --apply`), with the plugin's absolute scripts path.
+- **Reason:** the stop condition is "release on the owner's go", an ask; a deny beats every ask, and the
+  agent may not change its permissions, so the loop cannot make a release while the deny stands, which is
+  a problem to fix, not a remark. Sample commands reuse the existing matcher, so no new matching code. The
+  apply command stays on the summary line so the dry run's last line still says "dry run".
+- **Alternatives:** a note (the release would still stall); comparing the deny rules with the template's
+  ask rules textually (misses `git tag:*` against `git tag *` and `git push origin v*`, which no ask rule
+  names); the apply command on a line of its own after the summary (two last lines to keep in step).

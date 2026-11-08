@@ -17,7 +17,11 @@ problem), and the last line is `doctor: ready` or `doctor: <n> problem(s)`.
 ## Report
 
 Lead with the verdict (ready, or how many problems), then one line per `MISSING` and `note` with its fix.
-Leave out the `ok` lines unless the user asks for them. Common fixes:
+Leave out the `ok` lines unless the user asks for them. A fix that changes `.claude/settings.json` or
+`.claude/settings.local.json` is the owner's step: the agent may not change its own permissions, so show
+the owner the line to run (for the rules `permissions.sh` adds, the dry run's last line,
+`! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` with the plugin's absolute path, run in the
+session as the owner) or the rule to move, and wait; never edit those files yourself. Common fixes:
 
 | line | fix |
 |------|-----|
@@ -31,13 +35,14 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note <n> agent worktrees` | remove the merged ones (same step; ask first, save uncommitted work) |
 | `note ... train/replay refs ..., ... merged branches still local` | `cleanup.sh` (dry run), then `--apply` |
 | `note <n> local branches` | `cleanup.sh` (dry run): it classifies them; delete closed/stale only on the user's OK |
-| `note permissions: no .claude/settings.json` or `note permissions: no allow list` | the `setup` skill's Permissions step: `permissions.sh` (dry run), then `--apply` |
+| `note permissions: no .claude/settings.json` or `note permissions: no allow list` | the `setup` skill's Permissions step: `permissions.sh` (dry run), then the owner runs `! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` (the dry run's last line, with the absolute path) |
 | `note permissions: the allow list lacks the project commands: ...` or `lacks <n> of the loop's rules` | `fast_check` or `checks` changed, or the plugin moved: `permissions.sh --apply` |
 | `MISSING worktrees: <dir> is outside the working directory and not in permissions.additionalDirectories` or `MISSING notes: <dir> ...` | `permissions.sh --apply` (it adds the directory to `.claude/settings.local.json`) |
 | `MISSING worktrees: <n> loop worktrees outside the working directory ...` | set `"worktrees_dir": "../<repo>-worktrees"` in `.dev-loop.json`, then `permissions.sh --apply`; existing worktrees stay where they are |
 | `MISSING worktrees_dir: <dir> holds the project` | use a dedicated directory such as `../<repo>-worktrees`, never the project's parent |
 | `note worktrees: <n> loop worktrees of the old layout ...` | nothing to do: they finish where they are (edits there ask in auto mode until they merge) |
 | `MISSING permissions: deny rule <rule> in <file> blocks "<command>"` | remove or narrow that deny rule in the project's settings file (the loop runs the command) |
+| `MISSING permissions: deny rule <rule> in <file> blocks "<command>": no release can be made ...` | a deny on `git tag`, `gh release` or a tag push: move it to `ask` in that file (the template asks; releases happen on the owner's go) |
 | `note current-state docs off: ...` | nothing is wrong; to adopt the docs, the `setup` skill's step 3b (gradual adoption for large existing docs) |
 | `MISSING docs aspect <name>: <path> does not exist` | create the doc (the `setup` skill's step 3b), or fix the path in `docs.aspects` |
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |

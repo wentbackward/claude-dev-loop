@@ -956,7 +956,11 @@ That is the same merge the gate would make.
 
 The loop runs the same in Claude Code's default, auto and bypass permission modes, because setup writes
 the rules it needs. `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` lists the missing rules (a dry run);
-`--apply` merges them. It only adds rules: every existing rule and key stays.
+`--apply` merges them. It only adds rules: every existing rule and key stays. Applying them is the
+owner's step, since an agent may not change its own permissions (auto mode refuses it): the dry run ends
+with the one command to run, `! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` with the plugin's
+absolute path (the `!` prefix runs it in the session as the owner), and the setup and doctor skills show
+the owner that line and wait instead of editing the settings files.
 
 - `.claude/settings.json` (shared, committed) gets the rules of `templates/settings.json` and the project's
   own:
@@ -995,7 +999,9 @@ Claude Code merges the rules of every settings file, and a deny anywhere wins. `
 project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`, never the user's
 own files): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
 lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
-nothing. Without `.claude/settings.json` it prints one note. A notes directory, a `worktrees_dir` or loop
+nothing. A deny rule that blocks `git tag`, `gh release` or a tag push (`git push <remote> v*`, `--tags`)
+is `MISSING` too, since no release could be made even on the owner's go; the fix is to move it to `ask`,
+as the template does. Without `.claude/settings.json` it prints one note. A notes directory, a `worktrees_dir` or loop
 worktrees outside the project and not in `additionalDirectories` are `MISSING` (in auto mode every edit
 there asks); sibling worktrees of the old layout are a note once `worktrees_dir` is set.
 
