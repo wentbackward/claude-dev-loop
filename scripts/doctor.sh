@@ -271,6 +271,53 @@ doctor_permissions() {
   return 0
 }
 
+# shellcheck source=lib/marketplace.sh
+. "$scripts_dir/lib/marketplace.sh"
+
+# doctor_marketplace: print the plugin's marketplace source and pin in the user, managed and project
+# settings, the marketplace Claude Code configured and the installed version; report a settings entry that
+# does not match the configured marketplace (marketplace add then fails) as MISSING with the add command;
+# note an entry not added yet and a pin older than the installed plugin. Silent without any entry.
+doctor_marketplace() {
+  local name dir known kind loc ref label file installed refs="" kkind kloc kref
+  name=$(dl_mp_name)
+  dir=$(dl_mp_claude_dir)
+  known=$(dl_mp_source "$dir/plugins/known_marketplaces.json" "$name.source")
+  IFS=$'\t' read -r kkind kloc kref <<<"$known"
+  while IFS=$'\t' read -r label file; do
+    IFS=$'\t' read -r kind loc ref <<<"$(dl_mp_source "$file" "extraKnownMarketplaces.$name.source")"
+    [ -n "$kind$loc" ] || continue
+    echo "        marketplace   $label: $(dl_mp_add_arg "$kind" "$loc" "$ref") ($kind)"
+    refs="$refs$kind"$'\t'"$loc"$'\t'"$ref"$'\n'
+    if [ -z "$known" ]; then
+      optional "marketplace $name is in the $label but not added yet: claude plugin marketplace add $(dl_mp_add_arg "$kind" "$loc" "$ref")"
+    elif [ "$kind"$'\t'"$loc"$'\t'"$ref" != "$known" ]; then
+      missing "marketplace $name: the $label entry ($(dl_mp_add_arg "$kind" "$loc" "$ref")) does not match the configured marketplace ($(dl_mp_add_arg "$kkind" "$kloc" "$kref")), so marketplace add fails: claude plugin marketplace add $(dl_mp_add_arg "$kind" "$loc" "$ref")"
+    fi
+  done < <(printf 'user settings\t%s\n' "$dir/settings.json"
+    printf 'managed settings\t%s\n' "$(dl_mp_managed_settings)"
+    [ -n "$DL_ROOT" ] && printf 'project settings (.claude/%s)\t%s\n' settings.json "$DL_ROOT/.claude/settings.json" \
+      settings.local.json "$DL_ROOT/.claude/settings.local.json")
+  [ -n "$known" ] && echo "        marketplace   configured: $(dl_mp_add_arg "$kkind" "$kloc" "$kref") ($kkind)"
+  [ -n "$known$refs" ] || return 0
+  installed=$(dl_mp_installed_version "${DL_ROOT:-$PWD}")
+  [ -n "$installed" ] || return 0
+  echo "        marketplace   installed: $(dl_mp_plugin_id | cut -d@ -f1) $installed"
+  doctor_marketplace_older "$name" "$installed" "$refs$known"
+}
+
+# doctor_marketplace_older NAME VERSION SOURCES: note once per pinned ref older than the installed VERSION,
+# among the SOURCES, one "<kind>\t<locator>\t<ref>" per line.
+doctor_marketplace_older() {
+  local kind loc ref seen=" "
+  while IFS=$'\t' read -r kind loc ref; do
+    { [ -n "$ref" ] && dl_version_older "$ref" "$2"; } || continue
+    case $seen in *" $ref "*) continue ;; esac
+    seen="$seen$ref "
+    optional "marketplace $1 is pinned to $ref, older than the installed plugin $2 (move the ref to v$2, then claude plugin marketplace add $(dl_mp_add_arg "$kind" "$loc" "v$2"))"
+  done <<<"$3"
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
@@ -384,5 +431,6 @@ else
   stale=$(find "$DL_ROOT/.claude/worktrees" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   [ "$stale" -gt 0 ] && optional "$stale agent worktrees in .claude/worktrees (remove the merged ones)"
 fi
+doctor_marketplace
 [ "$problems" -eq 0 ] && echo "doctor: ready" || echo "doctor: $problems problem(s)"
 [ "$problems" -eq 0 ]
