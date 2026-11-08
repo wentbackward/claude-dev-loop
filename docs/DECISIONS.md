@@ -743,7 +743,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   the Stop hook input's `transcript_path`; when there is none, it is the hook's first run in the session.
   The hook keeps it as the mtime of a marker file per `session_id` in `<git dir>/dev-loop-sessions/`
   (set with `TZ=UTC touch -t`), and an untracked file (`git ls-files -z --others --exclude-standard`)
-  blocks only when `find -newer <marker>` lists it. Markers older than 30 days are removed when a new one
+  blocks unless `find <marker> -newer ./<file>` lists the marker (the marker strictly newer than the
+  file), so a file whose mtime equals the start second blocks; a session start known only from the
+  first run protects files made after the first stop, and a file made with an old mtime (`cp -p`, `mv`,
+  an archive) counts as older. Markers older than 30 days are removed when a new one
   is made. The note on older files is a `systemMessage` (exit 0), once per session (a `<marker>.noted`
   file). A hook input without a session id keeps the old rule: every untracked file blocks.
 - **Reason:** the Stop hook first runs at the end of the session's first turn, so a marker made then

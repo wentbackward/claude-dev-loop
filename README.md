@@ -143,9 +143,12 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 
 All hooks do nothing in a project without `.dev-loop.json`, so the plugin is safe to install globally.
 
-The stop gate blocks on an untracked file only when it is newer than the session's start: the first
-timestamp in the session's transcript, else the hook's first run in that session (a marker under the
-repository's git directory, `dev-loop-sessions/`). Older untracked files, such as an owner's notes or
+The stop gate blocks on an untracked file only when it is not older than the session's start: the first
+timestamp in the session's transcript, else (no transcript, or one without a timestamp) the hook's first
+run in that session, so then it only protects files created after the first stop. The start is a marker
+under the repository's git directory, `dev-loop-sessions/`. The comparison is by modification time, so a
+file the session made with an old mtime (`cp -p`, `mv`, an extracted archive) counts as older and does
+not block. Older untracked files, such as an owner's notes or
 another session's file, do not block; the hook lists them once per session as a note. Modified tracked
 files always block. Without a session id in the hook input every untracked file blocks, as before;
 `stop_gate.require_clean_tree: false` turns the tree check off.

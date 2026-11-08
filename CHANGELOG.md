@@ -4,7 +4,7 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
-- Stop gate (#74): an untracked file blocks the stop only when it is newer than the session's start (the
+- Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
   in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's
   file) are listed once per session as a note and do not block. Modified tracked files still block, a hook

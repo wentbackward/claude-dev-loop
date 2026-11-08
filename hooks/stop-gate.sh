@@ -4,7 +4,7 @@
 # (gate-train.sh through heavy.sh), and running it on every stop would delay every reply and load the machine.
 # Exit 2 blocks the stop and feeds stderr back to Claude, which keeps working. After stop_gate.max_blocks
 # consecutive blocks (default 5) it lets Claude stop, so an unfixable state cannot loop forever.
-# Uncommitted work is a modified tracked file or an untracked file newer than the session's start (the first
+# Uncommitted work is a modified tracked file or an untracked file not older than the session's start (the first
 # timestamp in the session's transcript, else the hook's first run in the session); older untracked files
 # (an owner's notes, another session's file) do not block and are noted once per session. Without a
 # session id in the hook input every untracked file blocks.
@@ -39,14 +39,15 @@ session_marker() {
   printf '%s\n' "$marker"
 }
 
-# sort_untracked MARKER: count the untracked files newer than MARKER (all of them without one) in
-# new_untracked, and list the older ones, comma separated, in old_untracked.
+# sort_untracked MARKER: count the untracked files not older than MARKER (all of them without one) in
+# new_untracked, and list the older ones, comma separated, in old_untracked. A file is older only when
+# MARKER is strictly newer than it, so a file at exactly the start (second-granular mtimes) blocks.
 sort_untracked() {
   local file
   new_untracked=0
   old_untracked=""
   while IFS= read -r -d '' file; do
-    if [ -z "$1" ] || [ -n "$(find "./$file" -prune -newer "$1" 2>/dev/null)" ]; then
+    if [ -z "$1" ] || [ -z "$(find "$1" -prune -newer "./$file" 2>/dev/null)" ]; then
       new_untracked=$((new_untracked + 1))
     else
       old_untracked="${old_untracked:+$old_untracked, }$file"
