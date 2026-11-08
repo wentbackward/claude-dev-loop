@@ -4109,6 +4109,13 @@ grep -qF 'event.sh' "$plugin/skills/dev-loop/SKILL.md" && pass "status: the dev-
 grep -qF "#55" "$plugin/CHANGELOG.md" && pass "status: CHANGELOG has an entry for #55" ||
   fail "status: no CHANGELOG #55 entry"
 grep -qF '(#55)' "$plugin/docs/DECISIONS.md" && pass "status: the decisions log has #55" || fail "status: no #55 decision"
+grep -qF 'idle detail="nothing in flight"' "$plugin/skills/dev-loop/SKILL.md" &&
+  grep -qF 'agent-reported ticket=' "$plugin/skills/dev-loop/SKILL.md" &&
+  pass "status: the dev-loop skill records agent-reported and idle events" || fail "status: skill lacks agent-reported or idle"
+printf '%s\n' "$status_readme" | grep -qF 'agent-reported' && printf '%s\n' "$status_readme" | grep -qF 'event.sh idle' &&
+  pass "status: the README section names agent-reported and the idle event" || fail "status: README lacks the #67 events"
+grep -qF "#67" "$plugin/CHANGELOG.md" && grep -qF '(#67)' "$plugin/docs/DECISIONS.md" &&
+  pass "status: CHANGELOG and decisions have #67" || fail "status: no #67 entry"
 # 23. Merge without a force push (#57): on an origin that refuses non-fast-forward pushes, a branch behind
 # the base merges through a merge commit with the gated tree, pushed as a fast-forward of the branch; a
 # re-run after a stop merges the pushed head as it is, without a second push.
