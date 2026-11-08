@@ -3645,7 +3645,8 @@ mstrict() {
     case $decision in deny | ask) pass "perm: \"$cmd\" is $decision$label" ;; *) fail "perm: \"$cmd\" is $decision$label" ;; esac
   done
 }
-for cmd in "git fetch origin" "git status" "git push -u origin HEAD" "git rebase origin/main" \
+for cmd in "git fetch origin" "git status" "git push -u origin HEAD" "git rebase origin/main" "git rebase --continue" \
+  "git rebase --abort" "git rebase --skip" \
   "git worktree add ../p-54 -b feat/54-x origin/main" "gh issue view 54" "gh issue create --title x --body y" \
   "gh pr create --title x --body-file n.md" "gh pr comment 3 --body ok" "gh pr list" "make lint" "make check" \
   "$mroot/scripts/gate-train.sh feat/1-a feat/2-b" "$mroot/scripts/doctor.sh" "$mroot/scripts/cleanup.sh" \
@@ -3670,6 +3671,7 @@ mstrict "" "git push --force origin feat/1-a" "git push -f origin feat/1-a" "git
   "git -C . rebase --exec=true main" "git fetch --upload-pack='touch x' origin" "git pull --upload-pack=x origin" \
   "git -c core.sshCommand=x fetch origin" "git -c protocol.ext.allow=always pull origin"
 for cmd in "git push origin v1.0" "git push -u origin feat/1-a" "git push -u origin feat/1-a main" \
+  "git rebase main" "git rebase --onto origin/main feat/1-a main" "git rebase origin/main main" \
   "$mroot/scripts/heavy.sh rm -rf build" "$mroot/scripts/as-role.sh orchestrator gh api -X DELETE x"; do
   decision=$(mdecide "$cmd")
   case $decision in deny | ask | none) pass "perm: \"$cmd\" is not allowed ($decision)" ;; *) fail "perm: \"$cmd\" is $decision" ;; esac
@@ -3680,6 +3682,7 @@ mperm --apply >/dev/null
 mstrict " (base master)" "git push -u origin feat/x HEAD:master" "git push origin master" "git push -u origin HEAD:master -q" \
   "git push origin HEAD:refs/heads/master"
 expect "perm: the loop push stays allowed with base master" allow "$(mdecide "git push -u origin HEAD")"
+expect "perm: the loop rebase follows base master" allow "$(mdecide "git rebase origin/master")"
 mconfig "test -x run.sh && make lint"
 # Over the template alone: no allow rule matches a force push, a repository delete, a release, a tag or an
 # admin merge at all.
