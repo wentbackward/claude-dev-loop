@@ -27,11 +27,12 @@ smoke_usage() {
 smoke_needs() {
   case $1 in
     2) echo 1 ;;
-    3 | 4 | 6 | 7 | 10 | 11 | 13 | 14 | 15 | 25) echo 2 ;;
+    3 | 4 | 6 | 7 | 10 | 11 | 13 | 15 | 25) echo 2 ;;
     5) echo 4 ;;
     8 | 9) echo 7 ;;
     11c) echo 11b ;;
     12) echo 5 6 8 9 10 11 ;;
+    14) echo 13 ;;
     14b) echo 14 ;;
     14c) echo 11b 14b ;;
     16) echo 10 12 14 15 ;;
