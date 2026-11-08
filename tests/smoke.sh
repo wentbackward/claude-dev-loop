@@ -2804,6 +2804,10 @@ pdoctor() {
   rm -rf "$pwork/gh" && mkdir -p "$pwork/gh" && cp "$pwork/issues.tsv" "$pwork/gh/issues.tsv"
   FAKE_GH_DIR="$pwork/gh" DEV_LOOP_HOME="$pwork/home" DEV_LOOP_CONFIG="$pwork/$1.json" "$plugin/scripts/doctor.sh" 2>&1
 }
+# The notes dir is in additionalDirectories (#70), so the only MISSING lines left would be about the rows.
+mkdir -p "$pwork/project/.claude"
+printf '{"permissions": {"additionalDirectories": ["%s"]}}\n' "$pwork/home/project/notes" \
+  >"$pwork/project/.claude/settings.local.json"
 pconfig aged '"aspects": {"features": "docs/features.md"}, "planned": "docs/planned.md", "planned_max_days": 30'
 out=$(pdoctor aged)
 echo "$out"
