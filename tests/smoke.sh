@@ -80,6 +80,49 @@ expect "stop gate blocks on uncommitted work" 2 "$(stop)"
 rm dirty.txt
 expect "stop gate passes again once clean" 0 "$(stop)"
 
+# The stop gate blocks only on untracked files of this session (#74): older ones are a note, once.
+stop_session() { # stop_session ID [TRANSCRIPT]: the hook's exit code, its stdout in $work/stop.out
+  printf '{"session_id":"%s","transcript_path":"%s"}' "$1" "${2:-}" |
+    CLAUDE_PROJECT_DIR="$work/project" "$plugin/hooks/stop-gate.sh" >"$work/stop.out" 2>/dev/null
+  echo $?
+}
+transcript="$work/transcript.jsonl"
+printf '{"type":"summary"}\n{"type":"user","timestamp":"2021-06-01T12:00:00.000Z"}\n' >"$transcript"
+touch -t 202001010000 "older notes.txt"
+old_nl=$(printf 'older\nline.txt')
+touch -t 202001010000 "$old_nl"
+expect "stop gate does not block on untracked files older than the session" 0 "$(stop_session s1 "$transcript")"
+grep -q 'systemMessage' "$work/stop.out" && grep -q 'older notes.txt' "$work/stop.out" &&
+  pass "stop gate notes the older untracked files" || fail "no note of the older untracked files: $(cat "$work/stop.out")"
+stop_session s1 "$transcript" >/dev/null
+expect "stop gate notes the older untracked files only once per session" "" "$(cat "$work/stop.out")"
+echo new >"new file.txt"
+expect "stop gate blocks on an untracked file created during the session" 2 "$(stop_session s1 "$transcript")"
+rm "new file.txt"
+new_nl=$(printf 'new\nline.txt')
+echo new >"$new_nl"
+expect "stop gate blocks on a new untracked file with a newline in its name" 2 "$(stop_session s1 "$transcript")"
+rm "$new_nl"
+echo "line three" >>src.txt
+expect "stop gate blocks on tracked modifications with older untracked files" 2 "$(stop_session s1 "$transcript")"
+git checkout -q src.txt
+expect "stop gate passes with only older untracked files" 0 "$(stop_session s1 "$transcript")"
+expect "stop gate without a session id blocks on any untracked file" 2 "$(stop_session "")"
+# Without a transcript the hook's first run in the session marks its start.
+expect "stop gate's first run without a transcript does not block on older untracked files" 0 "$(stop_session s2)"
+sleep 1
+echo new >after.txt
+expect "stop gate blocks on an untracked file created after its first run" 2 "$(stop_session s2)"
+rm after.txt
+echo new >"new file.txt"
+echo "line three" >>src.txt
+awk '{ sub(/"fast_check"/, "\"stop_gate\": {\"require_clean_tree\": false}, \"fast_check\""); print }' \
+  .dev-loop.json >"$work/cfg.json"
+expect "stop gate with require_clean_tree false ignores new and tracked changes" 0 \
+  "$(DEV_LOOP_CONFIG="$work/cfg.json" stop_session s1 "$transcript")"
+git checkout -q src.txt
+rm "new file.txt" "older notes.txt" "$old_nl"
+
 # 3. heavy.sh: a distinct port per slot, and a third command waits while two hold both slots.
 expect "heavy.sh exports the slot port" "9110" "$("$plugin/scripts/heavy.sh" bash -c 'echo $SMOKE_PORT' 2>/dev/null)"
 start=$(date +%s)
