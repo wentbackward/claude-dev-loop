@@ -2420,6 +2420,91 @@ grep -qi "scenario" "$plugin/templates/settings.json" && fail "templates/setting
 grep -qF "agent-type guard" "$plugin/README.md" && grep -qF "no access to the scenarios repository" "$plugin/README.md" &&
   pass "the README explains the agent-type guard and the identity-mode note" || fail "the README lacks the isolation section"
 
+# Git stop conditions (#71): the guard parses each git command (quotes, backslashes, bundled short flags,
+# unique long-option prefixes) and refuses what the stop conditions forbid, in every loop project.
+gg="$work/gitguard"
+git init -q --bare "$gg/origin.git"
+git clone -q "$gg/origin.git" "$gg/proj" 2>/dev/null
+printf '{"base_branch": "main", "remote": "origin"}\n' >"$gg/proj/.dev-loop.json"
+git -C "$gg/proj" add . && git -C "$gg/proj" commit -q -m "chore: start" && git -C "$gg/proj" push -q origin main 2>/dev/null
+git -C "$gg/proj" tag v1.0
+git -C "$gg/proj" worktree add -q -b feat/1-x "$gg/proj-1" 2>/dev/null
+mkdir -p "$gg/plain" && git init -q "$gg/plain"
+gguard() { # gguard CWD COMMAND [CONFIG] -> exit status of the guard on a Bash call of the main session
+  python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+    "tool_input": {"command": sys.argv[2]}}))' "$1" "$2" |
+    CLAUDE_PROJECT_DIR="$1" DEV_LOOP_CONFIG="${3:-}" "$plugin/hooks/guard-role.sh" 2>/dev/null
+  echo $?
+}
+grefused() { # grefused CWD COMMAND...: each COMMAND is refused from CWD
+  local at=$1 cmd
+  shift
+  for cmd in "$@"; do expect "git guard: refuses \"$cmd\"" 2 "$(gguard "$at" "$cmd")"; done
+}
+gpassed() { # gpassed CWD COMMAND...: each COMMAND passes from CWD
+  local at=$1 cmd
+  shift
+  for cmd in "$@"; do expect "git guard: lets \"$cmd\" pass" 0 "$(gguard "$at" "$cmd")"; done
+}
+grefused "$gg/proj-1" "git fetch --upl='touch x' origin" "git fetch --upload-pack=x origin" "git pull --upl x origin" \
+  "git fetch --up\\load-pack=x origin" "git -c core.sshCommand=x fetch origin" "git -c protocol.ext.allow=always pull" \
+  "git --config-env=core.sshCommand=X fetch origin" "git -C . -c a=b rebase origin/main" \
+  "git rebase -fx 'make test' origin/main" "git rebase --exe 'make test' origin/main" "git rebase --exec=true origin/main" \
+  "git rebase '-fx' 'make test' origin/main" "git rebase -ix true origin/main" "git rebase -xtrue origin/main" \
+  "git rebase --onto origin/main feat/1-x main" "git rebase origin/main refs/heads/main" \
+  "git diff --output=/tmp/x" "git log --outp=x" "git show --output x HEAD" "git diff --out=x origin/main...HEAD" \
+  "git worktree remove --forc ../wt" "git worktree remove -f ../wt" "git worktree remove '-f' ../wt" \
+  "git worktree remove \\-f ../wt" "git worktree remove --fo\\rce ../wt" "git -C . worktree remove --force ../wt" \
+  "git push origin HEAD:main" "git push -u origin feat/1-x:refs/heads/main" "git push origin HEAD:heads/main" \
+  "git push origin main" "git push --tags origin" "git push --ta origin" "git push origin --follow-tags" \
+  "git push origin v1.0" "git push origin refs/tags/v1.0" "git push origin --del feat/b" "git push -ud origin feat/b" \
+  "git push origin :feat/b" "git push -u origin +HEAD" "git push --fo origin" "git push -u origin HEAD --force-w" \
+  "git push -fu origin HEAD" "git push --mirror origin" "git push --all origin" "git push --prune origin" \
+  "git push --receive-pack=x origin" "git push --exec=x origin" "git push origin HEAD '-f'" \
+  "git status && git push origin HEAD:main" "git status
+git push origin HEAD:main" "true; git rebase -x x origin/main" "FOO=1 git push origin HEAD:main" \
+  "bash -c 'git push origin HEAD:main'" "/usr/bin/git push origin HEAD:main" \
+  "$plugin/scripts/as-role.sh implementer git push origin HEAD:main" "git push origin HEAD:main \\
+  -q" "git -C $gg/proj push -u origin HEAD" "cd $gg/proj && git push -u origin HEAD"
+gpassed "$gg/proj-1" "git fetch -q origin" "git fetch origin" "git pull --ff-only origin main" "git rebase origin/main" \
+  "git rebase --continue" "git rebase --abort" "git rebase --skip" "git rebase --onto origin/main feat/0-old feat/1-x" \
+  "git push -u origin HEAD" "git push -u origin feat/1-x" "git push" "git diff origin/main...HEAD" "git log --oneline -3" \
+  "git show --stat HEAD" "git diff --stat origin/main" "git worktree remove ../wt" "git worktree list" "git status" \
+  "git commit -m 'never git push --force or git rebase -x'" "git push --no-force-with-lease -u origin HEAD" \
+  "$plugin/scripts/as-role.sh implementer git push -u origin HEAD" "cd $gg/proj-1 && git push -u origin HEAD" \
+  "git -C $gg/proj-1 log --oneline -1"
+grefused "$gg/proj" "git push -u origin HEAD" "git push" "git push origin" "git rebase origin/main"
+gpassed "$gg/proj" "git fetch -q origin" "git -C $gg/proj-1 push -u origin HEAD" "git rebase --abort" "git status"
+out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+  "tool_input": {"command": "git push -u origin HEAD"}}))' "$gg/proj" |
+  CLAUDE_PROJECT_DIR="$gg/proj" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
+case $out in *"git push"*base*main*"ask the owner"*) pass "git guard: the refusal names the command, the base branch and the owner" ;;
+  *) fail "git guard: the refusal does not explain itself: $out" ;; esac
+printf '{"base_branch": "master"}\n' >"$gg/master.json"
+expect "git guard: with base master a push to main is not a base push" 0 "$(gguard "$gg/proj-1" "git push origin HEAD:main" "$gg/master.json")"
+for cmd in "git push origin HEAD:master" "git push -u origin feat/1-x:refs/heads/master"; do
+  expect "git guard: with base master it refuses \"$cmd\"" 2 "$(gguard "$gg/proj-1" "$cmd" "$gg/master.json")"
+done
+printf '{"guard": false}\n' >"$gg/off.json"
+expect "git guard: \"guard\": false turns the git check off" 0 "$(gguard "$gg/proj-1" "git push origin HEAD:main" "$gg/off.json")"
+printf '{"guard": {"agents": {}}}\n' >"$gg/agents.json"
+expect "git guard: a guard block with agents keeps the git check on" 2 "$(gguard "$gg/proj-1" "git push origin HEAD:main" "$gg/agents.json")"
+expect "git guard: a project without .dev-loop.json is unaffected" 0 "$(gguard "$gg/plain" "git push origin HEAD:main")"
+expect "git guard: a project without .dev-loop.json is unaffected (no project dir either)" 0 \
+  "$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+    "tool_input": {"command": "git rebase -x x main"}}))' "$gg/plain" | env -u CLAUDE_PROJECT_DIR "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+expect "git guard: a non-Bash tool call passes" 0 "$(printf '{"tool_name": "Read", "cwd": "%s", "tool_input": {"file_path": "x"}}' "$gg/proj-1" |
+  CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+grep -qF '"Bash(git rebase *)"' "$plugin/templates/settings.json" && fail "git guard: the template still allows any git rebase" ||
+  pass "git guard: the template no longer allows any git rebase"
+for rule in "git rebase --continue" "git rebase --abort" "git rebase --skip"; do
+  grep -qF "\"Bash($rule)\"" "$plugin/templates/settings.json" && pass "git guard: the template allows exactly \"$rule\"" ||
+    fail "git guard: the template lacks \"$rule\""
+done
+grep -qF '"guard": false' "$plugin/README.md" && pass "git guard: the README documents \"guard\": false" ||
+  fail "git guard: the README does not document \"guard\": false"
+grep -qF "#71" "$plugin/CHANGELOG.md" && pass "git guard: CHANGELOG has an entry for #71" || fail "git guard: no CHANGELOG #71 entry"
+
 # Scenario writer and the orchestrator's scenario steps (#33): the writer brief writes only to the
 # store, from the spec; no implementer, test-engineer or code-reviewer brief or prompt names the store;
 # doctor's models line gains scenario-writer only when scenarios are on (or it is set).
