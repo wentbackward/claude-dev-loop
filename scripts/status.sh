@@ -25,7 +25,8 @@
 #                                                      or an orchestrator event whose name starts with
 #                                                      "waiting" (what: its detail, else the rest of the name)
 #                                                      that still holds: a wait naming branches (its branch,
-#                                                      the words of its detail with a "/") is over once a
+#                                                      the words of its detail that read as branches, not
+#                                                      file names or URLs) is over once a
 #                                                      gate result of a train with one of them, or a merge
 #                                                      of one, came after it (events, or the ledger)
 #   verdict: waiting on heavy slot (queued)          the running gate's own job waits in heavy.sh for a
@@ -374,14 +375,19 @@ if [ -n "${o_event:-}" ]; then
 fi
 
 # agents_in_flight: the ticket (else the branch) of each agent-started or watchdog-resumed event of the
-# orchestrator not followed by an agent-reported event or a merge of that ticket or branch, nor by an idle
-# event (which ends them all), one per line.
+# orchestrator not followed by an agent-reported event or a merge of that ticket or branch (a merged event,
+# or a ledger entry merged at or after the start), nor by an idle event (which ends them all), one per line.
 agents_in_flight() {
-  printf '%s\n' "$repo_events" | awk -F'\t' '
+  { printf '%s\n' "$repo_events"; echo "@ledger"; dl_ledger_rows; } | awk -F'\t' '
     function key(b, t) { return t != "-" ? t : b }
+    $0 == "@ledger" { ledger = 1; next }
+    ledger {
+      if ($1 == "M") for (k in on) if ((k == $4 || k == $3 || br[k] == $3) && $3 $4 != "" && $5 >= at[k]) delete on[k]
+      next
+    }
     $3 == "orchestrator" && ($4 == "agent-started" || $4 == "watchdog-resumed") && key($5, $6) != "-" {
       if (!(key($5, $6) in on)) order[++n] = key($5, $6)
-      on[key($5, $6)] = 1; br[key($5, $6)] = $5; next
+      on[key($5, $6)] = 1; br[key($5, $6)] = $5; at[key($5, $6)] = $15; next
     }
     $3 == "orchestrator" && $4 == "agent-reported" { delete on[key($5, $6)]; next }
     $3 == "orchestrator" && $4 == "idle" { split("", on); next }
@@ -391,17 +397,32 @@ agents_in_flight() {
     END { for (i = 1; i <= n; i++) if (order[i] in on) { print order[i]; delete on[order[i]] } }'
 }
 
+# branch_words TEXT: the words of TEXT that read as branch names, space-separated: a "/" in them, quotes,
+# brackets and trailing punctuation stripped, never a URL or a file name (a last segment ending in
+# ".<letters>"), so an unsure word leaves the wait holding.
+branch_words() {
+  printf '%s\n' "$1" | tr ' ' '\n' | awk '
+    { w = $0; sub(/^[("'\''[]+/, "", w); sub(/[)"'\''\],.;:!?]+$/, "", w) }
+    w ~ /\// && w !~ /:\/\// && w !~ /\.[A-Za-z]+$/ { printf "%s ", w }'
+}
+
 # wait_ended NAMES: why the orchestrator's last event, a wait on these branches (space-separated), is over:
 # a gate result of a train with one of them, or a merge of one, after the wait (events after it in the log,
 # ledger entries merged at or after its time); nothing while the wait holds.
 wait_ended() {
   local names=" $1 " reason
   reason=$(printf '%s\n' "$repo_events" | awk -F'\t' -v names="$names" '
-    function named(list, i, n, w) { n = split(list, w, " "); for (i = 1; i <= n; i++) if (index(names, " " w[i] " ")) return w[i]; return "" }
+    function named(list, i, n, w) {
+      n = split(list, w, " ")
+      for (i = 1; i <= n; i++) if (index(names, " " w[i] " ")) return w[i]
+      return ""
+    }
     $3 == "gate" && $4 == "train-started" { train = $14; next }
     $3 == "orchestrator" { found = ""; next }
     found != "" { next }
-    $3 == "gate" && $4 == "train-ended" && named(train) != "" { found = "the gate of " named(train) " ended (rc " $8 ")" }
+    $3 == "gate" && $4 == "train-ended" && named(train) != "" {
+      found = "the gate of " named(train) " ended (rc " $8 ")"
+    }
     $3 == "merge" && $4 == "merged" && named($5) != "" { found = $5 " merged" }
     END { if (found != "") print found }' 2>/dev/null)
   if [ -z "$reason" ] && [ -n "$o_t" ]; then
@@ -422,8 +443,7 @@ elif [[ "$orch_event" == waiting* ]]; then
   what=${orch_detail:-${orch_event#waiting}}
   what=${what#[-_ ]}
   [ -n "$what" ] || what="something"
-  # The branches the wait names (its branch, the words of its detail with a "/"): evidence of them ends it.
-  wait_names=$(printf '%s\n' "$o_branch $orch_detail" | tr ' ' '\n' | grep / | tr '\n' ' ')
+  wait_names=$(branch_words "$o_branch $orch_detail")
   [ -z "$wait_names" ] || wait_reason=$(wait_ended "$wait_names")
   if [ -n "$wait_reason" ]; then
     wait_over=true what=""

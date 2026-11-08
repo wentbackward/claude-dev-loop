@@ -713,7 +713,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 ## 2026-11-08 — The status verdict follows what is moving (#67)
 
 - **Decision:** a `waiting` event (the orchestrator's last event) names the branches in its `branch` key
-  and the words of its `detail` that contain a `/`. With the gate not running, it is over once, after it,
+  and the words of its `detail` that contain a `/`, with quotes, brackets and trailing punctuation
+  stripped; a word with `://` (a URL) or whose last segment ends in `.<letters>` (a file name such as
+  `docs/DECISIONS.md`) is not a branch, so when unsure the wait holds. The ledger also ends an agent in
+  flight when it records the agent's ticket or branch merged at or after its start (an `agent-reported`
+  never recorded must not read as stalled once the work merged). With the gate not running, it is over once, after it,
   a `train-ended` of a train (its `train-started` branches) with one of them, or a `merged` event of one,
   is in the event log, or a ledger entry of one has a `merged_at` at or after the wait's time. A wait that
   names no branch (`agents for #11 #12`, `waiting-review`) holds until the orchestrator's next event, which

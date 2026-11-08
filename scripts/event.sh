@@ -12,7 +12,8 @@
 # whose name starts with "waiting" makes the status verdict "waiting on <detail, else the rest of the
 # name>" until a gate result or a merge of a branch it names comes after it; agent-started (and
 # watchdog-resumed) keeps the verdict working until agent-reported or a merge of that ticket; idle ends
-# every agent in flight and the loop worktrees unchanged since. Exit 0 always once it has an event (a write error is ignored), 2 without one.
+# every agent in flight and the loop worktrees unchanged since. Exit 0 always once it has an event (a
+# write error is ignored), 2 without one.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh

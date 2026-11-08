@@ -9,7 +9,7 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   with one of them or a merge of one came after it (from the event log or the ledger); the orchestrator
   line then says `the wait is over: ...`. `working` now needs something in flight: a loop worktree with
   unmerged work, or an agent recorded with `agent-started` (or `watchdog-resumed`) and not yet
-  `agent-reported`, merged or ended; a recent event on its own is `idle`. A new `event.sh idle` event ends
+  `agent-reported`, merged (a `merged` event or the ledger) or ended; a recent event on its own is `idle`. A new `event.sh idle` event ends
   every agent in flight and leaves loop worktrees unchanged since out of the verdict; the dev-loop skill
   records it at the end of a session or after a release, and `agent-reported` when an agent reports.
   `--json` adds `verdict.wait_ended` and `verdict.agents`; `stalled` is unchanged.
