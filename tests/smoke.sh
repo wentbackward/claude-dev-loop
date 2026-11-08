@@ -4623,6 +4623,148 @@ done
 [ ! -e "$hstate" ] && pass "help: no script's --help writes state" || fail "help: a script's --help wrote $(ls "$hstate")"
 expect "help: no script's --help changes the repository" "$hrefs|" "$(git for-each-ref | git hash-object --stdin)|$(git status --porcelain)"
 grep -qF "#75" "$plugin/CHANGELOG.md" && pass "help: CHANGELOG has an entry for #75" || fail "help: no CHANGELOG #75 entry"
+
+# 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
+# <dir>/gate, one directory permissions.sh lists in permissions.additionalDirectories (auto mode edits
+# there without a prompt); doctor reports an uncovered one. Without the key nothing changes.
+wwork="$work/wtd"
+git init -q --bare "$wwork/origin.git"
+git clone -q "$wwork/origin.git" "$wwork/project" 2>/dev/null
+cd "$wwork/project" || exit 1
+printf '# Project\n' >CLAUDE.md
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]}\n' >"$wwork/plain.json"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": "../project-worktrees/"}\n' >"$wwork/wtd.json"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": "../project-worktrees", "gate_worktree": "../elsewhere-gate"}\n' \
+  >"$wwork/wtd-gate.json"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": ".."}\n' >"$wwork/wtd-parent.json"
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+wroot=$("$plugin/scripts/paths.sh" root)
+wparent=$(dirname "$wroot")
+wdir="$wparent/project-worktrees"
+# wenv CONFIG COMMAND...: run COMMAND in the project with the config CONFIG and the section's own state.
+wenv() { local c=$1; shift; (cd "$wwork/project" && DEV_LOOP_HOME="$wwork/home" DEV_LOOP_CONFIG="$wwork/$c.json" "$@" 2>&1); }
+wpaths() { local c=$1; shift; wenv "$c" "$plugin/scripts/paths.sh" "$@"; }
+
+# paths.sh: the old layout without the key, the worktrees dir with it; an explicit gate_worktree wins.
+expect "wtd: without worktrees_dir paths.sh worktree 12 is the sibling <parent>/<repo>-12" "$wparent/project-12" \
+  "$(wpaths plain worktree 12)"
+expect "wtd: without worktrees_dir paths.sh gate is unchanged" "$wroot/../project-gate" "$(wpaths plain gate)"
+expect "wtd: without worktrees_dir paths.sh worktrees is the project's parent (the sibling layout)" "$wparent" \
+  "$(wpaths plain worktrees)"
+expect "wtd: with worktrees_dir paths.sh worktree 12 is <dir>/12" "$wdir/12" "$(wpaths wtd worktree 12)"
+expect "wtd: with worktrees_dir paths.sh gate is <dir>/gate" "$wdir/gate" "$(wpaths wtd gate)"
+expect "wtd: with worktrees_dir paths.sh worktrees is the absolute dir" "$wdir" "$(wpaths wtd worktrees)"
+expect "wtd: an explicit gate_worktree still wins" "$wroot/../elsewhere-gate" "$(wpaths wtd-gate gate)"
+wpaths wtd worktree >/dev/null && fail "wtd: paths.sh worktree without a number succeeded" ||
+  pass "wtd: paths.sh worktree without a number is a usage error"
+wpaths wtd worktree x1 >/dev/null && fail "wtd: paths.sh worktree accepted a non-number" ||
+  pass "wtd: paths.sh worktree refuses a non-number"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": "%s/abs-wt"}\n' "$wwork" >"$wwork/wtd-abs.json"
+expect "wtd: an absolute worktrees_dir is used as it is" "$wwork/abs-wt/7" "$(wpaths wtd-abs worktree 7)"
+
+# permissions.sh: the dry run lists the additionalDirectories entry, --apply writes it into the local
+# settings (absolute, per machine), keeps every other key and rule, and a second run adds nothing.
+wperm() { local c=$1; shift; wenv "$c" "$plugin/scripts/permissions.sh" "$@"; }
+wdirs() { # wdirs FILE: the additionalDirectories of FILE, space separated
+  bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_rules "$2" additionalDirectories' _ \
+    "$plugin" "$1" | paste -sd' ' -
+}
+expect "wtd: without worktrees_dir permissions.sh adds no additionalDirectories" "" \
+  "$(wperm plain | grep additionalDirectories)"
+mkdir -p .claude
+printf '{"model": "custom", "permissions": {"allow": ["Bash(ls *)"], "additionalDirectories": ["%s/docs-elsewhere"]}, "env": {"A": "1"}}\n' \
+  "$wwork" >"$wwork/local-before.json"
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  rm -f .claude/settings.json
+  cp "$wwork/local-before.json" .claude/settings.local.json
+  out=$(DEV_LOOP_NO_JQ=$nojq wperm wtd)
+  cmp -s .claude/settings.local.json "$wwork/local-before.json" && pass "wtd: the dry run changes nothing$label" ||
+    fail "wtd: the dry run changed the local settings$label"
+  expect "wtd: the dry run lists the worktrees dir once, and not the gate inside it$label" \
+    ".claude/settings.local.json: + additionalDirectories $wdir" "$(printf '%s\n' "$out" | grep additionalDirectories)"
+  DEV_LOOP_NO_JQ=$nojq wperm wtd --apply >/dev/null
+  expect "wtd: --apply appends the absolute worktrees dir after the existing entry$label" "$wwork/docs-elsewhere $wdir" \
+    "$(wdirs .claude/settings.local.json)"
+  expect "wtd: --apply keeps the other keys and rules$label" "custom 1 Bash(ls *)" \
+    "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["env"]["A"], d["permissions"]["allow"][0])' .claude/settings.local.json)"
+  expect "wtd: the shared settings get no machine path$label" "" "$(grep -F "$wwork" .claude/settings.json)"
+  expect "wtd: a second run adds nothing$label" "permissions: complete" "$(DEV_LOOP_NO_JQ=$nojq wperm wtd --apply | tail -n 1)"
+done
+out=$(wperm wtd-gate)
+expect "wtd: a gate_worktree outside the worktrees dir is listed too" \
+  ".claude/settings.local.json: + additionalDirectories $wparent/elsewhere-gate" "$(printf '%s\n' "$out" | grep additionalDirectories)"
+cp "$wwork/local-before.json" .claude/settings.local.json
+printf '{"permissions": {"additionalDirectories": ["%s"]}}\n' "$wparent/project-worktrees/" >.claude/settings.json
+expect "wtd: an entry in the shared settings (trailing slash) already covers the dir" "" \
+  "$(wperm wtd | grep additionalDirectories)"
+rm .claude/settings.json
+out=$(wperm wtd-parent --apply)
+expect "wtd: the project's parent directory is never added" "$wwork/docs-elsewhere" "$(wdirs .claude/settings.local.json)"
+printf '%s\n' "$out" | grep -q "worktrees_dir.*holds the project" && pass "wtd: permissions.sh warns about a worktrees_dir that holds the project" ||
+  fail "wtd: no warning for a worktrees_dir that holds the project ($out)"
+
+# doctor: MISSING for an uncovered worktrees dir, quiet once covered, a note for old-layout siblings,
+# MISSING for uncovered sibling loop worktrees without the key; the worktrees are never moved.
+wdoctor() { wenv "$1" "$plugin/scripts/doctor.sh"; }
+cp "$wwork/local-before.json" .claude/settings.local.json
+expect "wtd: without worktrees_dir and without sibling worktrees doctor prints nothing about worktrees" "" \
+  "$(wdoctor plain | grep -i 'worktrees')"
+out=$(wdoctor wtd)
+printf '%s\n' "$out" | grep -qF "MISSING worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories" &&
+  printf '%s\n' "$out" | grep -qF "permissions.sh --apply" && pass "wtd: doctor reports an uncovered worktrees dir as MISSING with the fix" ||
+  fail "wtd: no MISSING for an uncovered worktrees dir ($out)"
+wperm wtd --apply >/dev/null
+out=$(wdoctor wtd)
+expect "wtd: doctor is quiet once the worktrees dir is covered" "" "$(printf '%s\n' "$out" | grep -E '^(MISSING|note) +worktrees')"
+printf '%s\n' "$out" | grep -qE "^ +worktrees +$wdir\$" && pass "wtd: doctor prints the worktrees dir" ||
+  fail "wtd: doctor does not print the worktrees dir"
+git worktree add -q "$wparent/project-31" -b feat/31-old origin/main
+out=$(wdoctor wtd)
+printf '%s\n' "$out" | grep -qE '^note    worktrees: 1 loop worktrees? of the old layout' &&
+  pass "wtd: doctor notes a sibling worktree of the old layout" || fail "wtd: no note for an old-layout worktree ($out)"
+[ -d "$wparent/project-31" ] && pass "wtd: doctor leaves the old worktree where it is" || fail "wtd: the old worktree moved"
+rm .claude/settings.local.json
+out=$(wdoctor plain)
+printf '%s\n' "$out" | grep -qF 'MISSING worktrees: 1 loop worktrees outside the working directory' &&
+  printf '%s\n' "$out" | grep -qF '"worktrees_dir"' && pass "wtd: without the key doctor reports uncovered sibling worktrees with the fix" ||
+  fail "wtd: no MISSING for uncovered sibling worktrees ($out)"
+printf '{"permissions": {"additionalDirectories": ["%s"]}}\n' "$wparent/project-31" >.claude/settings.local.json
+expect "wtd: a sibling worktree covered by additionalDirectories is fine" "" "$(wdoctor plain | grep -i 'worktrees')"
+out=$(wdoctor wtd-parent)
+printf '%s\n' "$out" | grep -qF 'MISSING worktrees_dir: ' && pass "wtd: doctor reports a worktrees_dir that holds the project" ||
+  fail "wtd: no MISSING for a worktrees_dir that holds the project"
+git worktree remove "$wparent/project-31" && git branch -q -D feat/31-old
+
+# Status, cleanup and merge-train (dl_worktree_of) find a worktree of the new layout.
+wt12=$(wpaths wtd worktree 12)
+git worktree add -q "$wt12" -b feat/12-new origin/main
+[ -d "$wdir/12" ] && pass "wtd: git worktree add creates the worktrees dir" || fail "wtd: no worktree at $wdir/12"
+wenv wtd "$plugin/scripts/status.sh" --no-gh | grep -qF "feat/12-new #12: " && pass "wtd: status lists a worktree of the new layout" ||
+  fail "wtd: status does not list the new-layout worktree"
+wenv wtd "$plugin/scripts/cleanup.sh" >/dev/null
+wreport=$(ls -t "$wwork/home/project/logs"/cleanup-*.tsv 2>/dev/null | head -n 1)
+grep -qF "checked out in $wt12" "$wreport" 2>/dev/null && pass "wtd: cleanup keeps a branch checked out in the new layout" ||
+  fail "wtd: cleanup did not find the new-layout worktree"
+expect "wtd: dl_worktree_of (merge-train) finds the new-layout worktree" "$wt12" \
+  "$(cd "$wwork/project" && DEV_LOOP_CONFIG="$wwork/wtd.json" common_fn dl_worktree_of feat/12-new)"
+git worktree remove "$wt12"
+
+# The docs: README config table, the dev-loop skill's launch step, setup, the doctor skill and the changelog.
+grep -qE '^\| `worktrees_dir` \|' "$plugin/README.md" && pass "wtd: the README config table has worktrees_dir" ||
+  fail "wtd: no worktrees_dir row in the README"
+wlaunch=$(awk '/^## / { on = ($0 ~ /^## 3\. /) } on' "$plugin/skills/dev-loop/SKILL.md")
+printf '%s\n' "$wlaunch" | grep -qF 'paths.sh worktree <n>' && pass "wtd: the launch step uses paths.sh worktree <n>" ||
+  fail "wtd: the launch step does not use paths.sh worktree <n>"
+printf '%s\n' "$wlaunch" | grep -qF '../<repo-name>-<n>' && fail "wtd: the launch step still hard-codes ../<repo-name>-<n>" ||
+  pass "wtd: the launch step hard-codes no sibling path"
+grep -qF '"worktrees_dir": "../<repo>-worktrees"' "$plugin/skills/setup/SKILL.md" &&
+  grep -qF 'additionalDirectories' "$plugin/skills/setup/SKILL.md" && pass "wtd: the setup skill writes worktrees_dir" ||
+  fail "wtd: the setup skill does not write worktrees_dir"
+grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the doctor skill has a row for the worktrees lines" ||
+  fail "wtd: no doctor skill row for worktrees"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
+  pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
