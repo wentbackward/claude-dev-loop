@@ -10,7 +10,7 @@ validate: ## Validate the plugin and marketplace manifests, agents and skills
 lint: ## smoke.sh's sections in order, shellcheck the scripts, ruff the Python helpers
 	tests/smoke.sh --list >/dev/null
 	uvx --from shellcheck-py shellcheck -x scripts/*.sh scripts/lib/*.sh hooks/*.sh tests/*.sh tests/fake-gh tests/fake-browser
-	uvx ruff check --select E,F,W,B hooks/guard-role.py scripts/lib/manifest_listener.py tests/fake-curl
+	uvx ruff check --select E,F,W,B hooks/guard-role.py scripts/lib/manifest_listener.py tests/fake-curl tests/guard-diff.py
 
 test: ## Smoke and identity tests on throwaway repositories (no network)
 	tests/smoke.sh

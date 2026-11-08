@@ -2549,6 +2549,23 @@ expect "isolation: a blind agent's unparsable git command is refused (git check 
 git log" "$iso/guardproj-1" "$gg/scen-off.json")"
 expect "isolation: a blind agent's ANSI-C string does not hide a store path (git check off)" 2 \
   "$(sguard dev-loop:implementer Bash command "echo \$'a\\'b' && cat $iso/peek-file" "$iso/guardproj-1" "$gg/scen-off.json")"
+# Review round 4: a backslash-newline continues the line only after an even number of backslashes (an
+# escaped backslash is a literal one, and the newline separates commands); $'...' strings are decoded, so
+# an escaped command name is still git; a differential test with bash as the oracle.
+grefused "$gg/proj" "echo a\\\\
+git push origin main" "echo a\\\\
+git push -u origin HEAD" "echo a # \\
+git push -u origin HEAD"
+grefused "$gg/proj-1" "echo a \\\\
+git push --force origin x" "echo a\\\\
+git fetch --upload-pack=evil origin" "git push \\
+--force origin x" "\$'\\x67it' push origin main" "\$'\\147it' push origin main" "\$'\\u0067it' push origin main" "echo \"a\\\\\"
+git push origin main"
+gpassed "$gg/proj-1" "echo a \\
+b" "echo \$'\\x41' && git status" "\$'git' status"
+diff_out=$(python3 -I "$plugin/tests/guard-diff.py" "$plugin/hooks/guard-role.py" "$(mkdir -p "$gg/diff" && echo "$gg/diff")" 300 2>&1)
+case $diff_out in *" 0 let through"*) pass "git guard: bash and the guard agree on every push bash runs (${diff_out##*: })" ;;
+  *) fail "git guard: the guard lets through pushes bash runs: $diff_out" ;; esac
 ln -s "$gg/proj-1" "$work/p71" # a path without "git" in it, so only the command can send it to Python
 expect "git guard: a \\u escape does not hide git from the fast path" 2 \
   "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "\\u0067it push origin main"}}' "$work/p71" |
