@@ -120,8 +120,12 @@ Report: per scenario the file, id, title, required, and new or changed; the open
   ends; the heartbeat (section 2a) wakes you if it hangs.
 - Record your steps in the event log, so `/dev-loop:status` can tell waiting from stalled without waking
   you: `${CLAUDE_PLUGIN_ROOT}/scripts/event.sh <event> [key=value ...]`, e.g. `agent-started ticket=<n>`,
-  `review-round ticket=<n> round=<r>`, and before you wait, `waiting detail="gate <branches>"` or
-  `waiting detail="agents for #<n> #<m>"`. The gate, the merge and `heavy.sh` record their own steps.
+  `agent-reported ticket=<n>` when its report comes, `review-round ticket=<n> round=<r>`, and before you
+  wait, `waiting detail="gate <branches>"` or `waiting detail="agents for #<n> #<m>"`. An agent started
+  and not reported keeps the verdict `working`; a gate wait ends by itself once that gate's result or the
+  merge of its branches is recorded. At the end of a session or after a release, with nothing in flight,
+  record `idle detail="nothing in flight"`: it ends every agent in flight and leaves worktrees unchanged
+  since out of the verdict. The gate, the merge and `heavy.sh` record their own steps.
 
 ## 2a. Heartbeat: the stall watchdog (`watchdog` in `.dev-loop.json`)
 

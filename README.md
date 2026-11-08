@@ -192,9 +192,14 @@ session, read-only: it never writes, signals or locks anything.
 - **Loop worktrees:** branch, ticket, last commit age, notes file age, pushed or not, ahead and behind the
   base (from the local remote-tracking refs; it does not fetch).
 - **The last merge** (the ledger), the **open tickets** count (`gh issue list`; `--no-gh` skips it), and
-  the **orchestrator's last event** with its age.
-- **The verdict**, the last line: `idle`, `working`, `waiting on <what> (output <n>s ago)` (a running gate
-  stage, a heavy job of this repository, or the orchestrator's last `waiting` event),
+  the **orchestrator's last event** with its age, and the **agents in flight** (`agent-started` or
+  `watchdog-resumed` not yet followed by `agent-reported`, a merge of that ticket, or an `idle` event).
+- **The verdict**, the last line: `idle` (nothing running and nothing in flight; a recent event on its own
+  is not work), `working` (a loop worktree with unmerged work, or an agent in flight; worktrees unchanged
+  since the orchestrator's last `idle` event do not count), `waiting on <what> (output <n>s ago)` (a running gate
+  stage, a heavy job of this repository, or the orchestrator's last `waiting` event while it holds: a
+  wait that names branches, such as `waiting detail="gate feat/12-x"`, is over once a gate result of a
+  train with one of them or a merge of one came after it, from the event log or the ledger),
   `waiting on heavy slot (queued)` (the running gate's own job waits in `heavy.sh` for a free slot, for
   example behind another repository's long job), or
   `possibly stalled: no event or output for <n> min`, when the newest evidence (an event, a stage log, a
@@ -215,7 +220,9 @@ The **event log** `~/.dev-loop/<repo>/events.jsonl` (`paths.sh events`) has one 
 conflict, error); `merge-train.sh` writes `merge-started`, `merged` (`branch`, `ticket`) and `merge-ended`
 (`rc`); `heavy.sh` writes `queued`, `slot-acquired` and `slot-released` (`slot`, `pid`, `rc`, the command as
 `detail`, and `gate_pid` when the gate runs the job: `gate-train.sh` exports its pid as `DL_GATE_PID`). The orchestrator records its own steps with `scripts/event.sh <event> [key=value ...]` (for
-example `event.sh agent-started ticket=12`, `event.sh waiting detail="gate train feat/12-x"`). Each line is
+example `event.sh agent-started ticket=12`, `event.sh agent-reported ticket=12`,
+`event.sh waiting detail="gate train feat/12-x"`, and `event.sh idle detail="nothing in flight"` at the end
+of a session or after a release). Each line is
 one append; at 1 MiB the log moves to `events.jsonl.1` (one old file kept). A failed write is ignored, so
 the log never fails a gate, and nothing but `status.sh` reads it.
 

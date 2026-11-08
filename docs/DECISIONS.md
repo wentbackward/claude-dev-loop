@@ -709,3 +709,26 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   the version in the release commit. This is a step of this repository's release only: the `dev-loop`
   skill's "Before a release" is generic for every project, so it does not name this README. Values doctor prints from the settings are
   stripped of tabs and newlines, and unreadable files are skipped without an error.
+
+## 2026-11-08 — The status verdict follows what is moving (#67)
+
+- **Decision:** a `waiting` event (the orchestrator's last event) names the branches in its `branch` key
+  and the words of its `detail` that contain a `/`. With the gate not running, it is over once, after it,
+  a `train-ended` of a train (its `train-started` branches) with one of them, or a `merged` event of one,
+  is in the event log, or a ledger entry of one has a `merged_at` at or after the wait's time. A wait that
+  names no branch (`agents for #11 #12`, `waiting-review`) holds until the orchestrator's next event, which
+  replaces it as the last event anyway. An agent is in flight from `agent-started` (or `watchdog-resumed`)
+  with a ticket (else a branch) until `agent-reported` of the same ticket or branch, a `merged` event of it,
+  or an `idle` event, which ends them all. `idle` also leaves out of the verdict the loop worktrees whose
+  last commit and notes are older than it. The verdict is `idle` when nothing runs, no wait holds, no loop
+  worktree counts and no agent is in flight, whatever the age of the last event; otherwise the stall
+  threshold and the old order apply, so `stalled` is unchanged (an agent that never reports and a worktree
+  that stopped moving become possibly stalled after `watchdog.stall_minutes`). `--json` adds
+  `verdict.wait_ended` and `verdict.agents`.
+- **Reason:** every piece of evidence is already read by `status.sh` (gate events, merge events, the
+  ledger), so the verdict needs no new writer; position in the log orders events without clock
+  comparisons, and the ledger covers merges whose event was not written. Branches are the names a gate and
+  a merge record, so they are the reliable link; ticket numbers in a wait's text are left to the next event.
+- **Alternatives:** ending a wait after a fixed age (hides a real long gate); matching tickets named in a
+  wait's detail against reports (a partial report would end a wait on several agents); a separate
+  "nothing in flight" flag file (a second writer and state to clean up).
