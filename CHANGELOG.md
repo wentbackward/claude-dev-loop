@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.2 — 2026-11-08
 
 - Status verdict (#67): `status.sh` no longer trusts a stale `waiting` event: a wait that names branches
   (`waiting detail="gate feat/12-x"`) is over, with the gate not running, once a gate result of a train
