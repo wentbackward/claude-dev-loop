@@ -2,7 +2,8 @@
 # Merge the permission rules the loop needs into the project's Claude Code settings, only adding: the template's
 # and the project's rules into .claude/settings.json, the plugin-script rules (this machine's plugin path) into
 # .claude/settings.local.json, with the absolute notes directory, worktrees_dir and gate directory in its
-# permissions.additionalDirectories (so auto mode edits there without a prompt). A dry run by default; --apply writes.
+# permissions.additionalDirectories (so auto mode edits there without a prompt). A dry run by default, ending
+# with the owner's apply command when anything is missing; --apply writes.
 #
 # Usage: permissions.sh [--apply]
 set -u
@@ -102,6 +103,7 @@ if [ "$total" -eq 0 ]; then
 elif [ -n "$apply" ]; then
   echo "permissions: added $total rules"
 else
-  echo "permissions: $total rules to add (dry run; --apply writes them)"
+  # The agent may not change its own permissions: the owner runs the apply (the ! prefix runs it as the owner).
+  echo "permissions: $total rules to add (dry run). The owner applies them in the session with: ! $scripts_dir/permissions.sh --apply"
 fi
 exit "$status"
