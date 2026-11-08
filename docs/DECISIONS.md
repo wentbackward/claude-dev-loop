@@ -829,3 +829,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Decision:** the suites end through `dl_suite_end` (`scripts/lib/workdirs.sh`), which removes the work dir only on a green run and only when it is a real directory owned by the user, directly in `TMPDIR` (compared with symlinks resolved), named `dev-loop-smoke.` or `dev-loop-identity.` plus six letters or digits. The gate learns red work dirs only from its own check logs (`(work dir PATH)`), records them in `gate-work-dirs.txt` in the project's state directory (the logs are overwritten per run), and keeps the newest recorded one of each suite. Each suite names its work dir on its first line too, so a run that crashes, is killed or is stopped as stalled is recorded; a green run's removed dir drops out of the record. Only the logs of stages that ran in this gate run (result `rc=*`, `stopped` or `stalled`) are read: a skipped stage's log is left over from an earlier run and could name an older dir after this run's. A recorded dir in which something changed in the last 10 minutes (`find -mmin`, on GNU and BSD find; `DEV_LOOP_WORK_DIR_SETTLE_MINUTES`, 0 turns it off) is kept for a later run, so a straggler of a stopped stage still writing there loses nothing. A green run that cannot remove its dir says `not removed`. A path with a `.` or `..` component is refused, and the dir is checked and removed by its resolved path (`cd -P`, `pwd -P`), so a symlink in or under `TMPDIR` cannot lead the removal out of it. Two gates of the same project at once share `train-<name>.log`, so one could record the other's live work dir; the settle window covers that in practice, since a live run keeps writing in its dir. `doctor.sh` counts leftovers and names the thresholds (10% note, 2% MISSING) for space and inodes, whichever is lower; `df -i` columns are found by name (GNU `IFree`/`IUsed`, macOS `ifree`/`iused`) and the inode part is left out where they are missing or zero.
 - **Reason:** a glob over `TMPDIR` would delete the live work dir of a suite another worktree is running at that moment; dirs the gate's own logs name belong to runs that have ended. The leftovers of earlier versions are counted by the doctor rather than deleted.
 - **Alternatives:** an EXIT trap in the suites (would also remove a red run's evidence on an early `exit`); pruning every `dev-loop-smoke.*` older than a day (still guesses about other runs); a `find -mtime` sweep in `cleanup.sh` (a second deletion path to test).
+
+## 2026-11-08 — Permission changes and tag denies are owner steps (#73)
+
+- **Decision:** a deny rule in the project's settings that blocks a tag, a release or a tag push is
+  `MISSING` in `doctor.sh`, not a note. It is found by matching each project deny rule (`dl_perm_match`)
+  against sample commands: `git tag` (plain, `-a`, `-s`, `-m`), `gh release create v1.2.3`, and the tag
+  pushes `git push <remote> v1.2.3|refs/tags/v1.2.3|tag v1.2.3|--tags|--follow-tags`, `git push --tags
+  [<remote>]` and `git push --follow-tags` (the README lists them). A rule that also matches a loop command
+  is left to the loop-command check, so a broad deny such as `Bash(git push:*)` is reported once. `permissions.sh`'s dry run puts the owner's
+  apply command at the end of its last line (`... (dry run). The owner applies them in the session with:
+  ! <plugin>/scripts/permissions.sh --apply`), with the plugin's absolute scripts path.
+- **Reason:** the stop condition is "release on the owner's go", an ask; a deny beats every ask, and the
+  agent may not change its permissions, so the loop cannot make a release while the deny stands, which is
+  a problem to fix, not a remark. Sample commands reuse the existing matcher, so no new matching code. The
+  apply command stays on the summary line so the dry run's last line still says "dry run".
+- **Alternatives:** a note (the release would still stall); comparing the deny rules with the template's
+  ask rules textually (misses `git tag:*` against `git tag *` and `git push origin v*`, which no ask rule
+  names); the apply command on a line of its own after the summary (two last lines to keep in step).
