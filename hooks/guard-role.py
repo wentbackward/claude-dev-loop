@@ -1,9 +1,11 @@
-"""PreToolUse guard: the holdout scenario store stays hidden from the coding agents, and in identity mode
-GitHub writes go only through as-role.sh, with the agent's own role.
+"""PreToolUse guard: git commands that a stop condition forbids are refused, the holdout scenario store
+stays hidden from the coding agents, and in identity mode GitHub writes go only through as-role.sh, with
+the agent's own role.
 
 Best effort, local only: the deterministic guarantees come from GitHub (token permissions and rulesets).
-A no-op unless the project's .dev-loop.json turns scenarios on ("scenarios", or "factory": "dark") or
-configures "identities". Exit 2 refuses the tool call. `guard-role.py --scenarios-dir [DIR]` prints the
+A no-op without .dev-loop.json. The git check runs in every loop project unless "guard": false; the
+scenario check only when scenarios are on ("scenarios", or "factory": "dark"); the GitHub checks only when
+"identities" is configured. Exit 2 refuses the tool call. `guard-role.py --scenarios-dir [DIR]` prints the
 store path as resolved from DIR (for tests).
 """
 
@@ -68,13 +70,15 @@ def main_root(cwd: str) -> str:
         return ""
 
 
+def config_path(cwd: str) -> str:
+    """The project config file for cwd: DEV_LOOP_CONFIG, else .dev-loop.json in the main worktree."""
+    return os.environ.get("DEV_LOOP_CONFIG") or os.path.join(main_root(cwd) or cwd, ".dev-loop.json")
+
+
 def load_config(cwd: str) -> dict:
     """The project config, or an empty dict."""
-    path = os.environ.get("DEV_LOOP_CONFIG") or os.path.join(
-        main_root(cwd) or cwd, ".dev-loop.json"
-    )
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open(config_path(cwd), encoding="utf-8") as handle:
             return json.load(handle)
     except (OSError, ValueError):
         return {}
@@ -238,7 +242,9 @@ def secret_patterns(config: dict) -> list[str]:
 
 def segments(command: str) -> list[list[str]]:
     """Split a shell command into simple commands (best effort); nested bash -c strings are expanded."""
+    command = command.replace("\\\n", "")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     try:
         tokens = list(lexer)
@@ -366,7 +372,8 @@ def api_writes(tokens: list[str]) -> bool:
 def agent_roles(config: dict, agent_type: str) -> list[str]:
     """The roles an agent may act as (plugin prefixes such as dev-loop: are ignored)."""
     name = agent_type.rsplit(":", 1)[-1]
-    overrides = config.get("guard", {}).get("agents", {})
+    block = config.get("guard")
+    overrides = block.get("agents", {}) if isinstance(block, dict) else {}
     if name in overrides:
         return list(overrides[name])
     return DEFAULT_AGENT_ROLES.get(name, [])
@@ -418,6 +425,292 @@ def tool_paths(tool_input: dict) -> list[str]:
     ]
 
 
+# Git stop conditions: the options the guarded subcommands accept that matter for parsing, as
+# {long name: "none" | "value" | "optional"}, and their short forms as {letter: long name}. Every other
+# long option is left as is (an unknown one cannot be a prefix of a dangerous one, which are all listed).
+GIT_LONG = {
+    "fetch": {
+        "upload-pack": "value", "all": "none", "append": "none", "atomic": "none", "depth": "value",
+        "deepen": "value", "shallow-since": "value", "shallow-exclude": "value", "unshallow": "none",
+        "update-shallow": "none", "update-head-ok": "none", "force": "none", "keep": "none",
+        "multiple": "none", "prune": "none", "prune-tags": "none", "tags": "none", "no-tags": "none",
+        "jobs": "value", "quiet": "none", "verbose": "none", "progress": "none", "server-option": "value",
+        "refmap": "value", "recurse-submodules": "optional", "dry-run": "none", "write-fetch-head": "none",
+        "ipv4": "none", "ipv6": "none", "set-upstream": "none", "filter": "value", "negotiation-tip": "value",
+    },
+    "pull": {
+        "upload-pack": "value", "rebase": "optional", "ff-only": "none", "ff": "none", "squash": "none",
+        "commit": "none", "edit": "none", "autostash": "none", "strategy": "value",
+        "strategy-option": "value", "quiet": "none", "verbose": "none", "all": "none", "tags": "none",
+        "depth": "value", "unshallow": "none", "prune": "none", "jobs": "value", "force": "none",
+        "signoff": "none", "stat": "none", "verify": "none", "set-upstream": "none",
+    },
+    "rebase": {
+        "exec": "value", "onto": "value", "keep-base": "none", "root": "none", "continue": "none",
+        "abort": "none", "skip": "none", "quit": "none", "edit-todo": "none", "show-current-patch": "none",
+        "apply": "none", "merge": "none", "interactive": "none", "rebase-merges": "optional",
+        "strategy": "value", "strategy-option": "value", "gpg-sign": "optional", "empty": "value",
+        "keep-empty": "none", "autosquash": "none", "autostash": "none", "update-refs": "none",
+        "fork-point": "none", "force-rebase": "none", "ff": "none", "quiet": "none", "verbose": "none",
+        "stat": "none", "signoff": "none", "verify": "none", "whitespace": "value", "trailer": "value",
+        "committer-date-is-author-date": "none", "ignore-date": "none", "reset-author-date": "none",
+        "ignore-whitespace": "none", "reschedule-failed-exec": "none", "rerere-autoupdate": "none",
+        "allow-empty-message": "none", "context": "value",
+    },
+    "diff": {"output": "value", "output-indicator-new": "value", "output-indicator-old": "value",
+             "output-indicator-context": "value"},
+    "worktree remove": {"force": "none"},
+    "push": {
+        "receive-pack": "value", "exec": "value", "repo": "value", "all": "none", "branches": "none",
+        "mirror": "none", "delete": "none", "tags": "none", "follow-tags": "none", "force": "none",
+        "force-with-lease": "optional", "force-if-includes": "none", "prune": "none", "set-upstream": "none",
+        "push-option": "value", "dry-run": "none", "porcelain": "none", "atomic": "none", "signed": "optional",
+        "thin": "none", "quiet": "none", "verbose": "none", "progress": "none", "verify": "none",
+        "recurse-submodules": "value", "ipv4": "none", "ipv6": "none",
+    },
+}
+GIT_LONG["log"] = GIT_LONG["show"] = GIT_LONG["diff"]
+GIT_SHORT = {
+    "fetch": {"a": "append", "f": "force", "j": "jobs", "k": "keep", "m": "multiple", "o": "server-option",
+              "p": "prune", "P": "prune-tags", "q": "quiet", "t": "tags", "u": "update-head-ok", "v": "verbose"},
+    "pull": {"q": "quiet", "v": "verbose", "f": "force", "j": "jobs", "r": "rebase", "s": "strategy",
+             "X": "strategy-option", "n": "stat"},
+    "rebase": {"x": "exec", "i": "interactive", "m": "merge", "r": "rebase-merges", "s": "strategy",
+               "X": "strategy-option", "S": "gpg-sign", "k": "keep-empty", "f": "force-rebase", "q": "quiet",
+               "v": "verbose", "n": "stat", "C": "context"},
+    "diff": {}, "log": {}, "show": {},
+    "worktree remove": {"f": "force"},
+    "push": {"d": "delete", "f": "force", "n": "dry-run", "o": "push-option", "q": "quiet", "u": "set-upstream",
+             "v": "verbose"},
+}
+GIT_DANGER = {
+    "fetch": {"upload-pack": "runs a command of its own (--upload-pack)"},
+    "pull": {"upload-pack": "runs a command of its own (--upload-pack)"},
+    "rebase": {"exec": "runs a command after each commit (--exec/-x)"},
+    "diff": {"output": "writes a file anywhere (--output)"},
+    "log": {"output": "writes a file anywhere (--output)"},
+    "show": {"output": "writes a file anywhere (--output)"},
+    "worktree remove": {"force": "drops uncommitted work (worktree remove --force)"},
+    "push": {
+        "receive-pack": "runs a command of its own (--receive-pack)",
+        "exec": "runs a command of its own (--exec)",
+        "all": "pushes every branch, the base included (--all)",
+        "branches": "pushes every branch, the base included (--branches)",
+        "mirror": "mirrors every ref, the base and tags included (--mirror)",
+        "delete": "deletes a remote branch (--delete/-d)",
+        "prune": "deletes remote branches (--prune)",
+        "tags": "pushes tags (--tags)",
+        "follow-tags": "pushes tags (--follow-tags)",
+        "force": "force-pushes (--force/-f)",
+        "force-with-lease": "force-pushes (--force-with-lease)",
+        "force-if-includes": "force-pushes (--force-if-includes)",
+    },
+}
+GIT_GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path",
+                    "--super-prefix", "--list-cmds", "--attr-source"}
+REBASE_ACTIONS = {"continue", "abort", "skip", "quit", "edit-todo", "show-current-patch"}
+
+
+def guard_on(config: dict) -> bool:
+    """The git check is on unless the project's config says "guard": false."""
+    return config.get("guard") is not False
+
+
+def git_refuse(command: str, why: str) -> None:
+    """Refuse a git command that a stop condition forbids."""
+    refuse(f"'{command}' is refused: it {why}, which is a stop condition; ask the owner to run it")
+
+
+def git_split(tokens: list[str], cwd: str) -> tuple[str, list[str], str, bool]:
+    """(subcommand, its arguments, the directory git runs in, whether config is injected with -c)."""
+    index, injected = 1, False
+    while index < len(tokens):
+        token = tokens[index]
+        name = token.split("=", 1)[0]
+        if token in GIT_GLOBAL_VALUE:
+            value = tokens[index + 1] if index + 1 < len(tokens) else ""
+            if token == "-C":
+                cwd = expand(value, cwd)
+            injected = injected or token in {"-c", "--config-env"}
+            index += 2
+        elif token.startswith("-"):
+            injected = injected or name == "--config-env"
+            index += 1
+        else:
+            break
+    if index >= len(tokens):
+        return "", [], cwd, injected
+    sub, rest = tokens[index], tokens[index + 1 :]
+    if sub == "worktree" and rest[:1] == ["remove"]:
+        sub, rest = "worktree remove", rest[1:]
+    return sub, rest, cwd, injected
+
+
+def resolve_long(sub: str, name: str) -> set[str]:
+    """The options a long option name (maybe an abbreviation) may mean: itself when listed, else every
+    listed option it is a prefix of; a --no- negation means none (they only turn things off)."""
+    options = GIT_LONG[sub]
+    if name in options:
+        return {name}
+    if name.startswith("no-"):
+        return set()
+    return {option for option in options if option.startswith(name)} or {name}
+
+
+def git_parse(sub: str, args: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """The options as (long name, value) pairs, every meaning of an abbreviation and every letter of a
+    bundle expanded, and the positional arguments."""
+    options: list[tuple[str, str]] = []
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        index += 1
+        if token in {"--", "--end-of-options"}:
+            positional += args[index:]
+            break
+        if token.startswith("--"):
+            name, eq, value = token[2:].partition("=")
+            meanings = resolve_long(sub, name)
+            if not eq and index < len(args) and any(GIT_LONG[sub].get(o) == "value" for o in meanings):
+                value = args[index]
+                index += 1
+            options += [(option, value) for option in meanings]
+        elif token.startswith("-") and len(token) > 1:
+            letters = token[1:]
+            while letters:
+                option = GIT_SHORT[sub].get(letters[0], letters[0])
+                letters = letters[1:]
+                kind = GIT_LONG[sub].get(option, "none")
+                if kind in {"value", "optional"} and letters:
+                    options.append((option, letters))
+                    letters = ""
+                elif kind == "value":
+                    options.append((option, args[index] if index < len(args) else ""))
+                    index += 1
+                else:
+                    options.append((option, ""))
+        else:
+            positional.append(token)
+    return options, positional
+
+
+def current_branch(cwd: str) -> str:
+    """The branch checked out in cwd ("HEAD" when detached), or empty outside a repository."""
+    try:
+        return subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def is_tag(name: str, cwd: str) -> bool:
+    """True when name is a tag and not a branch of the repository in cwd."""
+
+    def exists(ref: str) -> bool:
+        try:
+            return subprocess.run(["git", "-C", cwd, "show-ref", "--verify", "--quiet", ref]).returncode == 0
+        except OSError:
+            return False
+
+    return exists(f"refs/tags/{name}") and not exists(f"refs/heads/{name}")
+
+
+def names_base(ref: str, base: str) -> bool:
+    """True when a ref as written in a refspec names the base branch."""
+    return ref in {base, f"heads/{base}", f"refs/heads/{base}"}
+
+
+def head_branch(ref: str, cwd: str, command: str) -> str:
+    """A ref with HEAD (or @) replaced by the branch checked out in cwd; refuses when it cannot tell."""
+    if ref not in {"HEAD", "@"}:
+        return ref
+    branch = current_branch(cwd)
+    if not branch:
+        git_refuse(command, f"pushes HEAD from {cwd}, a directory the guard cannot read, so maybe the base branch")
+    return branch
+
+
+def check_push(options: list[tuple[str, str]], positional: list[str], cwd: str, base: str, command: str) -> None:
+    """Refuse a push that forces, deletes or tags, or whose source or destination is the base branch."""
+    repo_given = any(option == "repo" for option, _ in options)
+    refspecs = positional if repo_given else positional[1:]
+    for spec in refspecs or ["HEAD"]:
+        if spec.startswith("+"):
+            git_refuse(command, f"force-pushes ({spec})")
+        source, colon, destination = spec.partition(":")
+        if colon and not source:
+            git_refuse(command, f"deletes a remote branch ({spec})")
+        source = head_branch(source, cwd, command)
+        destination = destination if colon else source
+        for ref in (source, destination):
+            if ref.startswith(("refs/tags/", "tags/")) or (ref == source and is_tag(ref, cwd)):
+                git_refuse(command, f"pushes a tag ({spec})")
+            if names_base(ref, base):
+                git_refuse(command, f"pushes the base branch {base} ({spec})")
+
+
+def check_rebase(options: list[tuple[str, str]], positional: list[str], cwd: str, base: str, command: str) -> None:
+    """Refuse a rebase whose rewritten branch is the base branch."""
+    names = {option for option, _ in options}
+    if names & REBASE_ACTIONS:
+        return
+    wanted = 0 if "root" in names else 1
+    branch = positional[wanted] if len(positional) > wanted else current_branch(cwd)
+    if names_base(branch, base):
+        git_refuse(command, f"rewrites the base branch {base}")
+
+
+def check_git(tokens: list[str], cwd: str, base: str) -> None:
+    """Refuse a git command whose parsed argv hits a stop condition."""
+    sub, args, cwd, injected = git_split(tokens, cwd)
+    if sub not in GIT_LONG:
+        return
+    command = " ".join(tokens)
+    if injected:
+        git_refuse(command, f"injects config (-c/--config-env) into git {sub}, which can run a command")
+    options, positional = git_parse(sub, args)
+    for option, _ in options:
+        if option in GIT_DANGER.get(sub, {}):
+            git_refuse(command, GIT_DANGER[sub][option])
+    if sub == "push":
+        check_push(options, positional, cwd, base, command)
+    elif sub == "rebase":
+        check_rebase(options, positional, cwd, base, command)
+
+
+def git_commands(command: str, cwd: str) -> list[tuple[list[str], str]]:
+    """The git commands in a shell command with the directory each runs in (cd followed; as-role.sh and
+    heavy.sh unwrapped)."""
+    found = []
+    for tokens in segments(command):
+        program = os.path.basename(tokens[0])
+        if program == "cd":
+            cwd = expand(tokens[1], cwd) if len(tokens) > 1 else os.environ.get("HOME", cwd)
+            continue
+        if program == "as-role.sh":
+            tokens = strip_prefix(tokens[2:])
+        elif program == "heavy.sh":
+            tokens = strip_prefix(tokens[1:])
+        if tokens and os.path.basename(tokens[0]) == "git":
+            found.append((tokens, cwd))
+    return found
+
+
+def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
+    """Refuse a Bash call with a git command that a stop condition forbids (unless "guard": false)."""
+    if event.get("tool_name") != "Bash" or not guard_on(config):
+        return
+    base = str(config.get("base_branch") or "main")
+    command = str((event.get("tool_input") or {}).get("command", ""))
+    for tokens, at in git_commands(command, cwd):
+        check_git(tokens, at, base)
+
+
 def main() -> None:
     """Read the PreToolUse event and refuse what the scenario store and identity mode do not allow."""
     if sys.argv[1:2] == ["--scenarios-dir"]:
@@ -431,6 +724,9 @@ def main() -> None:
     cwd = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     config = load_config(cwd)
     check_scenarios(event, config, cwd)
+    loop_dir = project_dir(cwd)
+    if os.path.isfile(config_path(loop_dir)):
+        check_git_stop_conditions(event, config if loop_dir == cwd else load_config(loop_dir), cwd)
     identities = config.get("identities")
     if not isinstance(identities, dict) or not any(
         isinstance(v, dict) and v.get("type") for v in identities.values()
