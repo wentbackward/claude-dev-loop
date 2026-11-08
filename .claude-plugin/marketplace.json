@@ -11,7 +11,7 @@
       "name": "dev-loop",
       "source": "./",
       "description": "Autonomous multi-agent development loop: tickets, worktree implementers, independent review, batched merge gate, ordered merges.",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "author": {
         "name": "wentbackward"
       },
