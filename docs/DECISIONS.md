@@ -927,9 +927,14 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `"guard": false`; an object under `guard` keeps it on. Long options resolve against an explicit list per
   subcommand: an exact listed name is itself, a `--no-` name is a negation (never dangerous), and any other
   name means every listed option it is a prefix of, so an ambiguous prefix that may mean a dangerous option
-  is refused (git would reject it anyway). `-c` or `--config-env` before any guarded subcommand is refused,
-  not only before `fetch` and `pull` (config such as `core.pager` or `core.sshCommand` runs a command for
-  each of them). A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
+  is refused (git would reject it anyway). `-c` or `--config-env` before any git subcommand is refused,
+  not only before `fetch` and `pull` (config such as `alias.<x>=!<cmd>`, `core.pager` or
+  `core.sshCommand` runs a command). The shell grammar is best effort: wrappers are skipped with their own
+  options and values, reserved words at the head of a simple command are dropped, `bash -lc` and `eval`
+  strings and command substitutions (backticks, `$( )`) are checked, and here-document bodies are not
+  (they are text), except the substitutions of an unquoted one; a body whose end word never comes is
+  checked as commands. A Bash call whose text has no `git` once quotes and backslashes are removed is not
+  parsed, and in a project without scenarios or identities it does not start git at all. A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
   base). A push of a name that is a tag and not a branch is a tag push. The template allows only
   `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
   in `permissions.sh`, since the template does not know the remote and base. A stacked branch's

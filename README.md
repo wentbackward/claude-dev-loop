@@ -1064,15 +1064,19 @@ them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.
 Git accepts many spellings of one option: a unique prefix (`--upl=<cmd>` is `--upload-pack`), bundled
 short flags (`-fx <cmd>` is `-f -x <cmd>`), quotes and backslashes (`'-f'`, `\-f`, `--fo\rce`). A text
 rule cannot see through them, and `git push -u <remote> HEAD` pushes the base branch when run from a
-checkout of it. So the role guard hook (PreToolUse) parses every Bash command in a loop project: it
-splits it into simple commands (`&&`, `||`, `;`, `|`, newlines, `bash -c '...'`), de-quotes each one,
-skips variable assignments and wrappers, follows `cd` and `git -C <dir>`, looks inside `as-role.sh` and
+checkout of it. So the role guard hook (PreToolUse) parses every Bash command in a loop project that
+names git: it splits it into simple commands (`&&`, `||`, `;`, `|`, newlines, `bash -c '...'` and
+`bash -lc`, `eval`, backticks and `$( )`), drops here-document bodies (keeping the command substitutions
+of an unquoted one), de-quotes each one, skips variable assignments, reserved words (`if`, `then`, `!`,
+`{`, ...) and wrappers with their options (`env -u NAME`, `nice -n 5`, `timeout -s KILL 5`, `stdbuf -o0`,
+`time`, `nohup`, `xargs`, `sudo`), follows `cd` and `git -C <dir>`, looks inside `as-role.sh` and
 `heavy.sh`, expands bundled short flags and resolves long-option prefixes against the options of
 `fetch`, `pull`, `rebase`, `diff`, `log`, `show`, `worktree remove` and `push` (a prefix that may mean a
 dangerous option counts as it). It refuses (exit 2, with the command, the stop condition and "ask the
 owner"):
 
-- `git -c <key>=<value>` or `--config-env` before any of these subcommands (config can run a command);
+- `git -c <key>=<value>` or `--config-env` before any subcommand (config can run a command: aliases,
+  pagers, `core.sshCommand`);
 - `fetch` or `pull` with `--upload-pack`, `push` with `--receive-pack` or `--exec`;
 - `rebase --exec`/`-x`, and a rebase whose rewritten branch is the base branch (the branch argument, else
   the branch checked out where it runs; `--continue`, `--abort`, `--skip` and `--quit` pass);
@@ -1080,15 +1084,17 @@ owner"):
 - `worktree remove --force`/`-f`;
 - a push that forces (`--force`, `--force-with-lease`, `--force-if-includes`, `-f`, `+<ref>`), deletes
   (`--delete`, `-d`, `:<ref>`, `--prune`), tags (`--tags`, `--follow-tags`, `refs/tags/...` or a tag
-  name), pushes everything (`--all`, `--branches`, `--mirror`), or whose source or destination is the base
+  name), pushes everything (`--all`, `--branches`, `--mirror`, a refspec with a glob), or whose source or destination is the base
   branch (`<base>`, `heads/<base>`, `refs/heads/<base>`, and `HEAD`, `@` or no refspec when the base is
   checked out in the command's directory, from `git rev-parse --abbrev-ref HEAD`).
 
 The base branch is `base_branch` from `.dev-loop.json` (default `main`). The check is on in every project
 with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`; it refuses
 only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
-best effort like the rest of the guard: it reads the command line, not environment variables
-(`GIT_CONFIG_*`), command substitutions or the scripts an agent writes. The ask and deny rules stay as a
+best effort like the rest of the guard: its shell grammar covers the common forms, not all of bash, and it
+reads the command line, not environment variables (`GIT_CONFIG_*`), shell variables or the scripts an
+agent writes. A Bash call whose text has no `git` (once quotes and backslashes are removed) starts no git
+process. The ask and deny rules stay as a
 second layer.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
