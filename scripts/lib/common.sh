@@ -728,3 +728,38 @@ dl_remove_merged_local() {
 
 # Pick the NUL tool at load time on purpose, so subshells and child scripts inherit it (#27).
 _dl_json_z_pick
+
+# dl_usage SCRIPT: print the "# Usage:" block of SCRIPT's header comment, up to its next blank comment line.
+dl_usage() {
+  awk '/^# Usage:/ { on = 1 } on && !/^# / { exit } on { sub(/^# /, ""); print }' "$1"
+}
+
+# dl_help SCRIPT [ARG]: when ARG (the script's first argument) is -h or --help, print SCRIPT's usage and exit 0.
+dl_help() {
+  case ${2:-} in
+    -h | --help)
+      dl_usage "$1"
+      exit 0
+      ;;
+  esac
+}
+
+# dl_branch_args SCRIPT ARG...: for a script whose arguments are all branches, -h / --help prints SCRIPT's
+# usage and exits 0, and any other argument starting with "-" is a usage error (exit 2), never a branch.
+dl_branch_args() {
+  local script=$1 arg
+  shift
+  for arg in "$@"; do
+    case $arg in
+      -h | --help)
+        dl_usage "$script"
+        exit 0
+        ;;
+      -*)
+        echo "dev-loop: unknown option $arg" >&2
+        dl_usage "$script" >&2
+        exit 2
+        ;;
+    esac
+  done
+}

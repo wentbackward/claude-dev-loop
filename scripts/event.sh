@@ -18,6 +18,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_help "$0" "${1:-}"
 
 [ -n "${1:-}" ] || dl_die "usage: event.sh <event> [key=value ...]"
 dl_load_config

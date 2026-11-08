@@ -62,6 +62,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_help "$0" "${1:-}"
 
 json="" use_gh=yes
 for arg in "$@"; do

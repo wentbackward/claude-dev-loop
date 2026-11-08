@@ -141,6 +141,10 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
 | hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
+Every script under `scripts/` prints its usage for `-h` or `--help` as its first argument and exits 0
+without touching anything; the scripts that take branches (`gate-train.sh`, `merge-train.sh`, `repush.sh`,
+`open-pr.sh`) refuse any other argument starting with `-` with exit 2 and the usage.
+
 All hooks do nothing in a project without `.dev-loop.json`, so the plugin is safe to install globally.
 
 The stop gate blocks on an untracked file only when it is not older than the session's start: the first

@@ -11,6 +11,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_branch_args "$0" "$@"
 
 [ $# -eq 1 ] || dl_die "usage: open-pr.sh <branch>"
 branch=$1

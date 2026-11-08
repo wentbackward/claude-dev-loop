@@ -4583,6 +4583,46 @@ done
 grep -qF "#64" "$plugin/CHANGELOG.md" && pass "marketplace: CHANGELOG has an entry for #64" ||
   fail "marketplace: no CHANGELOG #64 entry"
 grep -qE '^## .*\(#64\)' "$plugin/docs/DECISIONS.md" && pass "marketplace: the decisions log has #64" || fail "marketplace: no #64 decision"
+# Script help (#75): -h / --help print the usage and exit 0 without touching anything; an unknown option
+# of a script that takes branches is a usage error (exit 2), never a branch name.
+git init -q --bare "$work/help-origin.git"
+git clone -q "$work/help-origin.git" "$work/helpproj" 2>/dev/null
+cd "$work/helpproj" || exit 1
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true"}]}\n' >.dev-loop.json
+git add . && git commit -q -m "chore: start" && git push -q origin main
+hstate="$DEV_LOOP_HOME/helpproj"
+hrefs=$(git for-each-ref | git hash-object --stdin)
+for hscript in gate-train merge-train repush; do
+  for hflag in --help -h; do
+    hout=$("$plugin/scripts/$hscript.sh" "$hflag" 2>&1)
+    expect "help: $hscript.sh $hflag exits 0" 0 $?
+    printf '%s\n' "$hout" | head -n 1 | grep -q "^Usage: $hscript.sh" && pass "help: $hscript.sh $hflag prints its usage" ||
+      fail "help: $hscript.sh $hflag did not print its usage: $hout"
+  done
+done
+[ ! -e "$hstate" ] && pass "help: --help writes no state (no gate worktree, no events, no logs)" ||
+  fail "help: --help wrote $(find "$hstate" | head -n 5 | tr '\n' ' ')"
+expect "help: --help changes no ref and no file" "$hrefs|" "$(git for-each-ref | git hash-object --stdin)|$(git status --porcelain)"
+expect "help: --help adds no worktree" 1 "$(git worktree list | wc -l | tr -d ' ')"
+for hscript in gate-train merge-train repush open-pr; do
+  hout=$("$plugin/scripts/$hscript.sh" --bogus 2>&1)
+  expect "help: $hscript.sh --bogus exits 2" 2 $?
+  printf '%s\n' "$hout" | grep -q "Usage: $hscript.sh" && pass "help: $hscript.sh --bogus prints its usage" ||
+    fail "help: $hscript.sh --bogus did not print its usage: $hout"
+done
+hout=$("$plugin/scripts/gate-train.sh" feat/x --bogus 2>&1)
+expect "help: gate-train.sh refuses an unknown option after a branch" 2 $?
+[ ! -e "$hstate" ] && pass "help: an unknown option writes no state" || fail "help: --bogus wrote state"
+for hpath in "$plugin"/scripts/*.sh; do
+  hscript=$(basename "$hpath")
+  hout=$("$hpath" --help 2>&1)
+  hcode=$?
+  [ "$hcode" -eq 0 ] && printf '%s\n' "$hout" | head -n 1 | grep -q "^Usage: $hscript" &&
+    pass "help: $hscript --help prints its usage" || fail "help: $hscript --help (exit $hcode): $(printf '%s\n' "$hout" | head -n 2)"
+done
+[ ! -e "$hstate" ] && pass "help: no script's --help writes state" || fail "help: a script's --help wrote $(ls "$hstate")"
+expect "help: no script's --help changes the repository" "$hrefs|" "$(git for-each-ref | git hash-object --stdin)|$(git status --porcelain)"
+grep -qF "#75" "$plugin/CHANGELOG.md" && pass "help: CHANGELOG has an entry for #75" || fail "help: no CHANGELOG #75 entry"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]

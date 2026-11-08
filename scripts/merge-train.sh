@@ -33,6 +33,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_branch_args "$0" "$@"
 # shellcheck source=lib/identity.sh
 . "$scripts_dir/lib/identity.sh"
 # shellcheck source=lib/arch.sh

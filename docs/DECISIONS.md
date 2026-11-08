@@ -758,3 +758,19 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   message); a marker under the loop's state dir `~/.dev-loop/<repo>/` (the hook does not load the loop
   config, and the git directory scopes the marker to the worktree); blocking once to show the note to
   Claude (the issue says older files must not block).
+
+## 2026-11-08 — Script help: the first argument, and branch scripts refuse every leading dash (#75)
+
+- **Decision:** `dl_help` in `scripts/lib/common.sh` handles `-h` / `--help` only as a script's first
+  argument, for every script; `dl_branch_args` checks every argument of the scripts whose arguments are
+  all branches (`gate-train.sh`, `merge-train.sh`, `repush.sh`, `open-pr.sh`): help anywhere prints the
+  usage and exits 0, any other leading `-` is exit 2 with the usage. The usage is the script's own
+  `# Usage:` header block (up to the next blank comment line), so it has one source; `doctor.sh` got one.
+  Scripts with their own option parsers keep rejecting unknown options as before, so `cleanup.sh --apply
+  --help` is a usage error (exit 2), not help.
+- **Reason:** `heavy.sh` and `as-role.sh` pass the rest of their arguments to a command, and `event.sh`
+  takes `key=value` pairs, so only the first argument can mean help everywhere; a git branch name can
+  never start with `-`, so a leading dash in a branch script is always a mistake. One line per script
+  keeps the change small next to other branches editing the same scripts.
+- **Alternatives:** a `-h|--help)` case in each parser (many edits, and nothing for scripts without a
+  parser); a separate usage text per script (a second copy that drifts from the header).
