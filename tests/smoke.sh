@@ -3958,6 +3958,130 @@ expect "status: --json flags the dead gate" "idle|true|true" \
 expect "status: --json without a dead gate has the flags false" "false|false" \
   "$(sjson '[.verdict.gate_died, .gate.stale] | map(tostring) | join("|")')"
 
+# The verdict follows what is moving (#67): a wait ended by later evidence is over, a fresh event alone is
+# not work, and the orchestrator's idle event is honoured (hand-made event logs, times relative to now).
+vhome="$swork/verdict"
+vstate="$vhome/project"
+mkdir -p "$vstate"
+vstat() { DEV_LOOP_HOME="$vhome" DEV_LOOP_LOCK_DIR="$swork/locks" "$plugin/scripts/status.sh" --no-gh "$@" 2>&1; }
+vverdict() { vstat | tail -n 1; }
+vevent() { DEV_LOOP_HOME="$vhome" "$plugin/scripts/event.sh" "$@"; }
+# ago SECONDS: the UTC time that many seconds ago.
+ago() { jq -n -r --argjson s "$1" 'now - $s | floor | todate'; }
+# vlog WHO EVENT SECONDS_AGO [KEY VALUE]...: append one hand-made event to the verdict section's log.
+vlog() {
+  local who=$1 event=$2 t
+  t=$(ago "$3")
+  shift 3
+  jq -n -c --arg t "$t" --arg who "$who" --arg event "$event" --args \
+    '$ARGS.positional as $p | {t: $t, who: $who, event: $event} + ([range(0; $p | length; 2) as $i | {($p[$i]): $p[$i + 1]}] | add // {})' "$@" \
+    >>"$vstate/events.jsonl"
+}
+# vreset: an empty event log, ledger and gate file.
+vreset() { rm -f "$vstate/events.jsonl" "$vstate/merged.jsonl" "$vstate/train-running.txt"; }
+
+# 1. A stale gate wait: the gate ran green and merge-train.sh merged that branch after the wait.
+vreset
+vlog orchestrator waiting 960 detail "gate chore/release-0.8.1"
+vlog gate train-started 950 pid 999999 branches chore/release-0.8.1
+vlog gate train-ended 760 rc 0 result green
+vlog merge merge-started 730 branches chore/release-0.8.1
+vlog merge merged 720 branch chore/release-0.8.1 ticket 66
+vlog merge merge-ended 719 rc 0
+printf '{"branch":"chore/release-0.8.1","ticket":"66","merged_at":"%s"}\n' "$(ago 720)" >"$vstate/merged.jsonl"
+out=$(vstat)
+echo "$out"
+expect "status: a gate wait followed by the merge of its branch is over: idle" "verdict: idle" "$(echo "$out" | tail -n 1)"
+expect "status: --json says the wait ended" "idle|true" \
+  "$(vstat --json | jq -r '[.verdict.state, .verdict.wait_ended] | map(tostring) | join("|")')"
+expect "status: the python3 fallback ends the stale wait too" idle "$(DEV_LOOP_NO_JQ=1 vstat --json | jq -r .verdict.state)"
+# The ledger alone (a merge without events) ends the wait.
+vreset
+vlog orchestrator waiting 960 detail "gate feat/31-x"
+printf '{"branch":"feat/31-x","ticket":"31","merged_at":"%s"}\n' "$(ago 720)" >"$vstate/merged.jsonl"
+expect "status: a ledger merge of the waited-on branch ends the wait" "verdict: idle" "$(vverdict)"
+# A gate result alone (the gate went red, nothing merged) ends the wait for that gate.
+vreset
+vlog orchestrator waiting 600 detail "gate feat/31-x feat/32-y"
+vlog gate train-started 590 pid 999999 branches "feat/31-x feat/32-y"
+vlog gate train-ended 300 rc 1 result red
+expect "status: a gate result of the waited-on train ends the wait" "verdict: idle" "$(vverdict)"
+# A merge or gate result of other branches, or one from before the wait, does not end it.
+vreset
+vlog gate train-started 900 pid 999999 branches feat/31-x
+vlog gate train-ended 800 rc 0 result green
+vlog orchestrator waiting 600 detail "gate feat/31-x"
+vlog gate train-started 500 pid 999999 branches feat/33-z
+vlog gate train-ended 400 rc 0 result green
+printf '{"branch":"feat/33-z","ticket":"33","merged_at":"%s"}\n' "$(ago 300)" >"$vstate/merged.jsonl"
+vverdict | grep -qE '^verdict: waiting on gate feat/31-x \(output [0-9]+s ago\)$' &&
+  pass "status: only evidence of the waited-on branches, after the wait, ends it" || fail "status: unrelated evidence ended a wait"
+expect "status: --json says the wait has not ended" "waiting|false" \
+  "$(vstat --json | jq -r '[.verdict.state, .verdict.wait_ended] | map(tostring) | join("|")')"
+# A real gate wait: the gate runs the waited-on branch, so it is waiting even after an older result.
+sleep 60 &
+v_gate=$!
+printf '%s feat/31-x\n' "$v_gate" >"$vstate/train-running.txt"
+vlog gate train-started 5 pid "$v_gate" branches feat/31-x
+vverdict | grep -qE '^verdict: waiting on gate \(output [0-9]+s ago\)$' &&
+  pass "status: a real gate wait (the gate runs) is still waiting" || fail "status: a running gate is not waiting"
+kill "$v_gate" 2>/dev/null
+wait "$v_gate" 2>/dev/null
+# A wait on agents: a later orchestrator event ends the wait; the agent not yet reported is still working.
+vreset
+vlog orchestrator agent-started 700 ticket 41
+vlog orchestrator agent-started 700 ticket 42
+vlog orchestrator waiting 600 detail "agents for #41 #42"
+vverdict | grep -qE '^verdict: waiting on agents for #41 #42 \(output [0-9]+s ago\)$' &&
+  pass "status: a wait on agents is waiting" || fail "status: agent wait"
+vlog orchestrator agent-reported 300 ticket 41
+expect "status: after one report the other agent in flight is working" "verdict: working" "$(vverdict)"
+vlog orchestrator agent-reported 200 ticket 42
+expect "status: when every agent reported it is idle" "verdict: idle" "$(vverdict)"
+
+# 2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
+vreset
+vevent merged detail="chore/release-0.8.1, nothing in flight"
+out=$(vstat)
+echo "$out"
+expect "status: a fresh event with nothing running is idle" "verdict: idle" "$(echo "$out" | tail -n 1)"
+# An agent recorded as started and not reported is work in flight; its report, or its merge, ends it.
+vevent agent-started ticket=51
+expect "status: an agent started and not reported is working" "verdict: working" "$(vverdict)"
+expect "status: --json lists the agents in flight" "working|51" \
+  "$(vstat --json | jq -r '[.verdict.state, (.verdict.agents | join(" "))] | join("|")')"
+vstat | grep -qF 'agents in flight: #51' && pass "status: names the agents in flight" || fail "status: no agents line"
+vevent agent-reported ticket=51
+expect "status: a reported agent is no longer in flight" "verdict: idle" "$(vverdict)"
+vevent agent-started ticket=52 branch=feat/52-m
+vlog merge merged 0 branch feat/52-m ticket 52
+expect "status: a merged ticket's agent is no longer in flight" "verdict: idle" "$(vverdict)"
+# An agent in flight with nothing moving for longer than the threshold is still possibly stalled.
+vreset
+vlog orchestrator agent-started 7200 ticket 53
+vverdict | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
+  pass "status: an agent that never reports is possibly stalled" || fail "status: a silent agent is not stalled"
+
+# 3. The orchestrator's idle event is honoured: agents in flight end, an older worktree does not count.
+vevent idle detail="nothing in flight"
+out=$(vstat)
+echo "$out"
+expect "status: an idle event ends the agents in flight" "verdict: idle" "$(echo "$out" | tail -n 1)"
+echo "$out" | grep -qE '^orchestrator: idle \(nothing in flight\), [0-9]+s ago$' &&
+  pass "status: shows the idle event" || fail "status: idle event line"
+vreset
+old=$(($(date +%s) - 600))
+git worktree add -q -b feat/54-left "$swork/wt-left" origin/main
+(cd "$swork/wt-left" && echo l >l.txt && git add l.txt &&
+  GIT_COMMITTER_DATE="$old +0000" GIT_AUTHOR_DATE="$old +0000" git commit -q -m "feat: l (Refs #54)")
+expect "status: an unmerged loop worktree without an idle event is working" "verdict: working" "$(vverdict)"
+vlog orchestrator idle 300 detail "after the release"
+expect "status: a worktree unchanged since the idle event does not count" "verdict: idle" "$(vverdict)"
+(cd "$swork/wt-left" && echo m >>l.txt && git commit -q -am "feat: m (Refs #54)")
+expect "status: a worktree commit after the idle event is working" "verdict: working" "$(vverdict)"
+git worktree remove --force "$swork/wt-left"
+vreset
+
 # Read-only: no file in the state directories or the lock directory changes while status runs.
 snapshot() { find "$shome" "$st_home" "$swork/locks" -exec ls -ld {} + 2>/dev/null | LC_ALL=C sort | cksum; }
 before=$(snapshot)
