@@ -736,3 +736,22 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** ending a wait after a fixed age (hides a real long gate); matching tickets named in a
   wait's detail against reports (a partial report would end a wait on several agents); a separate
   "nothing in flight" flag file (a second writer and state to clean up).
+
+## 2026-11-08 — The stop gate's session start (#74)
+
+- **Decision:** the session's start is the first `"timestamp"` (UTC, ISO 8601) in the transcript named by
+  the Stop hook input's `transcript_path`; when there is none, it is the hook's first run in the session.
+  The hook keeps it as the mtime of a marker file per `session_id` in `<git dir>/dev-loop-sessions/`
+  (set with `TZ=UTC touch -t`), and an untracked file (`git ls-files -z --others --exclude-standard`)
+  blocks only when `find -newer <marker>` lists it. Markers older than 30 days are removed when a new one
+  is made. The note on older files is a `systemMessage` (exit 0), once per session (a `<marker>.noted`
+  file). A hook input without a session id keeps the old rule: every untracked file blocks.
+- **Reason:** the Stop hook first runs at the end of the session's first turn, so a marker made then
+  would let files of that turn pass; the transcript's first event is the real start. `touch -t` and
+  `find -newer` behave the same on Linux and macOS, unlike `stat` or `date -d`. The git directory is
+  per worktree and already holds the hook's block counter, so the hook needs no change in the shared
+  library's state paths.
+- **Alternatives:** the transcript file's creation time (not portable; its mtime changes on every
+  message); a marker under the loop's state dir `~/.dev-loop/<repo>/` (the hook does not load the loop
+  config, and the git directory scopes the marker to the worktree); blocking once to show the note to
+  Claude (the issue says older files must not block).
