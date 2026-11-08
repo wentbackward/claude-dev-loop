@@ -774,3 +774,24 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   keeps the change small next to other branches editing the same scripts.
 - **Alternatives:** a `-h|--help)` case in each parser (many edits, and nothing for scripts without a
   parser); a separate usage text per script (a second copy that drifts from the header).
+
+## 2026-11-08 — One worktrees dir and the notes dir in additionalDirectories (#70)
+
+- **Decision:** `worktrees_dir` resolves like `gate_worktree` (relative to the repository root, `~`
+  expanded) and is normalized lexically (no `..`, no trailing slash), so the path written to
+  `permissions.additionalDirectories` is the plain absolute directory. `paths.sh worktrees` prints the
+  project's parent without the key (where the sibling worktrees go); `permissions.sh` never adds that, nor
+  any directory that holds the project, nor one inside it. An `additionalDirectories` entry covers a
+  directory when it is that directory or a parent of it, in either project settings file; relative entries
+  are taken from the project root. The notes directory is added with or without `worktrees_dir`, since
+  implementers write their notes file there with the Write tool; doctor reports an uncovered one as MISSING,
+  so an existing project needs one `permissions.sh --apply` (a notes dir inside the project needs nothing).
+  Without `worktrees_dir`, loop worktrees outside the project and not covered are MISSING (with the
+  `worktrees_dir` fix); with it, the old sibling ones are a note and are never moved.
+- **Reason:** Claude Code auto-approves edits only in the working directory and `additionalDirectories`,
+  which takes directory paths (globs are not documented), so one dedicated directory listed once is the
+  only reliable fix; the parent would open every sibling project. Absolute paths are per machine, so they
+  go to `.claude/settings.local.json`.
+- **Alternatives:** a glob `../<repo>-*` (undocumented); adding each worktree as it is created (a settings
+  write per ticket, and stale entries); worktrees inside the project (they would sit in the repository's
+  tree and its searches).

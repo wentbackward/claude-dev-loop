@@ -15,6 +15,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   longer takes `--help` as a branch. `gate-train.sh`, `merge-train.sh`, `repush.sh` and `open-pr.sh`
   refuse any other argument starting with `-` (exit 2, with the usage) instead of looking for a branch
   of that name.
+- Worktrees dir (#70): a new `.dev-loop.json` key `worktrees_dir` puts the implementer worktrees in
+  `<dir>/<n>` and the gate in `<dir>/gate` (an explicit `gate_worktree` still wins); without it nothing
+  changes (`../<repo>-<n>`, `../<repo>-gate`). `paths.sh worktree <n>` prints the worktree path in either
+  layout and `paths.sh worktrees` the directory; the dev-loop skill's launch step uses it.
+  `permissions.sh --apply` adds the absolute notes directory and, with the key, the worktrees dir (and a
+  gate outside it) to `permissions.additionalDirectories` in `.claude/settings.local.json`, so auto mode
+  and acceptEdits edit there without a prompt; it never adds the project's parent. `doctor.sh` reports an
+  uncovered notes dir, worktrees dir or sibling loop worktrees as MISSING and notes old-layout worktrees
+  (never moved). The setup skill writes `"worktrees_dir": "../<repo>-worktrees"` for new projects.
 
 ## 0.8.2 — 2026-11-08
 
