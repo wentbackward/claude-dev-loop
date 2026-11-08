@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.1 — 2026-11-08
 
 - Marketplace pin (#64): the README installs from a release tag
   (`/plugin marketplace add wentbackward/claude-dev-loop@v0.8.0`), explains the error Claude Code gives
