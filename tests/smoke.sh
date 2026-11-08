@@ -94,6 +94,8 @@ touch -t 202001010000 "$old_nl"
 expect "stop gate does not block on untracked files older than the session" 0 "$(stop_session s1 "$transcript")"
 grep -q 'systemMessage' "$work/stop.out" && grep -q 'older notes.txt' "$work/stop.out" &&
   pass "stop gate notes the older untracked files" || fail "no note of the older untracked files: $(cat "$work/stop.out")"
+expect "stop gate's note is valid JSON with the newline name" "true" \
+  "$(jq -r '.systemMessage | contains("older\nline.txt")' "$work/stop.out" 2>/dev/null)"
 stop_session s1 "$transcript" >/dev/null
 expect "stop gate notes the older untracked files only once per session" "" "$(cat "$work/stop.out")"
 echo new >"new file.txt"
@@ -108,6 +110,11 @@ expect "stop gate blocks on tracked modifications with older untracked files" 2 
 git checkout -q src.txt
 expect "stop gate passes with only older untracked files" 0 "$(stop_session s1 "$transcript")"
 expect "stop gate without a session id blocks on any untracked file" 2 "$(stop_session "")"
+# The session starts at the transcript's first timestamp, not at the hook's first run.
+touch -t 202201010000 during.txt
+expect "stop gate's first run blocks on an untracked file made after the transcript's start" 2 \
+  "$(stop_session s3 "$transcript")"
+rm during.txt
 # Without a transcript the hook's first run in the session marks its start.
 expect "stop gate's first run without a transcript does not block on older untracked files" 0 "$(stop_session s2)"
 sleep 1
