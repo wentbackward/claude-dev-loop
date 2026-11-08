@@ -84,8 +84,8 @@ smoke_closure() {
 # smoke_code IDS: the code of the sections in IDS in file order, a cd into the shared project before one
 # whose predecessor is skipped, then the shared summary.
 smoke_code() {
-  local id first lastl title ran=yes
-  while IFS="$(printf '\t')" read -r id first lastl title; do
+  local id first lastl ran=yes
+  while IFS="$(printf '\t')" read -r id first lastl _; do
     case " $1 " in
       *" $id "*)
         [ "$ran" = yes ] || echo 'cd "$work/project" || exit 1'
