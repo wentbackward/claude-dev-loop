@@ -54,6 +54,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_branch_args "$0" "$@"
 
 [ $# -gt 0 ] || dl_die "usage: gate-train.sh <branch> [<branch> ...]"
 dl_load_train_config "$1"

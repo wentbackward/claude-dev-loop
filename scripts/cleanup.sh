@@ -38,6 +38,7 @@ set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_help "$0" "${1:-}"
 
 apply="" verbose="" include=" "
 while [ $# -gt 0 ]; do

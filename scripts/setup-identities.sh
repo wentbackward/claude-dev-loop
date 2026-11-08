@@ -19,6 +19,7 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 plugin_dir=$(dirname "$scripts_dir")
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_help "$0" "${1:-}"
 # shellcheck source=lib/identity.sh
 . "$scripts_dir/lib/identity.sh"
 

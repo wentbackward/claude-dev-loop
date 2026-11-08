@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Check that this machine and repository have what the dev loop needs, and print the resolved config.
+#
+# Usage: doctor.sh
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 . "$scripts_dir/lib/common.sh"
+dl_help "$0" "${1:-}"
 
 problems=0
 ok() { echo "ok      $*"; }
