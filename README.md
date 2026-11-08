@@ -776,7 +776,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `fail_fast` | `false` | after the first failure, skip the checks not started and stop the running ones (their whole process group); they print as `<name> skipped` / `<name> stopped` |
 | `gate_setup` | none | command run once in the gate worktree before the checks (e.g. `npm ci`) |
 | `gate_worktree` | `../<repo>-gate`, or `<worktrees_dir>/gate` | the gate's own worktree (created on first use) |
-| `worktrees_dir` | none (siblings `../<repo>-<n>`) | one directory for the loop's worktrees: implementer worktrees at `<dir>/<n>` (`paths.sh worktree <n>`), the gate at `<dir>/gate` unless `gate_worktree` is set; `permissions.sh --apply` lists it in `permissions.additionalDirectories`, so auto mode edits there without a prompt (setup writes `../<repo>-worktrees`; existing sibling worktrees stay where they are) |
+| `worktrees_dir` | none (siblings `../<repo>-<n>`) | one directory for the loop's worktrees: implementer worktrees at `<dir>/<n>` (`paths.sh worktree <n>`), the gate at `<dir>/gate` unless `gate_worktree` is set; `permissions.sh --apply` lists it in `permissions.additionalDirectories`, so auto mode edits there without a prompt (setup writes `../<repo>-worktrees`; existing sibling worktrees stay where they are); the path is normalized lexically (`..` and trailing slashes removed, symlinks not resolved) |
 | `notes_dir` | `~/.dev-loop/<repo>/notes` | PR notes files `pr-<branch with / as _>.md`, outside git, shared by all worktrees |
 | `logs_dir` | `~/.dev-loop/<repo>/logs` | gate logs |
 | `heavy.slots` | `2` | machine-wide slots for heavy commands |
