@@ -2496,6 +2496,34 @@ git push origin main is refused
 EOF
 )\"" "timeout 60 git fetch -q origin" "echo 'use \`git push origin main\`'" "nice -n 5 git log --oneline -1"
 grefused "$gg/proj" "git rebase origin/main @" "git rebase origin/main HEAD"
+# Review round 2: a here-document starts only at an unquoted << outside comments and arithmetic; line
+# continuations and \u escapes do not hide git from the fast path; env -S strings are parsed.
+grefused "$gg/proj-1" "echo \"<<E\"
+git push origin main
+E" "echo '<<E'
+git push origin main
+E" "echo a # <<E
+git push origin main
+E" "echo x\\<<E
+git push origin main
+E" "echo \$((1<<E))
+git push origin main
+E" "git status
+
+git push origin main" "g\\
+it push origin main" "env -S 'git push origin main'" "env --split-string='git push origin main'" \
+  "env -i -S'git push origin main'"
+grefused "$gg/proj" "echo \"<<E\"
+git push -u origin HEAD
+E"
+gpassed "$gg/proj-1" "ls # git push origin main" "cat <<-E
+	git push origin main
+	E
+git status"
+ln -s "$gg/proj-1" "$work/p71" # a path without "git" in it, so only the command can send it to Python
+expect "git guard: a \\u escape does not hide git from the fast path" 2 \
+  "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "\\u0067it push origin main"}}' "$work/p71" |
+    CLAUDE_PROJECT_DIR="$work/p71" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
 # A Bash call without git in it starts no git process (the hook stays cheap).
 mkdir -p "$gg/spy" && printf '#!/bin/sh\necho "$*" >>"%s"\nexec "%s" "$@"\n' "$gg/spy.log" "$(command -v git)" >"$gg/spy/git" &&
   chmod +x "$gg/spy/git"

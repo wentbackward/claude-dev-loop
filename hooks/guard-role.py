@@ -52,8 +52,7 @@ WRAPPERS = {
 }
 RESERVED = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
-SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&"}
+SEPARATOR_CHARS = set(";&|()\n")
 SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
 GLOB_CHARS = set("*?[")
 
@@ -258,24 +257,121 @@ def secret_patterns(config: dict) -> list[str]:
     return patterns
 
 
+def heredoc_word(command: str, index: int) -> tuple[bool, bool, str, int] | None:
+    """The here-document after a `<<` that ends before index: (strip tabs, delimiter quoted, delimiter, the
+    index after it), or None when no delimiter word follows."""
+    dash = command.startswith("-", index)
+    index += 1 if dash else 0
+    while index < len(command) and command[index] in " \t":
+        index += 1
+    start = index
+    while index < len(command) and command[index] not in " \t\n;&|()<>":
+        if command[index] in "'\"":
+            close = command.find(command[index], index + 1)
+            index = len(command) if close < 0 else close + 1
+        else:
+            index += 2 if command[index] == "\\" else 1
+    word = command[start:index]
+    if not word:
+        return None
+    try:
+        delimiter = "".join(shlex.split(word))
+    except ValueError:
+        return None
+    return dash, any(char in word for char in "'\"\\"), delimiter, index
+
+
+def take_bodies(command: str, index: int, pending: list[tuple[bool, bool, str]]) -> tuple[int, list[str]] | None:
+    """Skip the bodies of the pending here-documents from index: (the index after the last end word, the
+    command substitutions of the unquoted bodies), or None when an end word never comes."""
+    found: list[str] = []
+    for dash, quoted, word in pending:
+        while True:
+            if index > len(command):
+                return None
+            end = command.find("\n", index)
+            end = len(command) if end < 0 else end
+            line = command[index:end]
+            index = end + 1
+            if (line.lstrip("\t") if dash else line) == word:
+                break
+            if not quoted:
+                found += substitutions(line, heredoc=True)
+    return min(index - 1, len(command)), found
+
+
+def arithmetic_end(command: str, index: int) -> int:
+    """The index after the (( )) that starts at index (the end of the command when it never closes)."""
+    depth = 0
+    while index < len(command):
+        depth += {"(": 1, ")": -1}.get(command[index], 0)
+        index += 1
+        if depth == 0:
+            return index
+    return index
+
+
 def strip_heredocs(command: str) -> str:
-    """The command without the bodies of its here-documents (text fed to a command, not run); the command
-    substitutions of an unquoted body (which the shell runs) are kept as lines of their own. A body whose
-    end word never comes is kept as it is."""
-    lines, kept, ends, extra = command.split("\n"), [], [], []
-    for number, line in enumerate(lines):
-        if ends:
-            strip, quoted, word, start = ends[0]
-            if (line.lstrip("\t") if strip else line) == word:
-                ends.pop(0)
-            elif not quoted:
-                extra += substitutions(line, heredoc=True)
+    """The command without its comments and the bodies of its here-documents (text, not run).
+
+    A here-document starts only at an unquoted `<<` outside comments and arithmetic, so a quoted or
+    commented `<<WORD` hides nothing; the command substitutions of an unquoted body (which the shell runs)
+    are kept as lines of their own; a body whose end word never comes is kept as commands.
+    """
+    out: list[str] = []
+    extra: list[str] = []
+    pending: list[tuple[bool, bool, str]] = []
+    stack: list[list] = []  # one [quote outside, open parentheses] per $( ) entered
+    quote, index = "", 0
+    while index < len(command):
+        char = command[index]
+        step = 1
+        if quote == "'":
+            quote = "" if char == "'" else quote
+        elif char == "\\":
+            step = 2
+        elif quote == '"' and char == '"':
+            quote = ""
+        elif command.startswith("$((", index) or (not quote and command.startswith("((", index)):
+            step = arithmetic_end(command, index + (1 if char == "$" else 0)) - index
+        elif command.startswith("$(", index):
+            stack.append([quote, 0])
+            quote, step = "", 2
+        elif quote:
+            pass
+        elif char in "'\"":
+            quote = char
+        elif char == "(" and stack:
+            stack[-1][1] += 1
+        elif char == ")" and stack:
+            if stack[-1][1]:
+                stack[-1][1] -= 1
+            else:
+                quote = stack.pop()[0]
+        elif char == "#" and (index == 0 or command[index - 1] in " \t\n;&|()"):
+            end = command.find("\n", index)
+            index = len(command) if end < 0 else end
             continue
-        kept.append(line)
-        ends = [(dash == "-", bool(q), word, number) for dash, q, word in HEREDOC.findall(line)]
-    if ends:
-        kept += lines[ends[0][3] + 1 :]
-    return "\n".join(kept + extra)
+        elif command.startswith("<<<", index):
+            step = 3
+        elif command.startswith("<<", index):
+            parsed = heredoc_word(command, index + 2)
+            if parsed:
+                pending.append(parsed[:3])
+                step = parsed[3] - index
+            else:
+                step = 2
+        elif char == "\n" and pending:
+            bodies = take_bodies(command, index + 1, pending)
+            pending = []
+            if bodies:
+                out.append("\n")
+                index, found = bodies
+                extra += found
+                continue
+        out.append(command[index : index + step])
+        index += step
+    return "\n".join(["".join(out)] + extra)
 
 
 def substitutions(command: str, heredoc: bool = False) -> list[str]:
@@ -333,6 +429,7 @@ def segments(command: str) -> list[list[str]]:
     command = strip_heredocs(command.replace("\\\n", ""))
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
+    lexer.commenters = ""
     lexer.whitespace_split = True
     try:
         tokens = list(lexer)
@@ -340,7 +437,7 @@ def segments(command: str) -> list[list[str]]:
         tokens = command.split()
     result: list[list[str]] = [[]]
     for token in tokens:
-        if token in SEPARATORS:
+        if token and set(token) <= SEPARATOR_CHARS:
             result.append([])
         else:
             result[-1].append(token)
@@ -367,10 +464,36 @@ def strip_prefix(segment: list[str]) -> list[str]:
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or token in RESERVED:
             index += 1
         elif wrapper in WRAPPERS:
-            index = skip_wrapper_options(segment, index + 1, wrapper)
+            split = env_split_string(segment, index + 1) if wrapper == "env" else None
+            if split is not None:
+                segment, index = split, 0
+            else:
+                index = skip_wrapper_options(segment, index + 1, wrapper)
         else:
             break
     return segment[index:]
+
+
+def env_split_string(segment: list[str], index: int) -> list[str] | None:
+    """For env -S/--split-string STRING ARGS: the words of STRING followed by ARGS (what env runs), or None
+    when the env options at index have no split string."""
+    while index < len(segment) and segment[index].startswith("-") and segment[index] not in {"-", "--"}:
+        token = segment[index]
+        value, rest = None, index + 1
+        if token in {"-S", "--split-string"}:
+            value, rest = (segment[index + 1] if index + 1 < len(segment) else ""), index + 2
+        elif token.startswith("--split-string="):
+            value = token.split("=", 1)[1]
+        elif token.startswith("-S"):
+            value = token[2:]
+        if value is not None:
+            try:
+                words = shlex.split(value)
+            except ValueError:
+                words = value.split()
+            return words + segment[rest:]
+        index += 2 if token in WRAPPERS["env"] else 1
+    return None
 
 
 def skip_wrapper_options(segment: list[str], index: int, wrapper: str) -> int:
@@ -813,7 +936,7 @@ def names_git(event: dict) -> bool:
     if event.get("tool_name") != "Bash":
         return False
     command = str((event.get("tool_input") or {}).get("command", ""))
-    return "git" in re.sub(r"[\\'\"]", "", command)
+    return "git" in re.sub(r"[\\'\"]", "", command.replace("\\\n", ""))
 
 
 def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:

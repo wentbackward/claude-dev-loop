@@ -13,8 +13,12 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -z "${DEV_LOOP_CONFIG:-}" ]; then
   if ! grep -qsE '"(identities|scenarios|factory)"' "$config"; then
     event=$(cat)
     printf '%s' "$event" | grep -qE '"tool_name"[[:space:]]*:[[:space:]]*"Bash"' || exit 0
-    # Only a command that may run git (once quotes and backslashes are removed) needs the Python guard.
-    printf '%s' "$event" | tr -d "\\\\\"'" | grep -q git || exit 0
+    # Only a command that may run git needs the Python guard: "git" in the event once line continuations,
+    # quotes and backslashes are removed, or a \u escape (which only the decoded command shows).
+    if ! printf '%s' "$event" | grep -qF '\u' &&
+      ! printf '%s' "$event" | sed 's/\\\\\\n//g' | tr -d "\\\\\"'" | grep -q git; then
+      exit 0
+    fi
     exec python3 -I "$guard" --git-only <<<"$event"
   fi
 fi
