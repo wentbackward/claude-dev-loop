@@ -2520,6 +2520,36 @@ gpassed "$gg/proj-1" "ls # git push origin main" "cat <<-E
 	git push origin main
 	E
 git status"
+# Review round 3: ANSI-C strings ($'...', where \' does not close) are read as bash reads them, and a
+# command naming git that cannot be parsed is refused, never let through as one long echo.
+grefused "$gg/proj" "echo \$'a\\'b'
+git push -u origin HEAD" "echo 'unterminated
+git push -u origin HEAD"
+grefused "$gg/proj-1" "echo \$'a\\'b'; git push --force origin x" "echo \$'a\\'b' <<E
+x
+E
+git push origin main" "echo \$'\\'' <<E
+x
+E
+git push origin main" "env -S \"echo 'x\" git push origin main" "bash -c \"echo 'x\"
+git status"
+gpassed "$gg/proj-1" "echo \$'it\\'s' && git status" "git commit -m \$'fix: a\\'b\\n\\nbody'" "echo \"\$'\" && git status" \
+  "git status # it's fine" "gh pr create --title x --body \"\$(cat <<'EOF'
+it's done; never git push origin main
+EOF
+)\""
+expect "git guard: a non-git command that cannot be parsed is not refused" 0 "$(gguard "$gg/proj-1" "echo 'unterminated")"
+out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+  "tool_input": {"command": "echo '"'"'x\ngit status"}}))' "$gg/proj-1" |
+  CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
+case $out in *"cannot be parsed"*"ask the owner"*) pass "git guard: an unparsable git command is refused as such" ;;
+  *) fail "git guard: the unparsable refusal does not explain itself: $out" ;; esac
+printf '{"scenarios": {"dir": "~/.dev-loop/<repo>/holdout"}, "guard": false}\n' >"$gg/scen-off.json"
+expect "isolation: a blind agent's unparsable git command is refused (git check off)" 2 \
+  "$(sguard dev-loop:implementer Bash command "echo 'x
+git log" "$iso/guardproj-1" "$gg/scen-off.json")"
+expect "isolation: a blind agent's ANSI-C string does not hide a store path (git check off)" 2 \
+  "$(sguard dev-loop:implementer Bash command "echo \$'a\\'b' && cat $iso/peek-file" "$iso/guardproj-1" "$gg/scen-off.json")"
 ln -s "$gg/proj-1" "$work/p71" # a path without "git" in it, so only the command can send it to Python
 expect "git guard: a \\u escape does not hide git from the fast path" 2 \
   "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "\\u0067it push origin main"}}' "$work/p71" |
