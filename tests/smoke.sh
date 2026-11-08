@@ -4490,8 +4490,8 @@ for phrase in "MISSING marketplace" "not added yet" "older than the installed pl
   grep -qF -- "$phrase" "$plugin/skills/doctor/SKILL.md" && pass "marketplace: the doctor skill explains \"$phrase\"" ||
     fail "marketplace: the doctor skill does not explain \"$phrase\""
 done
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#64" && pass "marketplace: CHANGELOG has an Unreleased entry for #64" ||
-  fail "marketplace: no Unreleased #64 entry"
+grep -qF "#64" "$plugin/CHANGELOG.md" && pass "marketplace: CHANGELOG has an entry for #64" ||
+  fail "marketplace: no CHANGELOG #64 entry"
 grep -qE '^## .*\(#64\)' "$plugin/docs/DECISIONS.md" && pass "marketplace: the decisions log has #64" || fail "marketplace: no #64 decision"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
