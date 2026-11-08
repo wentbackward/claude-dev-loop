@@ -935,7 +935,13 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   here-document bodies are not (they are text), except the substitutions of an unquoted body. A
   here-document starts only at an unquoted `<<` outside quotes, comments and arithmetic (one scan that
   follows quotes across lines and `$( )` nesting); when in doubt the lines stay commands, and a body whose
-  end word never comes is checked as commands (a false refusal is acceptable, a hidden command is not). A Bash call whose text has no `git` once quotes and backslashes are removed is not
+  end word never comes is checked as commands (a false refusal is acceptable, a hidden command is not).
+  An ANSI-C string (`$'...'`, a backslash escapes the next character) becomes a plain single-quoted word
+  before splitting. A command that cannot be split (an unbalanced quote: bash would reject it, but a
+  splitter that reads one quote differently from bash would otherwise see the rest as one long word) is
+  refused when it names git once quotes, backslashes and line continuations are removed, in the git check
+  and in the identity and scenario checks (also for an `env -S` string); a command without git falls back
+  to whitespace words as before, since there is no git command for the check to miss. A Bash call whose text has no `git` once quotes and backslashes are removed is not
   parsed, and in a project without scenarios or identities it does not start git at all. A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
   base). A push of a name that is a tag and not a branch is a tag push. The template allows only
   `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
@@ -946,5 +952,7 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   commands, which use exact options.
 - **Alternatives:** more text rules (cannot cover prefixes and bundles); calling git's own parser
   (`git rev-parse --parseopt` needs each command's option spec and runs nothing safer); an allow rule for
-  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list).
+  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list).; refusing every
+  command that cannot be split (a non-git syntax error has nothing the git check could miss, and bash
+  rejects it anyway).
 

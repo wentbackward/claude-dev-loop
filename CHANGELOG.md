@@ -99,15 +99,16 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - Git guard (#71): the role guard hook now checks git commands in every project with `.dev-loop.json`
   (not only with scenarios or identities), on the parsed command: split on `&&`, `||`, `;`, `|`,
   newlines, `bash -c`/`-lc`, `eval`, `env -S`, backticks and `$( )`, comments and here-document bodies
-  dropped (a here-document starts only at an unquoted `<<`), de-quoted (quotes
-  and backslashes), reserved words and wrappers with their options skipped (`env -u`, `nice -n`,
+  dropped (a here-document starts only at an unquoted `<<`), de-quoted (quotes,
+  backslashes and ANSI-C `$'...'` strings), reserved words and wrappers with their options skipped (`env -u`, `nice -n`,
   `timeout`, `stdbuf`, `time`), `cd` and `git -C <dir>` followed, bundled short flags
   expanded and long-option prefixes resolved for `fetch`, `pull`, `rebase`, `diff`, `log`, `show`,
   `worktree remove` and `push`. It refuses `-c`/`--config-env` before any subcommand, `--upload-pack`,
   `--receive-pack`, `rebase --exec`/`-x`, a rebase of the base branch, `--output`,
   `worktree remove --force`, and a push that forces, deletes, tags, pushes everything (a glob refspec included) or
   whose source or destination is the base branch (`git push -u <remote> HEAD` from a checkout of the base included), with
-  the reason and "ask the owner". `"guard": false` turns it off. The guard also splits commands on
+  the reason and "ask the owner"; a command naming git that it cannot parse is refused too (also with
+  `"guard": false`, by the identity and scenario checks). `"guard": false` turns it off. The guard also splits commands on
   newlines now, and the identity and scenario checks share the new shell parsing. The template's `git rebase *` allow becomes `git rebase --continue`, `--abort` and
   `--skip`, and `permissions.sh` adds the exact `git rebase <remote>/<base>`; any other rebase asks.
 

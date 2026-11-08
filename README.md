@@ -1095,6 +1095,10 @@ with `.dev-loop.json` (not only with scenarios or identities) and off with `"gua
 only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
 best effort like the rest of the guard: its shell grammar covers the common forms, not all of bash, and it
 reads the command line, not environment variables (`GIT_CONFIG_*`) or the scripts an agent writes.
+ANSI-C strings (`$'...'`, where `\'` does not end the string) are read as bash reads them. A command that
+names `git` but that the guard cannot split (an unbalanced quote, which could hide every later command
+from it) is refused with "cannot be parsed; ask the owner", in the git check and in the identity and
+scenario checks; a command without `git` that cannot be split is not refused for that.
 Spellings without a literal `git` (a variable such as `$g push`, `$'\x67it'`, a glob such as
 `/usr/bin/gi*`) and commands fed to a shell on stdin (`sh <<E`, `bash <<< "..."`) are not checked; the
 template's allow rules all start with a literal command, so in the default mode such commands prompt. A
