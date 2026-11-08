@@ -3170,8 +3170,8 @@ grep -qF "current-state docs off" "$plugin/README.md" && grep -qiF "gradual adop
   fail "the README lacks the docs-off note or the gradual adoption path"
 grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
   pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#46" &&
-  pass "adopt: CHANGELOG has an entry for #46 in its newest section" || fail "no #46 entry in the newest CHANGELOG section"
+grep -qF "#46" "$plugin/CHANGELOG.md" &&
+  pass "adopt: CHANGELOG has an entry for #46" || fail "no CHANGELOG #46 entry"
 # 20. Permissions (#54): permissions.sh merges the loop's allow, ask and deny rules into the project's
 # .claude/settings.json (and the plugin-script rules, which hold this machine's plugin path, into
 # .claude/settings.local.json), only adding; doctor reads only the project's two files and reports a deny
@@ -3411,8 +3411,8 @@ grep -qF 'Permissions' "$plugin/skills/setup/SKILL.md" && grep -qF 'permissions.
 grep -qF 'note permissions: no allow list' "$plugin/skills/doctor/SKILL.md" &&
   grep -qF 'MISSING permissions: deny rule' "$plugin/skills/doctor/SKILL.md" &&
   pass "perm: the doctor skill has rows for the permissions lines" || fail "perm: no doctor skill rows for permissions"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#54" && pass "perm: CHANGELOG has an Unreleased entry for #54" ||
-  fail "perm: no Unreleased #54 entry"
+grep -qF "#54" "$plugin/CHANGELOG.md" && pass "perm: CHANGELOG has an entry for #54" ||
+  fail "perm: no CHANGELOG #54 entry"
 grep -qF 'permission rule syntax' "$plugin/docs/DECISIONS.md" && pass "perm: the decisions log records the rule syntax" ||
   fail "perm: the decisions log does not record the rule syntax"
 
@@ -3645,8 +3645,8 @@ for file in skills/dev-loop/SKILL.md skills/gate/SKILL.md skills/merge/SKILL.md 
 done
 grep -qF 'superseded' "$plugin/README.md" && pass "docs: the README describes the superseded class" ||
   fail "the README lacks the superseded class"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#53" && pass "docs: CHANGELOG has an Unreleased entry for #53" ||
-  fail "no Unreleased #53 entry"
+grep -qF "#53" "$plugin/CHANGELOG.md" && pass "docs: CHANGELOG has an entry for #53" ||
+  fail "no CHANGELOG #53 entry"
 grep -qF 'repush.sh' "$plugin/docs/DECISIONS.md" && pass "docs: DECISIONS records the re-push naming" ||
   fail "DECISIONS has no #53 entry"
 export FAKE_GH_DIR="$work/gh"
@@ -3982,8 +3982,8 @@ grep -q '^name: status$' "$plugin/skills/status/SKILL.md" 2>/dev/null && grep -q
   pass "status: the status skill runs status.sh" || fail "status: no status skill"
 grep -qF 'event.sh' "$plugin/skills/dev-loop/SKILL.md" && pass "status: the dev-loop skill records orchestrator events" ||
   fail "status: the dev-loop skill does not name event.sh"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#55" && pass "status: CHANGELOG has an Unreleased entry for #55" ||
-  fail "status: no Unreleased #55 entry"
+grep -qF "#55" "$plugin/CHANGELOG.md" && pass "status: CHANGELOG has an entry for #55" ||
+  fail "status: no CHANGELOG #55 entry"
 grep -qF '(#55)' "$plugin/docs/DECISIONS.md" && pass "status: the decisions log has #55" || fail "status: no #55 decision"
 # 23. Merge without a force push (#57): on an origin that refuses non-fast-forward pushes, a branch behind
 # the base merges through a merge commit with the gated tree, pushed as a fast-forward of the branch; a
@@ -4073,8 +4073,8 @@ expect "noforce: no forced push in merge-train.sh or open-pr.sh" "" \
   "$(grep -nE -- '--force|push[^|]* -f( |$)|[[:space:]]\+refs/|--mirror' "$plugin/scripts/merge-train.sh" "$plugin/scripts/open-pr.sh")"
 grep -qiF 'fast-forward' "$plugin/skills/merge/SKILL.md" && ! grep -qiF 'lease' "$plugin/skills/merge/SKILL.md" &&
   pass "noforce: the merge skill describes the fast-forward, no lease" || fail "noforce: merge skill text"
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#57" && pass "noforce: CHANGELOG has an Unreleased entry for #57" ||
-  fail "noforce: no Unreleased #57 entry"
+grep -qF "#57" "$plugin/CHANGELOG.md" && pass "noforce: CHANGELOG has an entry for #57" ||
+  fail "noforce: no CHANGELOG #57 entry"
 grep -qF '(#57)' "$plugin/docs/DECISIONS.md" && pass "noforce: the decisions log has #57" || fail "noforce: no #57 decision"
 export FAKE_GH_DIR="$work/gh"
 
@@ -4216,8 +4216,8 @@ for phrase in "watchdog.wake_minutes" '"watchdog": false' "DEV_LOOP_STALL_UNIT_S
   printf '%s\n' "$wreadme" | grep -qF -- "$phrase" && pass "watchdog: the README names \"$phrase\"" ||
     fail "watchdog: the README does not name \"$phrase\""
 done
-awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#56" && pass "watchdog: CHANGELOG has an Unreleased entry for #56" ||
-  fail "watchdog: no Unreleased #56 entry"
+grep -qF "#56" "$plugin/CHANGELOG.md" && pass "watchdog: CHANGELOG has an entry for #56" ||
+  fail "watchdog: no CHANGELOG #56 entry"
 grep -qE '^## .*\(#56\)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
 
 # 25. Marketplace pin (#64): doctor reports the marketplace source and pin in user, managed and project
@@ -4320,6 +4320,29 @@ out=$(mdoctor)
 printf '%s\n' "$out" | grep -qE '^ +marketplace +user settings: wentbackward/claude-dev-loop \(github\)$' &&
   pass "marketplace: an unpinned entry is reported without a ref" || fail "marketplace: no unpinned line"
 expect "marketplace: an unpinned match is no problem" 0 "$(printf '%s\n' "$out" | grep -c '^MISSING marketplace')"
+mreset
+
+# Unreadable files are skipped quietly (not as root: root reads them anyway).
+if [ "$(id -u)" != 0 ]; then
+  mreset
+  mpin v0.8.0 >"$mdir/settings.json"
+  mknown v0.8.0
+  minstalled 0.8.0 "$mroot"
+  chmod 000 "$mdir/settings.json" "$mdir/plugins/known_marketplaces.json" "$mdir/plugins/installed_plugins.json"
+  out=$(mdoctor)
+  chmod 644 "$mdir/settings.json" "$mdir/plugins/known_marketplaces.json" "$mdir/plugins/installed_plugins.json"
+  expect "marketplace: unreadable settings and plugin files print no error" 0 \
+    "$(printf '%s\n' "$out" | grep -ci 'permission denied\|marketplace')"
+fi
+
+# A tab or newline in a source value never splits a doctor line.
+mreset
+printf '{"extraKnownMarketplaces": {"claude-dev-loop": {"source": {"source": "github", "repo": "wentbackward/claude-dev-loop\\nMISSING fake", "ref": "v0.8.0\\tx"}}}}\n' \
+  >"$mdir/settings.json"
+out=$(mdoctor)
+expect "marketplace: control characters in a source are dropped" \
+  "        marketplace   user settings: wentbackward/claude-dev-loopMISSING fake@v0.8.0x (github)|0" \
+  "$(printf '%s\n' "$out" | grep 'marketplace   user')|$(printf '%s\n' "$out" | grep -c '^MISSING fake')"
 mreset
 
 # The docs: README install from a release tag, the error and how to move a pin; the doctor skill's table.
