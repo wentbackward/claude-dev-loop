@@ -9,9 +9,9 @@
 # notes file is copied to the new name, with a line recording what it supersedes and at which tips (the
 # local head and the remote branch's head): "Supersedes `<branch>` at <sha> [<sha>] (...)", placed before
 # the notes' closing "Generated with" footer when they end with one. cleanup.sh deletes the old branch
-# only while its tips are still the recorded ones. The old branch is never
-# deleted or moved, locally or on the remote: cleanup.sh removes it once a later version has merged, and
-# open-pr.sh closes its PR when the new one opens. Prints the new branch name as its last line.
+# only while its tips are still the recorded ones. The old branch is never deleted or moved, locally or on
+# the remote: cleanup.sh removes it once a later version has merged, and open-pr.sh closes its PR when the
+# new one opens. Prints the new branch name as its last line.
 #
 # Exit: 0 pushed, 2 usage/config (no such branch, the base branch, a dirty worktree), 3 the push failed.
 set -u
