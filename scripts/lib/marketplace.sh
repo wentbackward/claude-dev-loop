@@ -42,16 +42,22 @@ dl_mp_managed_settings() {
 # the dotted PATH of the JSON FILE; nothing when the file or the source is missing.
 dl_mp_source() {
   local json kind loc ref
-  [ -f "$1" ] || return 0
+  [ -f "$1" ] && [ -r "$1" ] || return 0
   json=$(json_get "$2" <"$1" 2>/dev/null)
   [ -n "$json" ] || return 0
-  kind=$(printf '%s' "$json" | json_get source)
-  loc=$(printf '%s' "$json" | json_get repo)
-  [ -n "$loc" ] || loc=$(printf '%s' "$json" | json_get url)
-  [ -n "$loc" ] || loc=$(printf '%s' "$json" | json_get path)
-  ref=$(printf '%s' "$json" | json_get ref)
+  kind=$(dl_mp_field "$json" source)
+  loc=$(dl_mp_field "$json" repo)
+  [ -n "$loc" ] || loc=$(dl_mp_field "$json" url)
+  [ -n "$loc" ] || loc=$(dl_mp_field "$json" path)
+  ref=$(dl_mp_field "$json" ref)
   [ -n "$kind$loc" ] && printf '%s\t%s\t%s\n' "$kind" "$loc" "$ref"
   return 0
+}
+
+# dl_mp_field JSON KEY: the value of KEY in the JSON object, without tabs, carriage returns or newlines (so
+# a value can never split a doctor line).
+dl_mp_field() {
+  printf '%s' "$1" | json_get "$2" | tr -d '\t\r\n'
 }
 
 # dl_mp_add_arg KIND LOCATOR REF: the argument of `claude plugin marketplace add` for that source
@@ -71,14 +77,14 @@ dl_mp_add_arg() {
 dl_mp_installed_version() {
   local file id i scope project version best="" real
   file="$(dl_mp_claude_dir)/plugins/installed_plugins.json"
-  [ -f "$file" ] || return 0
+  [ -f "$file" ] && [ -r "$file" ] || return 0
   id=$(dl_mp_plugin_id)
   real=$(cd "$1" 2>/dev/null && pwd -P)
   for ((i = 0; ; i++)); do
     scope=$(json_get "plugins.$id.$i.scope" <"$file")
     [ -n "$scope" ] || break
     project=$(json_get "plugins.$id.$i.projectPath" <"$file")
-    version=$(json_get "plugins.$id.$i.version" <"$file")
+    version=$(json_get "plugins.$id.$i.version" <"$file" | tr -d '\t\r\n')
     [ "$scope" = user ] || [ "$project" = "$1" ] || [ "$project" = "$real" ] || continue
     if [ -z "$best" ] || dl_version_older "$best" "$version"; then best=$version; fi
   done

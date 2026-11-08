@@ -704,3 +704,8 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** `gh release view` for the latest tag (slow or failing offline); MISSING for an entry
   not added yet (a fresh machine with copied settings is not broken); comparing the repo case-insensitively
   (Claude Code compares the entry as written).
+- **Decision (release step):** the README's install tag names the current release, and the smoke tests
+  hold it equal to the version in `.claude-plugin/plugin.json`, so a release bumps the README's tag with
+  the version in the release commit. This is a step of this repository's release only: the `dev-loop`
+  skill's "Before a release" is generic for every project, so it does not name this README. Values doctor prints from the settings are
+  stripped of tabs and newlines, and unreadable files are skipped without an error.
