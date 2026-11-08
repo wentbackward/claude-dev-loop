@@ -10,6 +10,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   file) are listed once per session as a note and do not block. Modified tracked files still block, a hook
   input without a session id blocks on every untracked file as before, and
   `stop_gate.require_clean_tree: false` still turns the tree check off.
+- Script help (#75): `-h` / `--help` as the first argument of any script under `scripts/` prints its
+  usage (the `# Usage:` block of its header) and exits 0, touching nothing; `gate-train.sh --help` no
+  longer takes `--help` as a branch. `gate-train.sh`, `merge-train.sh`, `repush.sh` and `open-pr.sh`
+  refuse any other argument starting with `-` (exit 2, with the usage) instead of looking for a branch
+  of that name.
 
 ## 0.8.2 — 2026-11-08
 
