@@ -174,6 +174,6 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   gate that new name. The old branch is left alone until `cleanup.sh` removes it as superseded.
 - Exit 2: configuration problem; the message names it (often: no `checks` in `.dev-loop.json`).
 
-The gate runs in its own worktree (`gate_worktree`, default `../<repo>-gate`), detached, so it never
+The gate runs in its own worktree (`gate_worktree`, default `<worktrees_dir>/gate` or `../<repo>-gate`), detached, so it never
 touches the main checkout or the implementers' worktrees. Branches are rebased only locally as
 `train-<branch>`; nothing is pushed by the gate.

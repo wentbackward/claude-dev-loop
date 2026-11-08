@@ -274,6 +274,54 @@ doctor_permissions() {
   return 0
 }
 
+# doctor_worktrees: print worktrees_dir; outside the working directory and not in the project's
+# permissions.additionalDirectories, auto mode asks on every edit there: MISSING for the configured directory
+# (or one that holds the project), and for loop worktrees outside it without the key; a note for loop
+# worktrees of the old sibling layout once the key is set (they stay where they are). Silent otherwise.
+doctor_worktrees() {
+  local wdir="" files count=0 path
+  files=("$DL_ROOT/.claude/settings.json" "$DL_ROOT/.claude/settings.local.json")
+  if wdir=$(dl_worktrees_dir); then
+    echo "        worktrees     $wdir"
+    if dl_perm_holds_root "$wdir"; then
+      missing "worktrees_dir: $wdir holds the project: listing it in additionalDirectories would open every sibling project (use a dedicated directory such as ../$DL_REPO-worktrees)"
+    elif ! dl_path_under "$wdir" "$DL_ROOT" && ! dl_perm_dir_covered "$wdir" "${files[@]}"; then
+      missing "worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories: in auto mode every edit there asks (permissions.sh --apply)"
+    fi
+  fi
+  while IFS= read -r path; do
+    dl_path_under "$path" "$DL_ROOT" && continue
+    [ -n "$wdir" ] && dl_path_under "$path" "$wdir" && continue
+    dl_perm_dir_covered "$path" "${files[@]}" && continue
+    count=$((count + 1))
+  done < <(doctor_loop_worktrees)
+  [ "$count" -gt 0 ] || return 0
+  if [ -n "$wdir" ]; then
+    optional "worktrees: $count loop worktrees of the old layout outside the working directory stay where they are; in auto mode edits there ask until they merge (new ones go to $wdir)"
+  else
+    missing "worktrees: $count loop worktrees outside the working directory, not in permissions.additionalDirectories: in auto mode every edit there asks (set \"worktrees_dir\": \"../$DL_REPO-worktrees\" in .dev-loop.json, then permissions.sh --apply; existing worktrees stay where they are)"
+  fi
+}
+
+# doctor_notes_dir: the implementers write their notes file with the Write tool, so a notes directory outside
+# the working directory and not in the project's permissions.additionalDirectories asks in auto mode: MISSING.
+doctor_notes_dir() {
+  local notes
+  notes=$(dl_normalize "$(dl_notes_dir)")
+  dl_path_under "$notes" "$DL_ROOT" && return 0
+  dl_perm_dir_covered "$notes" "$DL_ROOT/.claude/settings.json" "$DL_ROOT/.claude/settings.local.json" && return 0
+  missing "notes: $notes is outside the working directory and not in additionalDirectories: in auto mode every notes file an implementer writes asks (permissions.sh --apply)"
+}
+
+# doctor_loop_worktrees: the paths of the worktrees (not the main one) that have a loop branch checked out.
+doctor_loop_worktrees() {
+  local path branch
+  git -C "$DL_ROOT" worktree list --porcelain | awk -v root="$DL_ROOT" '
+    /^worktree / { path = substr($0, 10) }
+    /^branch refs\/heads\// && path != root { print path "\t" substr($0, 19) }' |
+    while IFS=$'\t' read -r path branch; do dl_loop_branch "$branch" && printf '%s\n' "$path"; done
+}
+
 # shellcheck source=lib/marketplace.sh
 . "$scripts_dir/lib/marketplace.sh"
 
@@ -410,6 +458,8 @@ else
       missing ".claude/agents/$agent.md shadows the plugin's $agent agent (remove it, keep its project rules in CLAUDE.md)"
   done
   doctor_permissions
+  doctor_worktrees
+  doctor_notes_dir
   project_settings="$DL_ROOT/.claude/settings.json"
   if [ -f "$project_settings" ]; then
     for event in Stop PostToolUse; do

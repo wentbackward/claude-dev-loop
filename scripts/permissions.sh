@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Merge the permission rules the loop needs into the project's Claude Code settings, only adding: the template's
 # and the project's rules into .claude/settings.json, the plugin-script rules (this machine's plugin path) into
-# .claude/settings.local.json. A dry run by default; --apply writes.
+# .claude/settings.local.json, with the absolute notes directory, worktrees_dir and gate directory in its
+# permissions.additionalDirectories (so auto mode edits there without a prompt). A dry run by default; --apply writes.
 #
 # Usage: permissions.sh [--apply]
 set -u
@@ -12,18 +13,25 @@ dl_help "$0" "${1:-}"
 # shellcheck source=lib/permissions.sh
 . "$scripts_dir/lib/permissions.sh"
 
-# perm_missing FILE KIND: the wanted rules of KIND that FILE lacks, "<list><TAB><rule>" lines, once each.
+# perm_missing FILE KIND: the wanted rules of KIND that FILE lacks, "<list><TAB><rule>" lines, once each; an
+# additionalDirectories entry is there when either project settings file lists it or a directory holding it.
 perm_missing() {
   local list rule
   while IFS=$'\t' read -r list rule; do
-    dl_perm_rules "$1" "$list" | grep -qxF -- "$rule" || printf '%s\t%s\n' "$list" "$rule"
+    if [ "$list" = additionalDirectories ]; then
+      dl_perm_dir_covered "$rule" "$DL_ROOT/.claude/settings.json" "$DL_ROOT/.claude/settings.local.json" ||
+        printf '%s\t%s\n' "$list" "$rule"
+    else
+      dl_perm_rules "$1" "$list" | grep -qxF -- "$rule" || printf '%s\t%s\n' "$list" "$rule"
+    fi
   done < <(dl_perm_wanted "$root" "$2") | awk '!seen[$0]++'
 }
 
-# perm_add_json MISSING: the missing rules as {"allow": [...], "ask": [...], "deny": [...]} (lists with rules only).
+# perm_add_json MISSING: the missing rules as {"allow": [...], "ask": [...], "deny": [...],
+# "additionalDirectories": [...]} (lists with entries only).
 perm_add_json() {
   local list out=""
-  for list in allow ask deny; do
+  for list in allow ask deny additionalDirectories; do
     [ -n "$(printf '%s\n' "$1" | awk -F'\t' -v l="$list" '$1 == l')" ] || continue
     out="${out:+$out,}\"$list\":$(printf '%s\n' "$1" | awk -F'\t' -v l="$list" '$1 == l { print $2 }' | dl_json_list)"
   done
@@ -60,6 +68,8 @@ esac
 dl_load_config
 [ -n "$DL_ROOT" ] || dl_die "not inside a git repository"
 root=$(cd "$scripts_dir/.." && pwd)
+wdir=$(dl_worktrees_dir) && dl_perm_holds_root "$wdir" &&
+  dl_warn "worktrees_dir $wdir holds the project: not added to additionalDirectories (it would open every sibling project; use a dedicated directory such as ../$DL_REPO-worktrees)"
 total=0
 status=0
 for kind in shared local; do

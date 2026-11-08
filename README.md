@@ -775,7 +775,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `parallel` | `false` | run the checks at the same time, each in its own process group (heavy ones in their own slot); results print in config order |
 | `fail_fast` | `false` | after the first failure, skip the checks not started and stop the running ones (their whole process group); they print as `<name> skipped` / `<name> stopped` |
 | `gate_setup` | none | command run once in the gate worktree before the checks (e.g. `npm ci`) |
-| `gate_worktree` | `../<repo>-gate` | the gate's own worktree (created on first use) |
+| `gate_worktree` | `../<repo>-gate`, or `<worktrees_dir>/gate` | the gate's own worktree (created on first use) |
+| `worktrees_dir` | none (siblings `../<repo>-<n>`) | one directory for the loop's worktrees: implementer worktrees at `<dir>/<n>` (`paths.sh worktree <n>`), the gate at `<dir>/gate` unless `gate_worktree` is set; `permissions.sh --apply` lists it in `permissions.additionalDirectories`, so auto mode edits there without a prompt (setup writes `../<repo>-worktrees`; existing sibling worktrees stay where they are); the path is normalized lexically (`..` and trailing slashes removed, symlinks not resolved) |
 | `notes_dir` | `~/.dev-loop/<repo>/notes` | PR notes files `pr-<branch with / as _>.md`, outside git, shared by all worktrees |
 | `logs_dir` | `~/.dev-loop/<repo>/logs` | gate logs |
 | `heavy.slots` | `2` | machine-wide slots for heavy commands |
@@ -976,7 +977,12 @@ the rules it needs. `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` lists the mis
   (`~/.claude/plugins/cache/<marketplace>/dev-loop/*/scripts/gate-train.sh *`, written as an absolute
   path), so the rules outlive plugin updates; `cleanup.sh --apply` asks. `heavy.sh` and `as-role.sh` run
   the command they are given, so they are allowed only for the loop's own uses: `heavy.sh <command>` for
-  each project command, and `as-role.sh implementer git push -u <remote> HEAD`.
+  each project command, and `as-role.sh implementer git push -u <remote> HEAD`. Its
+  `permissions.additionalDirectories` gets the absolute directories the loop writes with the Write and
+  Edit tools outside the project: the notes directory (implementers write their notes file there) and,
+  with `worktrees_dir`, that directory and a gate worktree outside it. Auto mode and acceptEdits approve
+  edits only in the working directory and these directories; the project's parent directory (or any
+  directory that holds the project) is never added, since it would open every sibling project.
 
 In the **default** mode the allow list is what keeps background agents from stalling on a prompt. In
 **auto** mode the rules decide before the classifier does. In **bypass** mode allow rules have no effect,
@@ -989,7 +995,9 @@ Claude Code merges the rules of every settings file, and a deny anywhere wins. `
 project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`, never the user's
 own files): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
 lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
-nothing. Without `.claude/settings.json` it prints one note.
+nothing. Without `.claude/settings.json` it prints one note. A notes directory, a `worktrees_dir` or loop
+worktrees outside the project and not in `additionalDirectories` are `MISSING` (in auto mode every edit
+there asks); sibling worktrees of the old layout are a note once `worktrees_dir` is set.
 
 A wildcard cannot exclude arguments: `git push -u origin feat/*` would also match
 `git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask

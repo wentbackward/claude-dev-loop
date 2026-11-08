@@ -172,10 +172,13 @@ the loop's own, leave it and tell the user.
 
 ```bash
 git -C <repo> fetch -q <remote>
-git -C <repo> worktree add -b <type>/<n>-<slug> ../<repo-name>-<n> <remote>/<base>
+${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh worktree <n>                 # the worktree path for ticket <n>
+git -C <repo> worktree add -b <type>/<n>-<slug> <worktree path> <remote>/<base>
 #   stacked on an unmerged dependency: use <remote>/<dependency-branch> as the start point instead
 ${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes <type>/<n>-<slug>      # the notes file path for the prompt
 ```
+
+`paths.sh worktree <n>` is `<worktrees_dir>/<n>` with `worktrees_dir`, else the sibling `../<repo>-<n>`.
 
 Branch types: `feat/`, `fix/`, `chore/`, `docs/`. Then launch the `implementer` agent (one per ticket, with
 `model` from `models.implementer`, see step 0) with this prompt, filled in completely:

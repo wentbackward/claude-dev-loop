@@ -63,6 +63,10 @@ running system against holdout scenarios". Skip any question whose answer you al
      (off) until the user confirms the component map.
    - `"factory"`: the mode the user chose; leave it out for `collaborative`. For `dark`, run step 3d
      before the first gate.
+   - `"worktrees_dir": "../<repo>-worktrees"` (with the repository's name for `<repo>`) for a new project:
+     the implementer worktrees go to `<dir>/<n>` and the gate to `<dir>/gate`, one directory step 4 lists
+     in `permissions.additionalDirectories`, so auto mode edits there without a prompt. For an existing
+     project, offer it; its sibling worktrees (`../<repo>-<n>`) stay where they are and finish there.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
@@ -76,7 +80,8 @@ running system against holdout scenarios". Skip any question whose answer you al
    user the list, then `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply`. It only adds rules: the
    allow, ask and deny rules of `templates/settings.json`, the loop's one push (`git push -u <remote> HEAD`), one exact rule per
    `fast_check` and `checks` command into `.claude/settings.json`; the plugin's scripts at this machine's
-   plugin path into `.claude/settings.local.json` (added to `.gitignore`). Run it again whenever
+   plugin path into `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes
+   directory and `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again whenever
    `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission modes"
    says what each rule is for. The plugin's hooks come with the plugin; do not copy them into the project.
 5. **Makefile targets**, only the missing ones, as thin wrappers around the toolchain: `setup`, `fmt`,

@@ -220,8 +220,55 @@ dl_logs_dir() {
   if [ -n "$configured" ]; then dl_resolve "$configured"; else printf '%s\n' "$DL_STATE/logs"; fi
 }
 
+# dl_gate_dir: the gate worktree: gate_worktree, else <worktrees_dir>/gate, else ../<repo>-gate.
 dl_gate_dir() {
-  dl_resolve "$(cfg gate_worktree "../$DL_REPO-gate")"
+  local wdir
+  if [ -z "$(cfg gate_worktree "")" ] && wdir=$(dl_worktrees_dir); then
+    printf '%s/gate\n' "$wdir"
+  else
+    dl_resolve "$(cfg gate_worktree "../$DL_REPO-gate")"
+  fi
+}
+
+# dl_normalize PATH: the absolute PATH without ".", ".." and repeated or trailing slashes (lexically).
+dl_normalize() {
+  printf '%s\n' "$1" | awk '{
+    n = split($0, part, "/"); k = 0
+    for (i = 1; i <= n; i++) {
+      if (part[i] == "" || part[i] == ".") continue
+      if (part[i] == "..") { if (k > 0) k--; continue }
+      out[++k] = part[i]
+    }
+    s = ""
+    for (i = 1; i <= k; i++) s = s "/" out[i]
+    print (s == "" ? "/" : s)
+  }'
+}
+
+# dl_path_under PATH DIR: true when the absolute PATH is DIR or inside it (both normalized).
+dl_path_under() {
+  local path dir
+  path=$(dl_normalize "$1")
+  dir=$(dl_normalize "$2")
+  [ "$dir" = / ] || [ "$path" = "$dir" ] || [ "${path#"$dir"/}" != "$path" ]
+}
+
+# dl_worktrees_dir: the absolute, normalized worktrees_dir; fails (prints nothing) without the key.
+dl_worktrees_dir() {
+  local configured
+  configured=$(cfg worktrees_dir "")
+  [ -n "$configured" ] || return 1
+  dl_normalize "$(dl_resolve "$configured")"
+}
+
+# dl_worktree_dir N: the implementer worktree of ticket N: <worktrees_dir>/N, else the sibling ../<repo>-N.
+dl_worktree_dir() {
+  local wdir
+  if wdir=$(dl_worktrees_dir); then
+    printf '%s/%s\n' "$wdir" "$1"
+  else
+    printf '%s/%s-%s\n' "$(dirname "${DL_ROOT:-$PWD}")" "$DL_REPO" "$1"
+  fi
 }
 
 # dl_note_file BRANCH: the PR notes file of a branch (slashes become underscores).
