@@ -1066,8 +1066,10 @@ short flags (`-fx <cmd>` is `-f -x <cmd>`), quotes and backslashes (`'-f'`, `\-f
 rule cannot see through them, and `git push -u <remote> HEAD` pushes the base branch when run from a
 checkout of it. So the role guard hook (PreToolUse) parses every Bash command in a loop project that
 names git: it splits it into simple commands (`&&`, `||`, `;`, `|`, newlines, `bash -c '...'` and
-`bash -lc`, `eval`, backticks and `$( )`), drops here-document bodies (keeping the command substitutions
-of an unquoted one), de-quotes each one, skips variable assignments, reserved words (`if`, `then`, `!`,
+`bash -lc`, `eval`, `env -S '...'`, backticks and `$( )`), drops comments and here-document bodies (a
+here-document starts only at an unquoted `<<` outside comments and arithmetic; the command substitutions
+of an unquoted body are kept, and a body whose end word never comes is checked as commands), de-quotes
+each one, skips variable assignments, reserved words (`if`, `then`, `!`,
 `{`, ...) and wrappers with their options (`env -u NAME`, `nice -n 5`, `timeout -s KILL 5`, `stdbuf -o0`,
 `time`, `nohup`, `xargs`, `sudo`), follows `cd` and `git -C <dir>`, looks inside `as-role.sh` and
 `heavy.sh`, expands bundled short flags and resolves long-option prefixes against the options of
@@ -1092,9 +1094,12 @@ The base branch is `base_branch` from `.dev-loop.json` (default `main`). The che
 with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`; it refuses
 only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
 best effort like the rest of the guard: its shell grammar covers the common forms, not all of bash, and it
-reads the command line, not environment variables (`GIT_CONFIG_*`), shell variables or the scripts an
-agent writes. A Bash call whose text has no `git` (once quotes and backslashes are removed) starts no git
-process. The ask and deny rules stay as a
+reads the command line, not environment variables (`GIT_CONFIG_*`) or the scripts an agent writes.
+Spellings without a literal `git` (a variable such as `$g push`, `$'\x67it'`, a glob such as
+`/usr/bin/gi*`) and commands fed to a shell on stdin (`sh <<E`, `bash <<< "..."`) are not checked; the
+template's allow rules all start with a literal command, so in the default mode such commands prompt. A
+Bash call whose text has no `git` (once line continuations, quotes and backslashes are removed, and with
+no `\u` escape in the event) starts no git process. The ask and deny rules stay as a
 second layer.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a

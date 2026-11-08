@@ -98,7 +98,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   their throwaway projects.
 - Git guard (#71): the role guard hook now checks git commands in every project with `.dev-loop.json`
   (not only with scenarios or identities), on the parsed command: split on `&&`, `||`, `;`, `|`,
-  newlines, `bash -c`/`-lc`, `eval`, backticks and `$( )`, here-document bodies dropped, de-quoted (quotes
+  newlines, `bash -c`/`-lc`, `eval`, `env -S`, backticks and `$( )`, comments and here-document bodies
+  dropped (a here-document starts only at an unquoted `<<`), de-quoted (quotes
   and backslashes), reserved words and wrappers with their options skipped (`env -u`, `nice -n`,
   `timeout`, `stdbuf`, `time`), `cd` and `git -C <dir>` followed, bundled short flags
   expanded and long-option prefixes resolved for `fetch`, `pull`, `rebase`, `diff`, `log`, `show`,

@@ -931,9 +931,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   not only before `fetch` and `pull` (config such as `alias.<x>=!<cmd>`, `core.pager` or
   `core.sshCommand` runs a command). The shell grammar is best effort: wrappers are skipped with their own
   options and values, reserved words at the head of a simple command are dropped, `bash -lc` and `eval`
-  strings and command substitutions (backticks, `$( )`) are checked, and here-document bodies are not
-  (they are text), except the substitutions of an unquoted one; a body whose end word never comes is
-  checked as commands. A Bash call whose text has no `git` once quotes and backslashes are removed is not
+  and `env -S` strings and command substitutions (backticks, `$( )`) are checked, and comments and
+  here-document bodies are not (they are text), except the substitutions of an unquoted body. A
+  here-document starts only at an unquoted `<<` outside quotes, comments and arithmetic (one scan that
+  follows quotes across lines and `$( )` nesting); when in doubt the lines stay commands, and a body whose
+  end word never comes is checked as commands (a false refusal is acceptable, a hidden command is not). A Bash call whose text has no `git` once quotes and backslashes are removed is not
   parsed, and in a project without scenarios or identities it does not start git at all. A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
   base). A push of a name that is a tag and not a branch is a tag push. The template allows only
   `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
