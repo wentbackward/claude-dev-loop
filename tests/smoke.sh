@@ -7,6 +7,8 @@ plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
 export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
+# doctor reads Claude Code's settings: fake ones under $work, never the real ~/.claude or managed settings.
+export DEV_LOOP_CLAUDE_DIR="$work/claude" DEV_LOOP_MANAGED_SETTINGS="$work/managed-settings.json"
 git config --global user.name tester
 git config --global user.email tester@example.invalid
 git config --global init.defaultBranch main
@@ -4217,6 +4219,126 @@ done
 awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#56" && pass "watchdog: CHANGELOG has an Unreleased entry for #56" ||
   fail "watchdog: no Unreleased #56 entry"
 grep -qE '^## .*\(#56\)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
+
+# 25. Marketplace pin (#64): doctor reports the marketplace source and pin in user, managed and project
+# settings (fake files under $work), notes a pin older than the installed plugin, and reports MISSING with
+# the exact add command when a settings entry does not match the configured marketplace. Nothing without entries.
+cd "$work/project" || exit 1
+mroot=$(git rev-parse --show-toplevel)
+mkdir -p .claude
+mdir="$DEV_LOOP_CLAUDE_DIR"
+mpin() { # mpin REF: an extraKnownMarketplaces entry for the plugin, pinned to REF (none: no ref)
+  if [ "$1" = none ]; then
+    printf '{"extraKnownMarketplaces": {"claude-dev-loop": {"source": {"source": "github", "repo": "wentbackward/claude-dev-loop"}}}, "env": {"SECRET_LIKE": "do-not-print-me"}}\n'
+  else
+    printf '{"extraKnownMarketplaces": {"claude-dev-loop": {"source": {"source": "github", "repo": "wentbackward/claude-dev-loop", "ref": "%s"}}}, "env": {"SECRET_LIKE": "do-not-print-me"}}\n' "$1"
+  fi
+}
+mknown() { # mknown REF: the marketplace as Claude Code configured it (none: no ref)
+  mkdir -p "$mdir/plugins"
+  if [ "$1" = none ]; then
+    printf '{"claude-dev-loop": {"source": {"source": "github", "repo": "wentbackward/claude-dev-loop"}, "installLocation": "/x"}}\n'
+  else
+    printf '{"claude-dev-loop": {"source": {"source": "github", "repo": "wentbackward/claude-dev-loop", "ref": "%s"}, "installLocation": "/x"}}\n' "$1"
+  fi >"$mdir/plugins/known_marketplaces.json"
+}
+minstalled() { # minstalled VERSION PROJECT: the plugin installed at project scope for PROJECT
+  mkdir -p "$mdir/plugins"
+  printf '{"version": 2, "plugins": {"dev-loop@claude-dev-loop": [{"scope": "project", "projectPath": "%s", "version": "%s"}]}}\n' \
+    "$2" "$1" >"$mdir/plugins/installed_plugins.json"
+}
+mreset() { rm -rf "$mdir" "$DEV_LOOP_MANAGED_SETTINGS" .claude/settings.local.json; mkdir -p "$mdir"; }
+mdoctor() { "$plugin/scripts/doctor.sh" 2>&1; }
+
+mreset
+out=$(mdoctor)
+expect "marketplace: without any entries doctor prints no marketplace line" 0 "$(printf '%s\n' "$out" | grep -ci marketplace)"
+
+mreset
+mpin v0.8.0 >"$mdir/settings.json"
+mknown v0.8.0
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qE '^ +marketplace +user settings: wentbackward/claude-dev-loop@v0.8.0 \(github\)$' &&
+  pass "marketplace: doctor reports the user settings source and pin" || fail "marketplace: no user settings line in: $out"
+printf '%s\n' "$out" | grep -qE '^ +marketplace +configured: wentbackward/claude-dev-loop@v0.8.0 \(github\)$' &&
+  pass "marketplace: doctor reports the configured marketplace" || fail "marketplace: no configured line"
+expect "marketplace: a matching pin is no problem" 0 "$(printf '%s\n' "$out" | grep -c '^MISSING marketplace')"
+expect "marketplace: doctor prints no other settings content" 0 "$(printf '%s\n' "$out" | grep -c 'do-not-print-me\|SECRET_LIKE')"
+
+mknown none
+out=$(mdoctor)
+expect "marketplace: a settings pin that does not match the configured marketplace is MISSING with the add command" \
+  "MISSING marketplace claude-dev-loop: the user settings entry (wentbackward/claude-dev-loop@v0.8.0) does not match the configured marketplace (wentbackward/claude-dev-loop), so marketplace add fails: claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.0" \
+  "$(printf '%s\n' "$out" | grep '^MISSING marketplace')"
+printf '%s\n' "$out" | tail -n 1 | grep -q 'problem' && pass "marketplace: a mismatch counts as a problem" ||
+  fail "marketplace: a mismatch does not count"
+
+mreset
+mknown v0.8.0
+mpin v0.7.0 >"$DEV_LOOP_MANAGED_SETTINGS"
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qE '^ +marketplace +managed settings: wentbackward/claude-dev-loop@v0.7.0 \(github\)$' &&
+  pass "marketplace: doctor reports the managed settings pin" || fail "marketplace: no managed settings line"
+printf '%s\n' "$out" | grep -qF 'MISSING marketplace claude-dev-loop: the managed settings entry (wentbackward/claude-dev-loop@v0.7.0)' &&
+  pass "marketplace: a managed settings mismatch is MISSING" || fail "marketplace: no managed mismatch"
+
+mreset
+mknown v0.8.0
+mpin v0.8.0 >.claude/settings.local.json
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qE '^ +marketplace +project settings \(\.claude/settings\.local\.json\): wentbackward/claude-dev-loop@v0\.8\.0 \(github\)$' &&
+  pass "marketplace: doctor reports the project settings pin" || fail "marketplace: no project settings line in: $out"
+rm -f .claude/settings.local.json
+
+mreset
+mpin v0.8.0 >"$mdir/settings.json"
+out=$(mdoctor)
+expect "marketplace: a settings entry not added yet is a note with the add command" \
+  "note    marketplace claude-dev-loop is in the user settings but not added yet: claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.0" \
+  "$(printf '%s\n' "$out" | grep '^note    marketplace')"
+expect "marketplace: not added yet is no problem" 0 "$(printf '%s\n' "$out" | grep -c '^MISSING marketplace')"
+
+mreset
+mpin v0.7.0 >"$mdir/settings.json"
+mknown v0.7.0
+minstalled 0.8.0 "$mroot"
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qE '^ +marketplace +installed: dev-loop 0\.8\.0$' &&
+  pass "marketplace: doctor reports the installed plugin version" || fail "marketplace: no installed line in: $out"
+expect "marketplace: a pin older than the installed plugin is a note" \
+  "note    marketplace claude-dev-loop is pinned to v0.7.0, older than the installed plugin 0.8.0 (move the ref to v0.8.0, then claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.0)" \
+  "$(printf '%s\n' "$out" | grep '^note    marketplace' | sort -u)"
+minstalled 0.7.0 "$mroot"
+expect "marketplace: a pin equal to the installed plugin is no note" 0 "$(mdoctor | grep -c '^note    marketplace')"
+minstalled 0.9.0 "/elsewhere/other-project"
+expect "marketplace: an install for another project is not this project's version" 0 "$(mdoctor | grep -c 'installed: dev-loop')"
+
+mreset
+mpin none >"$mdir/settings.json"
+mknown none
+out=$(mdoctor)
+printf '%s\n' "$out" | grep -qE '^ +marketplace +user settings: wentbackward/claude-dev-loop \(github\)$' &&
+  pass "marketplace: an unpinned entry is reported without a ref" || fail "marketplace: no unpinned line"
+expect "marketplace: an unpinned match is no problem" 0 "$(printf '%s\n' "$out" | grep -c '^MISSING marketplace')"
+mreset
+
+# The docs: README install from a release tag, the error and how to move a pin; the doctor skill's table.
+mversion=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$plugin/.claude-plugin/plugin.json")
+minstall=$(awk '/^## / {on = ($0 == "## Install")} on' "$plugin/README.md")
+for phrase in "/plugin marketplace add wentbackward/claude-dev-loop@v$mversion" "doesn't match its extraKnownMarketplaces entry" \
+  '"ref"' "claude plugin update dev-loop@claude-dev-loop" "doctor"; do
+  printf '%s\n' "$minstall" | grep -qF -- "$phrase" && pass "marketplace: the README install section names \"$phrase\"" ||
+    fail "marketplace: the README install section does not name \"$phrase\""
+done
+printf '%s\n' "$minstall" | grep -qxF '/plugin marketplace add wentbackward/claude-dev-loop' &&
+  fail "marketplace: the README still installs without a tag" || pass "marketplace: the README installs from a tag"
+for phrase in "MISSING marketplace" "not added yet" "older than the installed plugin"; do
+  grep -qF -- "$phrase" "$plugin/skills/doctor/SKILL.md" && pass "marketplace: the doctor skill explains \"$phrase\"" ||
+    fail "marketplace: the doctor skill does not explain \"$phrase\""
+done
+awk '/^## / {n++} n == 1' "$plugin/CHANGELOG.md" | grep -qF "#64" && pass "marketplace: CHANGELOG has an Unreleased entry for #64" ||
+  fail "marketplace: no Unreleased #64 entry"
+grep -qE '^## .*\(#64\)' "$plugin/docs/DECISIONS.md" && pass "marketplace: the decisions log has #64" || fail "marketplace: no #64 decision"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
