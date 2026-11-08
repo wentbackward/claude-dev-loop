@@ -2474,6 +2474,35 @@ gpassed "$gg/proj-1" "git fetch -q origin" "git fetch origin" "git pull --ff-onl
   "$plugin/scripts/as-role.sh implementer git push -u origin HEAD" "cd $gg/proj-1 && git push -u origin HEAD" \
   "git -C $gg/proj-1 log --oneline -1"
 grefused "$gg/proj" "git push -u origin HEAD" "git push" "git push origin" "git rebase origin/main"
+# Review round 1: wrappers with their options, reserved words, shells with bundled -c, eval, command
+# substitutions, here-documents, -c before any subcommand, glob refspecs.
+grefused "$gg/proj-1" "timeout 5 git fetch --upl=x origin" "nice git fetch --upl=x origin" \
+  "nice -n 5 git rebase -xcmd origin/main" "stdbuf -o0 git log --output=/tmp/x" "stdbuf -o 0 git log --output=/tmp/x" \
+  "timeout 5 git worktree remove -f wt" "timeout -s KILL 5 git push origin main" "env -u A git push origin main" \
+  "time -p git push origin main" "git -c alias.x='!id' x" "git --config-env=alias.x=X status" \
+  "{ git push origin main; }" "if git push origin main; then :; fi" "! git push origin main" \
+  "while git push origin HEAD:main; do :; done" "bash -lc 'git push origin main'" "sh -ec 'git push origin main'" \
+  "eval git push origin main" "echo \`git push origin main\`" "echo \"\$(git push origin main)\"" \
+  "echo \$(git push origin main)" "git push origin 'refs/heads/*:refs/heads/*'" "git push origin 'feat/*'" \
+  "cat <<EOF
+\$(git push origin main)
+EOF" "cat <<'X'
+never ends
+git push origin main"
+gpassed "$gg/proj-1" "git commit -m \"\$(cat <<'EOF'
+fix: x
+
+git push origin main is refused
+EOF
+)\"" "timeout 60 git fetch -q origin" "echo 'use \`git push origin main\`'" "nice -n 5 git log --oneline -1"
+grefused "$gg/proj" "git rebase origin/main @" "git rebase origin/main HEAD"
+# A Bash call without git in it starts no git process (the hook stays cheap).
+mkdir -p "$gg/spy" && printf '#!/bin/sh\necho "$*" >>"%s"\nexec "%s" "$@"\n' "$gg/spy.log" "$(command -v git)" >"$gg/spy/git" &&
+  chmod +x "$gg/spy/git"
+PATH="$gg/spy:$PATH" gguard "$gg/proj-1" "ls -la && make lint" >/dev/null
+expect "git guard: a command without git runs no git" no "$([ -s "$gg/spy.log" ] && echo yes || echo no)"
+PATH="$gg/spy:$PATH" gguard "$gg/proj-1" "git push -u origin HEAD" >/dev/null
+expect "git guard: a git command is checked with git" yes "$([ -s "$gg/spy.log" ] && echo yes || echo no)"
 gpassed "$gg/proj" "git fetch -q origin" "git -C $gg/proj-1 push -u origin HEAD" "git rebase --abort" "git status"
 out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
   "tool_input": {"command": "git push -u origin HEAD"}}))' "$gg/proj" |

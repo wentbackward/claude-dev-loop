@@ -5,7 +5,8 @@ the agent's own role.
 Best effort, local only: the deterministic guarantees come from GitHub (token permissions and rulesets).
 A no-op without .dev-loop.json. The git check runs in every loop project unless "guard": false; the
 scenario check only when scenarios are on ("scenarios", or "factory": "dark"); the GitHub checks only when
-"identities" is configured. Exit 2 refuses the tool call. `guard-role.py --scenarios-dir [DIR]` prints the
+"identities" is configured. Exit 2 refuses the tool call. `--git-only` runs only the git check (guard-role.sh
+passes it when the project has neither scenarios nor identities). `guard-role.py --scenarios-dir [DIR]` prints the
 store path as resolved from DIR (for tests).
 """
 
@@ -34,7 +35,24 @@ ROLE_OPERATIONS = {
     "orchestrator": {"issue-write", "pr-comment", "api-write"},
     "gate": set(),
 }
-WRAPPERS = {"env", "command", "exec", "time", "nohup", "sudo", "xargs"}
+# Wrapper commands that run the command after them, each with its options that take a separate value.
+WRAPPERS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "command": set(),
+    "exec": {"-a"},
+    "time": {"-f", "--format", "-o", "--output"},
+    "nohup": set(),
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "stdbuf": {"-i", "--input", "-o", "--output", "-e", "--error"},
+    "sudo": {"-u", "--user", "-g", "--group", "-C", "--close-from", "-D", "--chdir", "-h", "--host", "-p",
+             "--prompt", "-U", "--other-user", "-r", "--role", "-t", "--type", "-T", "--command-timeout"},
+    "xargs": {"-a", "--arg-file", "-d", "--delimiter", "-E", "-e", "-I", "-i", "-L", "-l", "-n", "--max-args",
+              "-P", "--max-procs", "-s", "--max-chars"},
+}
+RESERVED = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 SEPARATORS = {";", "&&", "||", "|", "&", "\n", "(", ")", "|&"}
 SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
 GLOB_CHARS = set("*?[")
@@ -240,9 +258,79 @@ def secret_patterns(config: dict) -> list[str]:
     return patterns
 
 
+def strip_heredocs(command: str) -> str:
+    """The command without the bodies of its here-documents (text fed to a command, not run); the command
+    substitutions of an unquoted body (which the shell runs) are kept as lines of their own. A body whose
+    end word never comes is kept as it is."""
+    lines, kept, ends, extra = command.split("\n"), [], [], []
+    for number, line in enumerate(lines):
+        if ends:
+            strip, quoted, word, start = ends[0]
+            if (line.lstrip("\t") if strip else line) == word:
+                ends.pop(0)
+            elif not quoted:
+                extra += substitutions(line, heredoc=True)
+            continue
+        kept.append(line)
+        ends = [(dash == "-", bool(q), word, number) for dash, q, word in HEREDOC.findall(line)]
+    if ends:
+        kept += lines[ends[0][3] + 1 :]
+    return "\n".join(kept + extra)
+
+
+def substitutions(command: str, heredoc: bool = False) -> list[str]:
+    """The commands inside backticks, and inside $( ) within double quotes or a here-document body (the
+    lexer splits the others)."""
+    found, index, quote = [], 0, '"' if heredoc else ""
+    while index < len(command):
+        char = command[index]
+        if heredoc and char in "'\"":
+            pass
+        elif quote == "'":
+            quote = "" if char == "'" else quote
+        elif char == "\\":
+            index += 1
+        elif char == "'" and not quote:
+            quote = "'"
+        elif char == '"':
+            quote = "" if quote else '"'
+        elif char == "`":
+            end = command.find("`", index + 1)
+            end = len(command) if end < 0 else end
+            found.append(command[index + 1 : end])
+            index = end
+        elif char == "$" and command[index + 1 : index + 2] == "(" and quote:
+            depth, end = 0, index + 1
+            while end < len(command):
+                depth += {"(": 1, ")": -1}.get(command[end], 0)
+                if depth == 0:
+                    break
+                end += 1
+            found.append(command[index + 2 : end])
+            index = end
+        index += 1
+    return found
+
+
+def inner_command(segment: list[str]) -> str | None:
+    """The command string a shell (bash -c, -lc, ...) or eval runs, or None."""
+    program = os.path.basename(segment[0])
+    if program == "eval":
+        return " ".join(segment[1:])
+    if program not in SHELLS:
+        return None
+    for index, token in enumerate(segment[1:], start=1):
+        if not token.startswith("-") or token.startswith("--"):
+            return None
+        if "c" in token[1:]:
+            return segment[index + 1] if index + 1 < len(segment) else ""
+    return None
+
+
 def segments(command: str) -> list[list[str]]:
-    """Split a shell command into simple commands (best effort); nested bash -c strings are expanded."""
-    command = command.replace("\\\n", "")
+    """Split a shell command into simple commands (best effort): here-document bodies dropped, nested
+    bash -c and eval strings and command substitutions expanded."""
+    command = strip_heredocs(command.replace("\\\n", ""))
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -259,29 +347,44 @@ def segments(command: str) -> list[list[str]]:
     expanded: list[list[str]] = []
     for segment in result:
         segment = strip_prefix(segment)
-        if (
-            len(segment) >= 3
-            and os.path.basename(segment[0]) in {"bash", "sh", "zsh"}
-            and segment[1] == "-c"
-        ):
-            expanded.extend(segments(segment[2]))
+        inner = inner_command(segment) if segment else None
+        if inner is not None:
+            expanded.extend(segments(inner))
         elif segment:
             expanded.append(segment)
+    for inner in substitutions(command):
+        expanded.extend(segments(inner))
     return expanded
 
 
 def strip_prefix(segment: list[str]) -> list[str]:
-    """Drop leading variable assignments and wrapper commands such as env or nohup."""
+    """Drop leading variable assignments, reserved words (if, then, !, {, ...) and wrapper commands such as
+    env, nice, timeout or nohup with their own options and values."""
     index = 0
     while index < len(segment):
         token = segment[index]
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or os.path.basename(token) in WRAPPERS or (
-            token.startswith("-") and index > 0 and os.path.basename(segment[index - 1]) in WRAPPERS
-        ):
+        wrapper = os.path.basename(token)
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or token in RESERVED:
             index += 1
+        elif wrapper in WRAPPERS:
+            index = skip_wrapper_options(segment, index + 1, wrapper)
         else:
             break
     return segment[index:]
+
+
+def skip_wrapper_options(segment: list[str], index: int, wrapper: str) -> int:
+    """The index after a wrapper's options (and timeout's duration)."""
+    while index < len(segment) and segment[index].startswith("-") and segment[index] != "-":
+        token = segment[index]
+        index += 1
+        if token == "--":
+            break
+        if token in WRAPPERS[wrapper]:
+            index += 1
+    if wrapper == "timeout" and index < len(segment) and re.match(r"^[0-9.]+[smhd]?$", segment[index]):
+        index += 1
+    return index
 
 
 def git_subcommand(tokens: list[str]) -> str:
@@ -642,6 +745,8 @@ def check_push(options: list[tuple[str, str]], positional: list[str], cwd: str, 
     for spec in refspecs or ["HEAD"]:
         if spec.startswith("+"):
             git_refuse(command, f"force-pushes ({spec})")
+        if GLOB_CHARS & set(spec):
+            git_refuse(command, f"pushes every ref a pattern matches, the base branch maybe included ({spec})")
         source, colon, destination = spec.partition(":")
         if colon and not source:
             git_refuse(command, f"deletes a remote branch ({spec})")
@@ -660,7 +765,9 @@ def check_rebase(options: list[tuple[str, str]], positional: list[str], cwd: str
     if names & REBASE_ACTIONS:
         return
     wanted = 0 if "root" in names else 1
-    branch = positional[wanted] if len(positional) > wanted else current_branch(cwd)
+    branch = positional[wanted] if len(positional) > wanted else "HEAD"
+    if branch in {"HEAD", "@"}:
+        branch = current_branch(cwd)
     if names_base(branch, base):
         git_refuse(command, f"rewrites the base branch {base}")
 
@@ -668,11 +775,11 @@ def check_rebase(options: list[tuple[str, str]], positional: list[str], cwd: str
 def check_git(tokens: list[str], cwd: str, base: str) -> None:
     """Refuse a git command whose parsed argv hits a stop condition."""
     sub, args, cwd, injected = git_split(tokens, cwd)
-    if sub not in GIT_LONG:
-        return
     command = " ".join(tokens)
     if injected:
-        git_refuse(command, f"injects config (-c/--config-env) into git {sub}, which can run a command")
+        git_refuse(command, "injects git config (-c/--config-env), which can run a command (aliases, pagers, ssh)")
+    if sub not in GIT_LONG:
+        return
     options, positional = git_parse(sub, args)
     for option, _ in options:
         if option in GIT_DANGER.get(sub, {}):
@@ -701,6 +808,14 @@ def git_commands(command: str, cwd: str) -> list[tuple[list[str], str]]:
     return found
 
 
+def names_git(event: dict) -> bool:
+    """True when a Bash call may run git: "git" in its command once quotes and backslashes are removed."""
+    if event.get("tool_name") != "Bash":
+        return False
+    command = str((event.get("tool_input") or {}).get("command", ""))
+    return "git" in re.sub(r"[\\'\"]", "", command)
+
+
 def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
     """Refuse a Bash call with a git command that a stop condition forbids (unless "guard": false)."""
     if event.get("tool_name") != "Bash" or not guard_on(config):
@@ -725,11 +840,17 @@ def main() -> None:
     except ValueError:
         return
     cwd = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    git_only = sys.argv[1:2] == ["--git-only"]
+    if git_only and not names_git(event):
+        return
     config = load_config(cwd)
-    check_scenarios(event, config, cwd)
-    loop_dir = project_dir(cwd)
-    if os.path.isfile(config_path(loop_dir)):
+    if not git_only:
+        check_scenarios(event, config, cwd)
+    loop_dir = project_dir(cwd) if names_git(event) else ""
+    if loop_dir and os.path.isfile(config_path(loop_dir)):
         check_git_stop_conditions(event, config if loop_dir == cwd else load_config(loop_dir), cwd)
+    if git_only:
+        return
     identities = config.get("identities")
     if not isinstance(identities, dict) or not any(
         isinstance(v, dict) and v.get("type") for v in identities.values()
