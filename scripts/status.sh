@@ -11,14 +11,23 @@
 # ~/.dev-loop (DEV_LOOP_HOME), since the slots are shared machine-wide.
 #
 # The last line is the verdict:
-#   verdict: idle                                      no gate, no heavy job of this repository, no loop
-#                                                      worktree with unmerged work, no orchestrator event
-#                                                      within the threshold ("idle (the last gate died:
+#   verdict: idle                                      nothing running and nothing in flight: no gate, no
+#                                                      heavy job of this repository, no wait that holds, no
+#                                                      loop worktree with unmerged work (since the last
+#                                                      idle event), no agent in flight; a recent event on
+#                                                      its own is not work ("idle (the last gate died:
 #                                                      train-running.txt is stale)" when its pid has ended)
-#   verdict: working                                   activity within the threshold
+#   verdict: working                                   something in flight moved within the threshold: a
+#                                                      loop worktree with unmerged work, or an agent in
+#                                                      flight (agent-started or watchdog-resumed, not yet
+#                                                      agent-reported, merged or ended by an idle event)
 #   verdict: waiting on <what> (output <n>s ago)       a running gate stage, a heavy job of this repository,
 #                                                      or an orchestrator event whose name starts with
 #                                                      "waiting" (what: its detail, else the rest of the name)
+#                                                      that still holds: a wait naming branches (its branch,
+#                                                      the words of its detail with a "/") is over once a
+#                                                      gate result of a train with one of them, or a merge
+#                                                      of one, came after it (events, or the ledger)
 #   verdict: waiting on heavy slot (queued)          the running gate's own job waits in heavy.sh for a
 #                                                      slot (its queued event names the gate: gate_pid)
 #   verdict: possibly stalled: no event or output for <n> min
@@ -34,7 +43,9 @@
 # --json prints one object (the contract; fields are only added, never renamed):
 #   {"repo", "now" (UTC),
 #    "verdict": {"state": "idle|working|waiting|stalled", "what": str|null, "quiet_seconds": n|null,
-#                "stall_minutes": n, "line": str, "gate_died": bool},
+#                "stall_minutes": n, "line": str, "gate_died": bool,
+#                "wait_ended": bool (the last event is a wait that later evidence ended),
+#                "agents": [ticket or branch] (the agents in flight)},
 #    "gate": {"running": bool, "stale": bool (train-running.txt names a dead pid), "pid": n|null,
 #             "train": [branch], "elapsed_seconds": n|null,
 #             "stages": [{"name", "elapsed_seconds", "log", "log_bytes", "quiet_seconds"}]},
@@ -101,15 +112,16 @@ except ValueError:
 }
 
 # events_tsv FILE...: each event of the files as "repo<TAB>epoch<TAB>who<TAB>event<TAB>branch<TAB>ticket
-# <TAB>stage<TAB>rc<TAB>slot<TAB>pid<TAB>log<TAB>detail<TAB>gate_pid" (repo: the name of the file's directory; "-" for a
-# missing field; lines that are not JSON objects are skipped).
+# <TAB>stage<TAB>rc<TAB>slot<TAB>pid<TAB>log<TAB>detail<TAB>gate_pid<TAB>branches<TAB>t" (repo: the name of the
+# file's directory; t: the time as written; "-" for a missing field; lines that are not JSON objects are
+# skipped).
 events_tsv() {
   [ $# -gt 0 ] || return 0
   if dl_have_jq; then
     jq -R -r 'def f: if . == null or . == "" then "-" else tostring | gsub("[\t\n\r]"; " ") end;
       (input_filename | split("/") | .[-2]) as $repo | fromjson? | select(type == "object")
       | [$repo, (.t | strings | try fromdateiso8601 catch null), .who, .event, .branch, .ticket, .stage, .rc,
-         .slot, .pid, .log, .detail, .gate_pid] | map(f) | join("\t")' "$@" 2>/dev/null
+         .slot, .pid, .log, .detail, .gate_pid, .branches, .t] | map(f) | join("\t")' "$@" 2>/dev/null
   else
     python3 -I -c '
 import calendar, json, os, sys, time
@@ -135,7 +147,8 @@ for path in sys.argv[1:]:
             epoch = calendar.timegm(time.strptime(str(e.get("t")), "%Y-%m-%dT%H:%M:%SZ"))
         except ValueError:
             epoch = None
-        keys = ("who", "event", "branch", "ticket", "stage", "rc", "slot", "pid", "log", "detail", "gate_pid")
+        keys = ("who", "event", "branch", "ticket", "stage", "rc", "slot", "pid", "log", "detail", "gate_pid",
+                "branches", "t")
         print("\t".join(f(v) for v in [repo, epoch] + [e.get(k) for k in keys]))
 ' "$@" 2>/dev/null
   fi
@@ -173,6 +186,8 @@ newest=$(newest_event)
 [ -z "$newest" ] || quiet_seen "$((now - newest))"
 newest=$(newest_event gate)
 [ -z "$newest" ] || quiet_seen "$((now - newest))" gate
+# The epoch of the orchestrator's last idle event: loop worktrees unchanged since then are not in flight.
+idle_at=$(printf '%s\n' "$repo_events" | awk -F'\t' '$3 == "orchestrator" && $4 == "idle" && $2 != "-" {m = $2} END {print m}')
 
 # --- The gate: train-running.txt and its pid, the stages started since its train-started event. ---
 gate_pid="" gate_train="" gate_running="" gate_elapsed="" gate_lines=() stage_json=""
@@ -280,6 +295,14 @@ loop_worktrees() {
     while IFS=$'\t' read -r path branch; do dl_loop_branch "$branch" && printf '%s\t%s\n' "$path" "$branch"; done
 }
 
+# changed_since_idle COMMIT_AGE [NOTES_AGE]: true without an idle event, or when the commit or the notes
+# changed after it.
+changed_since_idle() {
+  [ -n "$idle_at" ] || return 0
+  [ "$((now - $1))" -gt "$idle_at" ] && return 0
+  [ -n "${2:-}" ] && [ "$((now - $2))" -gt "$idle_at" ]
+}
+
 # add_worktree PATH BRANCH: one loop worktree (human line, JSON entry, its commit and notes as evidence).
 add_worktree() {
   local path=$1 branch=$2 note ticket tip commit_age="" notes_age="" remote pushed=false unpushed="" counts
@@ -299,7 +322,7 @@ add_worktree() {
   fi
   counts=$(git -C "$DL_ROOT" rev-list --left-right --count "$base_ref...$tip" 2>/dev/null)
   [ -z "$counts" ] || read -r behind ahead <<<"$counts"
-  if [ "$merged" = false ]; then
+  if [ "$merged" = false ] && changed_since_idle "$commit_age" "$notes_age"; then
     active_worktrees=$((active_worktrees + 1))
     quiet_seen "$commit_age"
     quiet_seen "$notes_age"
@@ -336,21 +359,61 @@ if [ -n "$use_gh" ]; then
   fi
 fi
 
-orch_line="orchestrator: no event yet" orch_json=null orch_event="" orch_detail="" orch_age=""
-IFS=$'\t' read -r _ o_epoch _ o_event _ o_ticket _ _ _ _ _ o_detail _ <<<"$(printf '%s\n' "$repo_events" |
+orch_line="orchestrator: no event yet" orch_json=null orch_event="" orch_detail="" orch_age="" o_branch="" o_t=""
+IFS=$'\t' read -r _ o_epoch _ o_event o_branch o_ticket _ _ _ _ _ o_detail _ _ o_t <<<"$(printf '%s\n' "$repo_events" |
   awk -F'\t' '$3 == "orchestrator"' | tail -n 1)"
 if [ -n "${o_event:-}" ]; then
   orch_event=$o_event
   [ "$o_detail" = - ] || orch_detail=$o_detail
   [ "$o_ticket" = - ] && o_ticket=""
+  [ "$o_branch" != - ] || o_branch=""
+  [ "$o_t" != - ] || o_t=""
   case $o_epoch in "" | *[!0-9]*) ;; *) orch_age=$((now - o_epoch)) ;; esac
   orch_line="orchestrator: $orch_event${o_ticket:+ #$o_ticket}${orch_detail:+ ($orch_detail)}${orch_age:+, $(dur "$orch_age") ago}"
   orch_json="{\"event\":$(dl_json_string "$orch_event"),\"detail\":$(jstr "$orch_detail"),\"ticket\":$(jnum "$o_ticket"),\"age_seconds\":$(jnum "$orch_age")}"
 fi
 
+# agents_in_flight: the ticket (else the branch) of each agent-started or watchdog-resumed event of the
+# orchestrator not followed by an agent-reported event or a merge of that ticket or branch, nor by an idle
+# event (which ends them all), one per line.
+agents_in_flight() {
+  printf '%s\n' "$repo_events" | awk -F'\t' '
+    function key(b, t) { return t != "-" ? t : b }
+    $3 == "orchestrator" && ($4 == "agent-started" || $4 == "watchdog-resumed") && key($5, $6) != "-" {
+      if (!(key($5, $6) in on)) order[++n] = key($5, $6)
+      on[key($5, $6)] = 1; br[key($5, $6)] = $5; next
+    }
+    $3 == "orchestrator" && $4 == "agent-reported" { delete on[key($5, $6)]; next }
+    $3 == "orchestrator" && $4 == "idle" { split("", on); next }
+    $3 == "merge" && $4 == "merged" {
+      for (k in on) if (k == $6 || k == $5 || (br[k] != "-" && br[k] == $5)) delete on[k]
+    }
+    END { for (i = 1; i <= n; i++) if (order[i] in on) { print order[i]; delete on[order[i]] } }'
+}
+
+# wait_ended NAMES: why the orchestrator's last event, a wait on these branches (space-separated), is over:
+# a gate result of a train with one of them, or a merge of one, after the wait (events after it in the log,
+# ledger entries merged at or after its time); nothing while the wait holds.
+wait_ended() {
+  local names=" $1 " reason
+  reason=$(printf '%s\n' "$repo_events" | awk -F'\t' -v names="$names" '
+    function named(list, i, n, w) { n = split(list, w, " "); for (i = 1; i <= n; i++) if (index(names, " " w[i] " ")) return w[i]; return "" }
+    $3 == "gate" && $4 == "train-started" { train = $14; next }
+    $3 == "orchestrator" { found = ""; next }
+    found != "" { next }
+    $3 == "gate" && $4 == "train-ended" && named(train) != "" { found = "the gate of " named(train) " ended (rc " $8 ")" }
+    $3 == "merge" && $4 == "merged" && named($5) != "" { found = $5 " merged" }
+    END { if (found != "") print found }' 2>/dev/null)
+  if [ -z "$reason" ] && [ -n "$o_t" ]; then
+    reason=$(dl_ledger_rows | awk -F'\t' -v names="$names" -v t="$o_t" '
+      $1 == "M" && $3 != "" && $5 >= t && index(names, " " $3 " ") { print $3 " merged"; exit }')
+  fi
+  printf '%s' "$reason"
+}
+
 # --- The verdict. ---
 threshold=$((stall_minutes * 60))
-state="" what=""
+state="" what="" wait_over=false wait_reason=""
 if [ -n "$gate_running" ]; then
   what="gate${first_stage:+ stage $first_stage}"
 elif [ -n "$held_here" ]; then
@@ -359,14 +422,23 @@ elif [[ "$orch_event" == waiting* ]]; then
   what=${orch_detail:-${orch_event#waiting}}
   what=${what#[-_ ]}
   [ -n "$what" ] || what="something"
+  # The branches the wait names (its branch, the words of its detail with a "/"): evidence of them ends it.
+  wait_names=$(printf '%s\n' "$o_branch $orch_detail" | tr ' ' '\n' | grep / | tr '\n' ' ')
+  [ -z "$wait_names" ] || wait_reason=$(wait_ended "$wait_names")
+  if [ -n "$wait_reason" ]; then
+    wait_over=true what=""
+    orch_line+="; the wait is over: $wait_reason"
+  fi
 fi
+agents=$(agents_in_flight)
+agents_text=$(printf '%s\n' "$agents" | awk 'NF {printf "%s%s", (n++ ? " " : ""), ($0 ~ /^[0-9]+$/ ? "#" $0 : $0)}')
 # While the gate runs only its own evidence counts, so an implementer's commits never hide a frozen stage.
 [ -z "$gate_running" ] || quiet=$gate_quiet
 gate_died=false
 [ -z "$gate_pid" ] || [ -n "$gate_running" ] || gate_died=true
 if [ -n "$gate_queued" ]; then
   state=waiting what="heavy slot (queued)" verdict="waiting on heavy slot (queued)"
-elif [ -z "$what" ] && [ "$active_worktrees" -eq 0 ] && { [ -z "$orch_age" ] || [ "$orch_age" -gt "$threshold" ]; }; then
+elif [ -z "$what" ] && [ "$active_worktrees" -eq 0 ] && [ -z "$agents" ]; then
   state=idle verdict="idle"
   [ "$gate_died" = false ] || verdict="idle (the last gate died: train-running.txt is stale)"
 elif [ -n "$quiet" ] && [ "$quiet" -gt "$threshold" ]; then
@@ -389,8 +461,9 @@ held_count=$(printf '%s\n' "${held_lines[@]+"${held_lines[@]}"}" | grep -c '^  s
 
 if [ -n "$json" ]; then
   printf '{"repo":%s,"now":%s,' "$(dl_json_string "$DL_REPO")" "$(dl_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
-  printf '"verdict":{"state":"%s","what":%s,"quiet_seconds":%s,"stall_minutes":%s,"line":%s,"gate_died":%s},' \
-    "$state" "$(jstr "$what")" "$(jnum "$quiet")" "$stall_minutes" "$(dl_json_string "verdict: $verdict")" "$gate_died"
+  printf '"verdict":{"state":"%s","what":%s,"quiet_seconds":%s,"stall_minutes":%s,"line":%s,"gate_died":%s,"wait_ended":%s,"agents":%s},' \
+    "$state" "$(jstr "$what")" "$(jnum "$quiet")" "$stall_minutes" "$(dl_json_string "verdict: $verdict")" "$gate_died" \
+    "$wait_over" "$(printf '%s\n' "$agents" | dl_json_list)"
   printf '"gate":{"running":%s,"stale":%s,"pid":%s,"train":%s,"elapsed_seconds":%s,"stages":[%s]},' \
     "$([ -n "$gate_running" ] && echo true || echo false)" "$gate_died" "$(jnum "$gate_pid")" \
     "$(printf '%s\n' "$gate_train" | tr ' ' '\n' | dl_json_list)" "$(jnum "$gate_elapsed")" "$stage_json"
@@ -410,4 +483,5 @@ for line in "${worktree_lines[@]+"${worktree_lines[@]}"}"; do echo "$line"; done
 echo "$last_merge_line"
 echo "$open_line"
 echo "$orch_line"
+[ -z "$agents_text" ] || echo "agents in flight: $agents_text"
 echo "verdict: $verdict"
