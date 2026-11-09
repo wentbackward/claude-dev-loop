@@ -1061,59 +1061,101 @@ them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.
 
 ### The git guard
 
+The git guard is a tripwire, not the boundary. It stops an agent that slips into a git command a stop
+condition forbids, and it tells the agent why. It cannot stop an agent that sets out to get around it,
+for example with a script it writes and then runs. The real control for the base branch and the tags is
+the remote's branch and tag protection (`github-protect.sh`, or the host's own rules), so set that up.
+
 Git accepts many spellings of one option: a unique prefix (`--upl=<cmd>` is `--upload-pack`), bundled
 short flags (`-fx <cmd>` is `-f -x <cmd>`), quotes and backslashes (`'-f'`, `\-f`, `--fo\rce`). A text
 rule cannot see through them, and `git push -u <remote> HEAD` pushes the base branch when run from a
-checkout of it. So the role guard hook (PreToolUse) parses every Bash command in a loop project that
-names git: it splits it into simple commands (`&&`, `||`, `;`, `|`, newlines, `bash -c '...'` and
-`bash -lc`, `eval`, `env -S '...'`, backticks and `$( )`), drops comments and here-document bodies (a
-here-document starts only at an unquoted `<<` outside comments and arithmetic; the command substitutions
-of an unquoted body are kept, and a body whose end word never comes is checked as commands), de-quotes
-each one, skips variable assignments, reserved words (`if`, `then`, `!`,
-`{`, ...) and wrappers with their options (`env -u NAME`, `nice -n 5`, `timeout -s KILL 5`, `stdbuf -o0`,
-`time`, `nohup`, `xargs`, `sudo`), follows `cd` and `git -C <dir>`, looks inside `as-role.sh` and
-`heavy.sh`, expands bundled short flags and resolves long-option prefixes against the options of
-`fetch`, `pull`, `rebase`, `diff`, `log`, `show`, `worktree remove` and `push` (a prefix that may mean a
-dangerous option counts as it). It refuses (exit 2, with the command, the stop condition and "ask the
-owner"):
+checkout of it. So the role guard hook (PreToolUse) reads every Bash command in a loop project that names
+git. A command names git when it contains the text `git` in any case (so `GIT_*` variables count too) once
+quotes, backslashes, braces, commas and line continuations are removed and `$'...'` escapes are decoded,
+or when it has a glob that may match `git` (`gi?`, `g[i]t`).
+
+**It fails closed: only plain command lines pass.** A command that names git is checked only when it is
+a plain command line. That means literal words (quotes and backslashes are fine, and a leading `~` is the
+home directory) joined by `&&`, `||`, `;`, `|` or newlines, plain redirections (`>x`, `2>&1`, `<x`,
+`<<<word`), and here-documents whose body expands nothing: a quoted end word (`<<'EOF'`), or an unquoted
+one whose body has no `$`, backtick or backslash. Anything else that names git is refused with "write it
+plainly", even when nothing in it is dangerous. That covers:
+
+- a `$` outside single quotes or a backtick (variables, `$( )`, `${ }`, `$[ ]`, `$'...'`), a `{`, `}`, `(`
+  or `)` outside quotes (brace expansion, groups, subshells, functions), a lone `&`, an unbalanced quote, a
+  compound command (`if`, `for`, `while`, `case`, `!`, `[[`, ...) and a here-document without its end line;
+- a program that runs a command string: `alias`, `eval`, `builtin`, `command`, `exec`, `source`, `.`,
+  `trap`, `watch`, `script`, `flock`, `su`, `sudo`, `busybox`, `xargs`, `parallel`, a shell (`sh`, `bash`,
+  `zsh`, ...) given an option or no script file (`bash -c '...'`, `echo ... | bash`), `env -S`,
+  `find -exec`/`-ok`, `rg --pre`, `man -H`/`-P`/`--html`/`--pager` and `gh alias`;
+- text that reads as a git command (`git push ...`) handed to a program the guard does not know
+  (`python3 -c "... git push ..."`, `ssh host 'git push ...'`), as an argument, a here-document or through
+  a pipe. Only git, gh and programs that never run their arguments (`echo`, `printf`, `grep`, `cat`, `ls`,
+  `head`, ...) may take such text, so commit messages and PR bodies still pass;
+- a `cd`, `pushd` or `popd` the guard cannot follow (`cd -`, a glob, one in a pipeline such as
+  `cd x | git push`). `cd x & git push` is refused for its lone `&`. Both are refusals on the safe side.
+
+So a commit message goes in as `git commit -F - <<'EOF'` (a quoted end word), not as
+`git commit -m "$(cat <<'EOF' ...)"`, and a PR body as `gh pr create --body-file - <<'EOF'`. The loop's own
+commands are already plain. Commands that do not name git are not touched by this rule.
+
+**On a plain command line** the guard splits the simple commands and skips variable assignments and the
+wrappers `env` (whose `-C`/`--chdir` it follows), `time`, `nohup`, `nice`, `timeout`, `stdbuf`,
+`as-role.sh <role>` and `heavy.sh`. It follows `cd`, `pushd`, `popd` and `git -C <dir>`. A `cd` that may
+fail or be skipped (`cd x; git push`, `cd x || git push`) leaves the directory before it possible, so the
+push is checked in both. Under a program it does not know, every word `git` (or `git-<name>`) starts a git
+command, wherever it stands. The guard expands bundled short flags and resolves long-option prefixes
+against the options of `fetch`, `pull`, `rebase`, `diff`, `log`, `show`, `worktree remove` and `push` (a
+prefix that may mean a dangerous option counts as that option). It refuses the following, with exit 2, the
+command, the stop condition and "ask the owner":
 
 - `git -c <key>=<value>` or `--config-env` before any subcommand (config can run a command: aliases,
-  pagers, `core.sshCommand`);
-- `fetch` or `pull` with `--upload-pack`, `push` with `--receive-pack` or `--exec`;
+  pagers, `core.sshCommand`), and `git --exec-path=<dir>`;
+- an assignment or `export` of `GIT_*` (`GIT_DIR`, `GIT_CONFIG_*`, ...), `PATH`, `HOME`, `CDPATH`,
+  `XDG_CONFIG_HOME`, `BASH_ENV`, `ENV` or `LD_PRELOAD`, as a prefix, on its own or through `env`;
+- `git config` that is not a read (`--get*`, `--list`/`-l`, `get`, `list`), since an alias or other config
+  can run any command;
+- `git submodule foreach`, `git bisect run` and `git filter-branch`, which run command strings;
+- `fetch` or `pull` with `--upload-pack`, and `push` with `--receive-pack` or `--exec`;
 - `rebase --exec`/`-x`, and a rebase whose rewritten branch is the base branch (the branch argument, else
   the branch checked out where it runs; `--continue`, `--abort`, `--skip` and `--quit` pass);
 - `diff`, `log` or `show` with `--output`;
-- `worktree remove --force`/`-f`;
+- `worktree remove --force`/`-f`. The owner runs it in their own shell with Claude Code's `!` prefix
+  (`! git worktree remove --force --force <path>`), as the setup skill's migration step says;
+- a push or rebase with `--git-dir` or `--work-tree` (another repository's branch, maybe the base);
 - a push that forces (`--force`, `--force-with-lease`, `--force-if-includes`, `-f`, `+<ref>`), deletes
-  (`--delete`, `-d`, `:<ref>`, `--prune`), tags (`--tags`, `--follow-tags`, `refs/tags/...` or a tag
-  name), pushes everything (`--all`, `--branches`, `--mirror`, a refspec with a glob), or whose source or destination is the base
-  branch (`<base>`, `heads/<base>`, `refs/heads/<base>`, and `HEAD`, `@` or no refspec when the base is
-  checked out in the command's directory, from `git rev-parse --abbrev-ref HEAD`).
+  (`--delete`, `-d`, `:<ref>`, `--prune`), tags (`--tags`, `--follow-tags`, `tag <name>`, `refs/tags/...`
+  or a tag name), pushes everything (`--all`, `--branches`, `--mirror`, a refspec with a glob), has more
+  than 50 refspecs, or whose source or destination is the base branch (`<base>`, `heads/<base>`,
+  `refs/heads/<base>` in any case, and `HEAD`, `@` or no refspec when the base is checked out in a
+  directory the push may run in, from `git rev-parse --abbrev-ref HEAD`).
+
+The text checks run on every refspec before any git process starts. The branch checked out and the local
+branches and tags (one `git show-ref`) are read once per directory, so even a 100 KB command is checked in
+well under a second.
 
 The base branch is `base_branch` from `.dev-loop.json` (default `main`). The check is on in every project
-with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`; it refuses
-only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
-best effort like the rest of the guard: its shell grammar covers the common forms, not all of bash, and it
-reads the command line, not environment variables (`GIT_CONFIG_*`) or the scripts an agent writes.
-ANSI-C strings (`$'...'`, where `\'` does not end the string) are decoded as bash decodes them, so
-`$'\x67it'` is git. A backslash-newline joins lines only after an even number of backslashes (`echo a\\`
-ends its line), redirections before the command word (`>x`, `2>&1`, `<<E`) are skipped, and every unquoted
-word `git` starts a git command wherever it stands (bash may run it after a substitution, arithmetic or an
-unknown wrapper), except after a program that never runs its arguments (`echo`, `printf`, `grep`, `cat`,
-`ls`, ...); quoted text never does. So `foo git push origin main` is refused, while `grep -n git README.md`
-and `git commit -m "... git push origin main ..."` pass. A crash of the guard on a command naming git
-refuses it. A differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts
-through bash with a stub `git`, and fails when bash would push to the base branch and the guard lets it
-through. A command that
-names `git` but that the guard cannot split (an unbalanced quote, which could hide every later command
-from it) is refused with "cannot be parsed; ask the owner", in the git check and in the identity and
-scenario checks; a command without `git` that cannot be split is not refused for that.
-Spellings without a literal `git` (a variable such as `$g push`, a glob such as
-`/usr/bin/gi*`) and commands fed to a shell on stdin (`sh <<E`, `bash <<< "..."`) are not checked; the
-template's allow rules all start with a literal command, so in the default mode such commands prompt. A
-Bash call whose text has no `git` (once line continuations, quotes and backslashes are removed, and with
-no `\u` escape or `$'` in the event) starts no git process. The ask and deny rules stay as a
-second layer.
+with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`. Projects
+without `.dev-loop.json` are not checked. A crash of the guard on a command naming git refuses it. A
+differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts through bash
+with a stub `git`, and fails when bash would push to the base branch and the guard lets it through. A Bash
+call that does not name git starts no git process. The ask and deny rules stay as a second layer.
+
+What the guard does not catch, by design or because it reads only the command text:
+
+- a command that builds the name git without spelling it (`a=g; b=it; $a$b push`, `$(printf ...)`): the
+  plain-line rule applies only to commands that name git;
+- a script or other file the agent writes (with the Write tool, or `echo ... > x.sh`) and then runs
+  (`bash x.sh`, `make`, a test runner), and commands a program reads from a file;
+- aliases and functions from the user's shell profile, git aliases, hooks and `push.default` or
+  `remote.<name>.push` already in the repository's config, and the session shell's `CDPATH`;
+- rewrites of the base branch that stay local: `git branch -f <base>`, `git update-ref refs/heads/<base>`
+  and `git reset --hard` on it pass on purpose, since nothing leaves the machine and a later push of the
+  base is refused.
+
+The identity and scenario checks use their own best-effort splitter. A command that names git but that
+splitter cannot split (an unbalanced quote) is refused there with "cannot be parsed; ask the owner", also
+with `"guard": false`. A command without git that cannot be split is not refused for that.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
 commit message or PR body that quotes such a command. Write those messages without the literal flag, or

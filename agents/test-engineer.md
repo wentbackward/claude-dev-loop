@@ -24,6 +24,8 @@ the feature.
    error or a typo in the test).
 7. Commit them: `test: <ticket title> (Refs #<n>)`. In identity mode the tester identity cannot push: commit
    locally in the worktree and leave the push to the implementer.
+   Write git commands plainly (literal words; the git guard refuses `$(...)` and other expansions in a
+   command that names git): a commit message goes in as `git commit -F - <<'EOF'` with a quoted end word.
 
 Never read `.env` files or credentials. Never write personal identifiers into tests or fixtures.
 

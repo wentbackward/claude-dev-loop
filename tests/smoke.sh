@@ -2706,6 +2706,14 @@ done
 grep -qF '"guard": false' "$plugin/README.md" && pass "git guard: the README documents \"guard\": false" ||
   fail "git guard: the README does not document \"guard\": false"
 grep -qF "#71" "$plugin/CHANGELOG.md" && pass "git guard: CHANGELOG has an entry for #71" || fail "git guard: no CHANGELOG #71 entry"
+grep -qF "tripwire, not the boundary" "$plugin/README.md" && grep -qF "branch and tag protection" "$plugin/README.md" &&
+  pass "git guard: the README calls the guard a tripwire and names the remote's protection" ||
+  fail "git guard: the README does not say the guard is a tripwire"
+grep -qF '! git worktree remove --force --force' "$plugin/skills/setup/SKILL.md" &&
+  pass "git guard: the setup skill has the owner run the forced worktree removal" ||
+  fail "git guard: the setup skill still has the session run a forced worktree removal"
+grep -qF "git commit -F - <<'EOF'" "$plugin/agents/implementer.md" &&
+  pass "git guard: the implementer brief passes commit messages plainly" || fail "git guard: the implementer brief lacks the plain commit form"
 
 # Scenario writer and the orchestrator's scenario steps (#33): the writer brief writes only to the
 # store, from the spec; no implementer, test-engineer or code-reviewer brief or prompt names the store;

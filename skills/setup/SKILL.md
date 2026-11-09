@@ -115,8 +115,10 @@ The plugin replaces the copies; the project-specific knowledge in them stays.
      a procedure still reads (for example a deploy log used as a `find -newer` marker).
    - Memories that describe the old tooling: rewrite them to point at the plugin, or delete them.
    - Worktrees: only when no agent is running. Save the uncommitted changes of each one (`git diff HEAD`
-     and the untracked files) to the archive, keep every branch, then `git worktree remove --force --force`
-     (locked ones included) and `git worktree prune`.
+     and the untracked files) to the archive, keep every branch, then ask the user to run
+     `! git worktree remove --force --force <path>` for each one (locked ones included; the `!` prefix runs
+     it in their own shell, since the git guard refuses a forced worktree removal from the session), then
+     run `git worktree prune`.
    - Branches: run `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run), show the user the counts and
      the closed and stale lists, then `--apply` (with `--include closed` / `--include stale` as they
      agree). It saves every deleted tip to a bundle first.
