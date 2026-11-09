@@ -7190,6 +7190,20 @@ trefused "builtin cd /tmp; make test" "command cd /tmp; make test" "eval cd /tmp
 tpassed "printf '%s' x; make test" "echo x && make test" "cargo test -- --nocapture" \
   "cargo test parser -- --test-threads=1 --exact" "cargo test -- --ignored" "cargo test -- --include-ignored --show-output" \
   "cargo test -- parser" "go test ./pkg -args -test.v" "go test ./pkg -args -test.run=X -test.count=1"
+# Review round 4: a value given as a separate word may not start with - or + (pytest reads -p anywhere before
+# its own parser, cargo may read the word as its own option); go packages are relative paths, not import paths
+# (std, a dependency); --test-threads takes 1 to 256.
+trefused "python -m pytest tests/ -k -p evil" "python -m pytest tests/ -k -pevil" "pytest tests/ --tb -pevil" \
+  "pytest tests/ -m -p evil" "pytest tests/ -r -p" "pytest tests/ --maxfail -p evil" "pytest tests/ --durations -pevil" \
+  "python -m pytest tests/ -n -p evil" "pytest tests/ -k +x" "cargo test --test -Zx" "cargo test -p --config x" \
+  "cargo test -F --config=x" "cargo test --features -Zx" "go test ./pkg -run -toolexec=x" \
+  "cargo test -- --test-threads -x" "go test ./pkg -args -test.run -x" \
+  "go test std" "go test golang.org/x/tools/..." "go test all" "go test pkg" "go vet fmt" "go test ./pkg cmd/go" \
+  "cargo test -- --test-threads=0" "cargo test -- --test-threads=257" "cargo test -- --test-threads=x" \
+  "cargo test -- --test-threads 1x" "cargo test -- --test-threads=+4"
+tpassed "pytest tests/ -k foo" "pytest tests/ -k=-slow" "pytest tests/ -kslow" "go test ./pkg -run=-x" \
+  "go test ." "go test ./pkg/..." "go vet ./pkg" "go test ./pkg ./..." "cargo test -- --test-threads 4" \
+  "cargo test -- --test-threads=256" "cargo test -p mycrate" "make -j 4 test"
 printf '{"targeted": ["make test"], broken\n' >"$twork/broken.json"
 out=$(tguard "make test --eval=x" "$twork/broken.json")
 case $out in *"ask the owner"*"status=2") pass "targeted guard: an unreadable config with targeted fails closed" ;;
@@ -7334,7 +7348,7 @@ grep -qE '^\| `targeted` \|' "$plugin/README.md" && pass "targeted: the README c
   fail "targeted: no targeted row in the README"
 tsection=$(awk '/^### Targeted commands/ {on = 1; next} /^##/ {on = 0} on' "$plugin/README.md")
 for word in "go test" "-run" "pytest" "-k" "make <target>" "-j" "npm run <script>" "cargo test" "ruff check" \
-  "still runs the project's own test code" "builtin" "source" "--nocapture" "-test.v" "per-subcommand"; do
+  "still runs the project's own test code" "builtin" "source" "--nocapture" "-test.v" "per-subcommand" "fresh shell" "PYTEST_ADDOPTS" "import path" "1 to 256"; do
   printf '%s\n' "$tsection" | grep -qF -- "$word" && pass "targeted: the README section names $word" ||
     fail "targeted: the README Targeted commands section lacks $word"
 done
