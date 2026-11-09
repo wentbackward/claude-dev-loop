@@ -6220,7 +6220,8 @@ expect "protection: doctor's API calls are reads" "" \
 # The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
 grep -qF 'note remote protection' "$plugin/skills/doctor/SKILL.md" && pass "protection: the doctor skill has the protection row" ||
   fail "protection: the doctor skill lacks the protection row"
-awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -F 'tripwire' | grep -qF 'boundary' &&
+rreadme=$(awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md")
+printf '%s\n' "$rreadme" | grep -qF 'are tripwires' && printf '%s\n' "$rreadme" | grep -qF "boundary is the remote's branch and tag protection" &&
   pass "protection: the README permissions section calls the guard a tripwire and protection the boundary" ||
   fail "protection: the README lacks the tripwire and boundary paragraph"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#88' && pass "protection: CHANGELOG has a #88 entry under Unreleased" ||
