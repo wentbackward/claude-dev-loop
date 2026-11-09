@@ -1058,20 +1058,26 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 
 ## 2026-11-09 — Union merge for the append-only logs, off by default (#95)
 
-- **Decision:** `merge.union_files` (a list of paths from the repository root) is off by default (`[]`);
-  a project lists its logs to turn it on. The gate's stacking and the merge replay run their rebase with
-  `git -c core.attributesFile=<temporary file>` holding `/<path> merge=union` for each listed path,
-  followed by the user's own global attributes file (`core.attributesFile`, else the XDG default), so the
-  user's attributes still apply and a driver they set for a listed file wins; the repository's
-  `.gitattributes` and `info/attributes` rank above any `core.attributesFile` in git, so a driver they set
-  wins too. The file is removed when the script exits. Entries with spaces or starting `!` or `#` are
-  skipped with a warning. Union keeps both sides once each, "ours" first: in a rebase that is the base,
-  then the branch.
+- **Decision:** `merge.union_files` (literal paths from the repository root) is off by default (`[]`); a
+  project lists its logs to turn it on. The gate's stacking and the merge replay run their rebase with
+  `git -c core.attributesFile=<temporary file> -c merge.dl-union.driver=...`; the file holds
+  `/<path> merge=dl-union` for each listed path, followed by the user's own global attributes file
+  (`core.attributesFile`, else the XDG default), so the user's attributes still apply and a driver they set
+  for a listed file wins. The repository's `.gitattributes` and `info/attributes` rank above any
+  `core.attributesFile` in git, so a driver they set wins too. The file is removed when the script exits.
+- **Driver:** `scripts/union-merge.sh` runs `git merge-file --diff3` (diff3 style keeps each conflict hunk
+  whole: git does not refine it the way it refines `merge=union` hunks), drops the base part of each
+  conflict and keeps ours (in a rebase: the base) then theirs (the branch). It then requires every line to
+  appear in the result at least ours + theirs - base times; that holds for every region of a whole-hunk
+  union, so it fails only where git folded both sides' identical additions into one copy, and the merge
+  becomes a conflict. Files with a line starting with 32 of one marker character are a conflict (the
+  driver could not tell the markers apart). Entries with spaces, wildcards, a backslash or a leading `!` or
+  `#` are skipped with a warning.
 - **Reason:** CLAUDE.md requires every option to be off or backwards compatible by default; a default list
-  would turn conflicts that stop the train today into silent merges in every existing project. The merge
-  replay uses the same attributes, so the replayed tree still equals the gated one, and a base that
-  gained an entry after the gate reads as a re-gate (exit 4) instead of a rebase.
-- **Alternatives:** the issue's default `["CHANGELOG.md", "docs/DECISIONS.md"]` when the files exist
-  (changes behaviour without a key); writing `.git/info/attributes` in the gate worktree (changes the
-  repository's state and would also apply to the checks); a custom merge driver that orders entries
-  (more code, and union already keeps every line).
+  would turn conflicts that stop the train today into merges in every existing project. git's own
+  `merge=union` uses zealous refinement and silently folds lines that two entries share (`- **Alternatives:**
+  none.`, blank separators), so it is not used. The merge replay uses the same driver, so the replayed tree
+  still equals the gated one.
+- **Alternatives:** the issue's default list when the files exist (changes behaviour without a key); git's
+  `merge=union` plus a line-count check afterwards (stops on most decisions entries, which share lines);
+  writing `.git/info/attributes` or a driver into the git config (changes the repository's state).

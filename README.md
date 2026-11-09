@@ -83,16 +83,23 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    base in a separate gate worktree. It then runs the configured checks once on the top of the stack. A red
    train is never merged, not even for an apparent flake: re-run it, then bisect. A branch that conflicts
    drops out of the train and is rebased after the others merge, then published as `<branch>-v2` with
-   `repush.sh` (the loop never force-pushes). Append-only logs that every branch adds to (`CHANGELOG.md`
-   `## Unreleased`, `docs/DECISIONS.md`) need not conflict: list them in `merge.union_files` (off by
-   default) and the stacking keeps both sides of a conflict in those files, the base side first, then the
-   branch, without a line dropped or doubled (git's `merge=union`, through a temporary
-   `core.attributesFile` passed to that one rebase: the user's and the repository's git config and
-   `.gitattributes` are never changed). A conflict in any other file stops the train as before; a merge
-   driver that the repository's `.gitattributes` (or `.git/info/attributes`) or the user's own global
-   attributes set for a listed file wins. The checks then run on the merged result as on any other. The gate reads its rules from the main
-   checkout's `.dev-loop.json`, so a branch that changes that file in any way needs a reason under
-   `## Config` in its notes: every key the plugin reads runs, routes or deletes something (`checks`,
+   `repush.sh` (the loop never force-pushes). The output names the conflicting files (`TRAIN conflict
+   in: ...`). Append-only logs that every branch adds to (`CHANGELOG.md` `## Unreleased`,
+   `docs/DECISIONS.md`) need not conflict: list them in `merge.union_files` (off by default; literal
+   paths from the repository root). The stacking then resolves a conflict in those files with the
+   plugin's merge driver `scripts/union-merge.sh`: each conflicting hunk is kept whole, the base side's
+   hunk first, then the branch's, and no lines are merged inside them (git's own `merge=union` would fold
+   lines both entries share, such as `- **Alternatives:** none.`, into one copy). The driver then checks
+   that every line of the result appears at least as often as the two sides added it; when not (both
+   sides added the same lines at the same spot) it is a conflict, as is a file with a line that looks
+   like a long conflict marker. The driver and a temporary `core.attributesFile` are passed to that one
+   rebase with `git -c`; the user's and the repository's git config and `.gitattributes` are never
+   changed. A conflict in any other file stops the train as before, and a merge driver that the
+   repository's `.gitattributes` (or `.git/info/attributes`) or the user's own global attributes set for
+   a listed file wins. Two branches that make the very same file need no merge: git keeps one copy, with
+   or without the option. The checks then run on the merged result as on any other. The gate reads its
+   rules from the main checkout's `.dev-loop.json`, so a branch that changes that file in any way needs a
+   reason under `## Config` in its notes: every key the plugin reads runs, routes or deletes something (`checks`,
    `deploy`, `format`, `heavy.clean_temp`, `notes_dir`, `remote`, ...), so there is no list of harmless
    keys, and a new key is covered too. The file compares as JSON with sorted keys, so a reformatting is no
    change; a deleted file changes every key. Without a reason the gate names the branch and the changed
@@ -112,9 +119,9 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    branch behind the base gets a merge commit with the gated tree on top (its parents: the gated head and
    the base), pushed as a plain fast-forward, never forced. It opens the PR from the notes file (a leading
    `#` in the title is stripped) and squash-merges exactly that head, whose squash is the gated tree. If
-   the base moved in between, it asks for a new gate. The replay keeps both sides of a conflict in the
-   `merge.union_files` as the gate does, so a base that gained a log entry since the gate means a re-gate
-   (the tree differs), not a rebase; the replayed tree must still equal the gated one.
+   the base moved in between, it asks for a new gate. The replay resolves conflicts in the
+   `merge.union_files` with the same driver as the gate, so a base that gained a log entry since the gate
+   means a re-gate (the tree differs), not a rebase; the replayed tree must still equal the gated one.
 6. **Run and verify.** Jobs that a merged ticket added are run for real, and the `verifier` agent checks
    their outputs. Deploys happen only when the user is not in the middle of using the system, and are
    checked afterwards.
@@ -145,6 +152,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `permissions.sh` | merges the loop's permission rules into the project's settings (dry run by default; see Permission modes) |
 | script | `status.sh` / `event.sh` | read-only status and verdict; the orchestrator's steps into the event log (see Status) |
 | script | `cleanup.sh` | classify every branch and remove merged and abandoned leftovers (see Branch lifecycle) |
+| script | `union-merge.sh` | the merge driver for `merge.union_files`, passed per command by the gate and the merge (see The loop, step 4) |
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
@@ -828,7 +836,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `stall_minutes` (in a check entry, `affected`, `scenarios`) | none (off) | the gate stops a stage whose log has not grown for this many minutes: `<name> stalled: no output for <n> min`, the train is red; a stage queued for a heavy slot is not stalled |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules; the tree check counts untracked files only when newer than the session |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
-| `merge.union_files` | `[]` (off) | paths from the repository root (gitattributes patterns, no spaces) whose conflicts the gate's stacking and the merge replay resolve by keeping both sides, the base first, e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`; any other conflict still stops the train |
+| `merge.union_files` | `[]` (off) | literal paths from the repository root (no spaces, wildcards or backslashes; such entries are skipped with a warning) whose conflicts the gate's stacking and the merge replay resolve by keeping both conflicting hunks whole, the base first (`scripts/union-merge.sh`; a lost line is still a conflict), e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`; any other conflict still stops the train |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |

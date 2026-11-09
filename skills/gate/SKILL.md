@@ -167,11 +167,14 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   flake. Re-run once. If it is still red, bisect: gate the first half, then the second, until the culprit
   branch is found; send the failing output to its implementer; gate and merge the rest without it. Open an
   issue for a test that is genuinely flaky.
-- `TRAIN rebase conflict at <branch>` (exit 3): with `merge.union_files` set (e.g. `["CHANGELOG.md",
-  "docs/DECISIONS.md"]`), conflicts in those files never get here: the stacking keeps both sides, the base
-  first, then the branch. Any other conflict does. Drop that branch, gate the others, and have its implementer
-  rebase it onto the new base after they merge (`git rebase --onto <remote>/<base> <old base> <branch>`
-  when it was stacked; that form is not in the allow list, so it asks for permission). Never force-push it: publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh
+- `TRAIN rebase conflict at <branch>` (exit 3), after a `TRAIN conflict in: <files>` line: with
+  `merge.union_files` set (e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`), conflicts in those files get here
+  only when the driver finds a lost line (both sides added the same lines at the same spot), or when a
+  merge driver set in the repository's or the user's attributes wins; otherwise the stacking keeps both
+  conflicting hunks whole, the base first, then the branch. Any other conflict gets here. Drop that branch,
+  gate the others, and have its implementer rebase it onto the new base after they merge (`git rebase
+  --onto <remote>/<base> <old base> <branch>` when it was stacked; that form is not in the allow list, so
+  it asks for permission). Never force-push it: publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh
   <branch>`, which pushes `<branch>-v2` (then `-v3`, ...) and carries the notes file over; review and
   gate that new name. The old branch is left alone until `cleanup.sh` removes it as superseded.
 - Exit 2: configuration problem; the message names it (often: no `checks` in `.dev-loop.json`).

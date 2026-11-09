@@ -23,14 +23,18 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the command itself through the Bash tool. The DECISIONS entry of #84 names the characters of the
   short-word remark (letters, digits, `_`, `-`).
 - Union logs (#95): `merge.union_files` (off by default) lists the append-only logs every branch adds to,
-  e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`. The gate's stacking (`gate-train.sh`) and the merge
-  replay (`merge-train.sh`) keep both sides of a conflict in those files, the base side first, then the
-  branch, so two branches that each add an entry gate together and merge in order without a rebase or a
-  `-vN` push; a base that gained an entry after the gate is a re-gate (exit 4), not a replay conflict.
-  Git's `merge=union` comes from a temporary attributes file passed to that one rebase
-  (`-c core.attributesFile`), followed by the user's own global attributes; no git config or
-  `.gitattributes` is changed, and a merge driver the repository or the user set for a listed file wins.
-  A conflict in any other file stops the train as before; the replayed tree must still equal the gated one.
+  as literal paths, e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`. The gate's stacking (`gate-train.sh`)
+  and the merge replay (`merge-train.sh`) resolve a conflict in those files with the plugin's merge driver
+  `scripts/union-merge.sh`: both conflicting hunks are kept whole, the base side's first, then the
+  branch's, with no lines merged inside them (unlike git's `merge=union`, which folds shared lines into
+  one copy). It stops as a conflict when a line the two sides added is missing from the result or a file
+  has a line like a long conflict marker. Two branches that each add an entry gate together and merge in
+  order without a rebase or a `-vN` push; a base that gained an entry after the gate is a re-gate
+  (exit 4), not a replay conflict. The driver and a temporary attributes file (followed by the user's own
+  global attributes) are passed to that one rebase with `git -c`; no git config or `.gitattributes` is
+  changed, and a merge driver the repository or the user set for a listed file wins. A conflict in any
+  other file stops the train as before, and a conflict now names its files (`TRAIN conflict in: ...`,
+  `MERGE conflict in: ...`). Entries with spaces, wildcards or a backslash are skipped with a warning.
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,
