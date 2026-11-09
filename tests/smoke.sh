@@ -6332,28 +6332,79 @@ for nojq in "" 1; do
 done
 cp "$qwork/shared-full.json" "$qclaude/settings.json"
 
-# The local file, the configured gate_setup, affected and format commands, and the user settings.
+# The local file, the configured gate_setup, affected and format commands, and the user settings, under jq and
+# python3. The gate and the format hook run gate_setup, affected and format outside the Bash tool, so their
+# note says they stop only when an agent runs the command itself through the Bash tool.
 qadd_ask "$qclaude/settings.local.json" "Bash(npm ci*)"
 qadd_ask "$qclaude/settings.local.json" "Bash(scripts/affected.sh)"
 qadd_ask "$qclaude/settings.local.json" "Bash(gofmt *)"
 printf '{"permissions": {"ask": ["Bash(make lint)"], "deny": ["Bash(make check)"], "allow": ["Bash(npm test)"]}}\n' \
   >"$quser/settings.json"
-out=$(qdoctor)
-printf '%s\n' "$out" | grep -qF 'ask rule Bash(npm ci*) in .claude/settings.local.json stops "npm ci"' &&
-  pass "ask rules: an ask rule in the local file matching gate_setup is noted" || fail "ask rules: no note for gate_setup ($out)"
-printf '%s\n' "$out" | grep -qF 'ask rule Bash(scripts/affected.sh) in .claude/settings.local.json stops "scripts/affected.sh"' &&
-  pass "ask rules: an ask rule matching the affected command is noted" || fail "ask rules: no note for affected ($out)"
-printf '%s\n' "$out" | grep -F 'ask rule Bash(gofmt *) in .claude/settings.local.json stops "gofmt -w ' | grep -qF 'narrow it' &&
-  pass "ask rules: an ask rule matching the format command is noted" || fail "ask rules: no note for format ($out)"
-printf '%s\n' "$out" | grep -qF "ask rule Bash(make lint) in the user settings ($quser/settings.json) stops \"make lint\"" &&
-  pass "ask rules: an ask rule in the user settings is noted, naming the file" || fail "ask rules: no note for the user ask rule ($out)"
-expect "ask rules: the user settings' deny and allow rules are not read" "" \
-  "$(printf '%s\n' "$out" | grep -F 'make check' | grep -F 'user settings')"
-expect "ask rules: a rule without a wildcard prefix is not said to match inside other words" "" \
-  "$(printf '%s\n' "$out" | grep -F 'Bash(npm ci*)' | grep -F 'inside other words')"
-# A narrow ask rule (the paths it guards) and another tool's rule are not noted.
-rm -f "$quser/settings.json"
+qhook='a command the gate or the format hook runs outside the Bash tool: it stops auto mode only when an agent runs that command itself through the Bash tool'
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  out=$(qdoctor "$nojq")
+  printf '%s\n' "$out" | grep -F 'ask rule Bash(npm ci*) in .claude/settings.local.json matches "npm ci"' | grep -qF "$qhook" &&
+    pass "ask rules: an ask rule in the local file matching gate_setup is noted as stopping only an agent's own run$label" ||
+    fail "ask rules: no gate_setup note worded for the gate$label ($out)"
+  printf '%s\n' "$out" | grep -F 'ask rule Bash(scripts/affected.sh) in .claude/settings.local.json matches "scripts/affected.sh"' |
+    grep -qF "$qhook" && pass "ask rules: an ask rule matching the affected command is noted as stopping only an agent's own run$label" ||
+    fail "ask rules: no affected note worded for the gate$label ($out)"
+  printf '%s\n' "$out" | grep -F 'ask rule Bash(gofmt *) in .claude/settings.local.json matches "gofmt -w ' | grep -F "$qhook" |
+    grep -qF 'narrow it' && pass "ask rules: an ask rule matching the format command is noted as stopping only an agent's own run$label" ||
+    fail "ask rules: no format note worded for the format hook$label ($out)"
+  printf '%s\n' "$out" | grep -qF "ask rule Bash(make lint) in the user settings ($quser/settings.json) stops \"make lint\", a command the loop runs" &&
+    pass "ask rules: an ask rule in the user settings is noted, naming the file$label" ||
+    fail "ask rules: no note for the user ask rule$label ($out)"
+  expect "ask rules: a command an agent runs (fast_check) is not worded as run by the gate$label" "" \
+    "$(printf '%s\n' "$out" | grep -F 'ask rule Bash(make lint)' | grep -F 'outside the Bash tool')"
+  expect "ask rules: the user settings' deny and allow rules are not read$label" "" \
+    "$(printf '%s\n' "$out" | grep -F 'make check' | grep -F 'user settings')"
+  expect "ask rules: a rule without a wildcard prefix is not said to match inside other words$label" "" \
+    "$(printf '%s\n' "$out" | grep -F 'Bash(npm ci*)' | grep -F 'inside other words')"
+done
 cp "$qwork/local-full.json" "$qclaude/settings.local.json"
+
+# dl_perm_rules gives the same rules under jq and python3: a list that is not an array yields none on both paths.
+# qrules NOJQ FILE LIST: dl_perm_rules FILE LIST, with python3 when NOJQ is set.
+qrules() {
+  DEV_LOOP_NO_JQ=$1 bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/permissions.sh"; dl_perm_rules "$2" "$3"' \
+    _ "$plugin" "$2" "$3"
+}
+printf '%s\n' '{"permissions": {"ask": {"a": "Bash(make lint)"}, "allow": "Bash(make lint)", "deny": 3}}' >"$qwork/nonlist.json"
+printf '%s\n' '{"permissions": {"ask": ["Bash(make lint)", 3, {"a": "b"}, "Bash(npm ci)"]}}' >"$qwork/mixed.json"
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  for list in ask allow deny; do
+    expect "ask rules: dl_perm_rules gives no $list rules for a non-array list$label" "" "$(qrules "$nojq" "$qwork/nonlist.json" "$list")"
+  done
+  expect "ask rules: dl_perm_rules gives the string rules of an array$label" "Bash(make lint)|Bash(npm ci)" \
+    "$(qrules "$nojq" "$qwork/mixed.json" ask | paste -sd'|' -)"
+done
+
+# A malformed user settings.json and a non-list ask print no note and leave the exit status unchanged.
+# qstatus [NOJQ]: doctor's exit status.
+qstatus() { DEV_LOOP_NO_JQ=${1:-} qenv "$plugin/scripts/doctor.sh" >/dev/null; echo $?; }
+rm -f "$quser/settings.json"
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  qstatus0=$(qstatus "$nojq")
+  printf '{"permissions": {"ask": ["Bash(make lint)"]\n' >"$quser/settings.json"
+  expect "ask rules: a malformed user settings.json prints no note$label" "" "$(qdoctor "$nojq" | grep -F 'ask rule')"
+  expect "ask rules: a malformed user settings.json leaves the exit status unchanged$label" "$qstatus0" "$(qstatus "$nojq")"
+  printf '{"permissions": {"ask": {"rule": "Bash(make lint)"}}}\n' >"$quser/settings.json"
+  expect "ask rules: a non-list ask in the user settings prints no note$label" "" "$(qdoctor "$nojq" | grep -F 'ask rule')"
+  expect "ask rules: a non-list ask leaves the exit status unchanged$label" "$qstatus0" "$(qstatus "$nojq")"
+  python3 -I -c 'import json,sys
+d=json.load(open(sys.argv[1])); d["permissions"]["ask"]={"rule": "Bash(make lint)"}; json.dump(d, open(sys.argv[1], "w"))' \
+    "$qclaude/settings.local.json"
+  expect "ask rules: a non-list ask in the local file prints no note$label" "" "$(qdoctor "$nojq" | grep -F 'ask rule')"
+  expect "ask rules: a non-list ask in the local file leaves the exit status unchanged$label" "$qstatus0" "$(qstatus "$nojq")"
+  cp "$qwork/local-full.json" "$qclaude/settings.local.json"
+  rm -f "$quser/settings.json"
+done
+
+# A narrow ask rule (the paths it guards) and another tool's rule are not noted.
 qadd_ask "$qclaude/settings.json" "Bash(go build -o /*)"
 qadd_ask "$qclaude/settings.json" "Read(./secrets/**)"
 expect "ask rules: a narrow ask rule and another tool's rule are not noted" "" "$(qdoctor | grep -F 'ask rule')"
@@ -6373,6 +6424,11 @@ grep -qF 'note permissions: ask rule' "$plugin/skills/doctor/SKILL.md" && pass "
   fail "ask rules: the doctor skill lacks the ask-rule row"
 awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF 'ask beats allow' &&
   pass "ask rules: the README permissions section describes the ask-rule check" || fail "ask rules: the README lacks the ask-rule check"
+awk '/\(#84\)$/ {on = 1; next} /^## / {on = 0} on' "$plugin/docs/DECISIONS.md" |
+  grep -qF 'characters (letters, digits, `_`, `-`)' && pass "ask rules: DECISIONS names the characters of the short-word heuristic" ||
+  fail "ask rules: the DECISIONS #84 entry does not name the characters the code accepts"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#91' && pass "ask rules: CHANGELOG has a #91 entry under Unreleased" ||
+  fail "ask rules: no #91 entry under ## Unreleased"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#84' && pass "ask rules: CHANGELOG has a #84 entry under Unreleased" ||
   fail "ask rules: no #84 entry under ## Unreleased"
 cd "$work/project" || exit 1
