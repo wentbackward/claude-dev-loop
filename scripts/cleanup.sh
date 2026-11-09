@@ -410,12 +410,22 @@ aside_note() {
   done
 }
 
+# worktree_is PATH BRANCH: the worktree at PATH is a worktree's top folder with BRANCH checked out (a
+# porcelain path cut at a newline names some other folder).
+worktree_is() {
+  local top
+  [ "$(git -C "$1" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$2" ] || return 1
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] &&
+    [ "$(real_path "$top")" = "$(real_path "$1")" ]
+}
+
 # merged_worktrees: "<branch>\t<tip>\t<path>\t<verdict>" for each worktree whose branch the ledger or a
 # merged PR has at its tip (containment alone is a fresh branch, never enough).
 merged_worktrees() {
   local name path tip reason
   while IFS=$'\t' read -r name path; do
     [ -d "$path" ] || { aside_note "$path" "$name"; continue; }
+    worktree_is "$path" "$name" || continue
     tip=$(git rev-parse -q --verify "refs/heads/$name") || continue
     reason=$(classify local "$name" "$tip" "$(git log -1 --format=%ct "$tip")" any | awk -F'\t' '$1 == "merged" {print $5}')
     case "$reason" in "in the merge ledger" | "merged PR "*) ;; *) continue ;; esac
