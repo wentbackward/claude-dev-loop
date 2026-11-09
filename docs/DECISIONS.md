@@ -823,3 +823,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   strings and takes the earlier; `dl_branch_args` names a bare `--` (exit 2, as any other option);
   `repush.sh` treats the last non-blank line as the footer when it starts with the robot emoji and
   "Generated with ", drops the blank lines before it and writes body, blank, `Supersedes`, blank, footer.
+
+## 2026-11-08 — Test work dirs (#80): what is removed, and by whom
+
+- **Decision:** the suites end through `dl_suite_end` (`scripts/lib/workdirs.sh`), which removes the work dir only on a green run and only when it is a real directory owned by the user, directly in `TMPDIR` (compared with symlinks resolved), named `dev-loop-smoke.` or `dev-loop-identity.` plus six letters or digits. The gate learns red work dirs only from its own check logs (`(work dir PATH)`), records them in `gate-work-dirs.txt` in the project's state directory (the logs are overwritten per run), and keeps the newest recorded one of each suite. A red run that cannot remove its dir says `not removed`. `doctor.sh` counts leftovers and names the thresholds (10% note, 2% MISSING) for space and inodes, whichever is lower; `df -i` columns are found by name (GNU `IFree`/`IUsed`, macOS `ifree`/`iused`) and the inode part is left out where they are missing or zero.
+- **Reason:** a glob over `TMPDIR` would delete the live work dir of a suite another worktree is running at that moment; dirs the gate's own logs name belong to runs that have ended. The leftovers of earlier versions are counted by the doctor rather than deleted.
+- **Alternatives:** an EXIT trap in the suites (would also remove a red run's evidence on an early `exit`); pruning every `dev-loop-smoke.*` older than a day (still guesses about other runs); a `find -mtime` sweep in `cleanup.sh` (a second deletion path to test).
