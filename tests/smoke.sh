@@ -6164,7 +6164,9 @@ echo "$out" | grep -qF "kept worktree $kwork/wt22: its archive could not be writ
 # The settle window above 0 after the move: renaming the worktree sets its own folder's ctime to now, which
 # must not count as a change. A find shim turns -mmin/-cmin into -newer/-cnewer against a file touched right
 # after the setup (no sleep: a setup file is at most as new, never newer), so only a later change is recent;
-# the move comes many git calls later.
+# the move comes many git calls later. The test relies on find -newer being strict and on file times finer
+# than one second: with 1-second timestamps (older macOS HFS+) the move can share settle.ref's second, look
+# older than the window, and the test passes without exercising the move-aside check.
 kbranch feat/50-settle merged && kwt feat/50-settle "$kwork/wt50"
 : >"$kwork/settle.ref"
 mkdir -p "$kwork/shim2"
@@ -6232,9 +6234,36 @@ echo "$out" | grep -F "$kwork/wt51 " | grep -qF "$kaside" &&
 knl="$kwork/wt60$(printf '\nx')"
 kbranch feat/60-newline merged && kwt feat/60-newline "$knl"
 kbranch feat/61-cut merged && kwt feat/61-cut "$kwork/wt60"
-out=$(kenv "$plugin/scripts/cleanup.sh")
-! printf '%s\n' "$out" | grep -qF "feat/60-newline" && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
+# It is skipped with a note on stderr (#93); stdout, what is listed, kept and removed, stays byte for byte
+# what a copy of the scripts without the note prints, in the dry run and with --apply.
+# ksplit NAME DIR ARGS...: DIR/cleanup.sh ARGS with stdout (the report's time cut) in $kwork/NAME.out and
+# stderr in $kwork/NAME.err.
+ksplit() {
+  local name=$1 dir=$2
+  shift 2
+  (cd "$kwork/project" && DEV_LOOP_HOME="$khome" FAKE_GH_DIR="$kwork/gh" DEV_LOOP_WORKTREE_SETTLE_MINUTES=0 \
+    "$dir/cleanup.sh" "$@" 2>"$kwork/$name.err" | sed 's/cleanup-[0-9-]*\.tsv$/cleanup.tsv/' >"$kwork/$name.out")
+}
+cp -R "$plugin/scripts" "$kwork/nonote"
+sed 's/^skip_note() {$/skip_note() { return 0/' "$plugin/scripts/cleanup.sh" >"$kwork/nonote/cleanup.sh"
+cmp -s "$plugin/scripts/cleanup.sh" "$kwork/nonote/cleanup.sh" && fail "kwt: the copy without the note is unchanged"
+kenv "$plugin/scripts/cleanup.sh" --apply >/dev/null
+ksplit nldry "$plugin/scripts" && ksplit nlapply "$plugin/scripts" --apply
+ksplit nlrefdry "$kwork/nonote" && ksplit nlrefapply "$kwork/nonote" --apply
+out=$(cat "$kwork/nldry.out")
+! grep -qF "feat/60-newline" "$kwork/nldry.out" && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
   pass "kwt: a worktree path with a newline is not listed under another worktree's path" || fail "kwt: wt60: $out"
+knote="note: skipped worktree $kwork/wt60 (feat/60-newline): it has feat/61-cut checked out, not feat/60-newline"
+for kmode in nldry nlapply; do
+  grep -qF "$knote" "$kwork/$kmode.err" &&
+    pass "kwt: a worktree skipped as not matching gets a note on stderr ($kmode)" ||
+    fail "kwt: no skip note on stderr ($kmode): $(cat "$kwork/$kmode.err")"
+done
+cmp -s "$kwork/nldry.out" "$kwork/nlrefdry.out" && cmp -s "$kwork/nlapply.out" "$kwork/nlrefapply.out" &&
+  pass "kwt: the skip note leaves stdout byte-identical, in the dry run and with --apply" ||
+  fail "kwt: stdout changed: $(diff "$kwork/nlrefdry.out" "$kwork/nldry.out"; diff "$kwork/nlrefapply.out" "$kwork/nlapply.out")"
+expect "kwt: stderr gains only the skip note" "$knote|$knote" \
+  "$(diff "$kwork/nlrefdry.err" "$kwork/nldry.err" | sed -n 's/^> //p')|$(diff "$kwork/nlrefapply.err" "$kwork/nlapply.err" | sed -n 's/^> //p')"
 git -C "$kwork/project" worktree remove --force "$knl"
 
 # merge-train's kept line names the command; the dev-loop skill and the CHANGELOG point at it.
@@ -6251,6 +6280,8 @@ grep -qF -- "--include worktrees" "$plugin/skills/dev-loop/SKILL.md" &&
   fail "kwt: the dev-loop skill does not point at --include worktrees"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#83' &&
   pass "kwt: CHANGELOG has a #83 entry under Unreleased" || fail "kwt: no #83 entry under ## Unreleased"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#93' &&
+  pass "kwt: CHANGELOG has a #93 entry under Unreleased" || fail "kwt: no #93 entry under ## Unreleased"
 git -C "$kwork/project" checkout -q main
 git -C "$kwork/project" worktree unlock "$kwork/wt3"
 chmod 755 "$kwork/wt14/locked-away"

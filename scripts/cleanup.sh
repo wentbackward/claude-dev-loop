@@ -410,22 +410,35 @@ aside_note() {
   done
 }
 
-# worktree_is PATH BRANCH: the worktree at PATH is a worktree's top folder with BRANCH checked out (a
-# porcelain path cut at a newline names some other folder).
-worktree_is() {
-  local top
-  [ "$(git -C "$1" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$2" ] || return 1
-  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] &&
-    [ "$(real_path "$top")" = "$(real_path "$1")" ]
+# worktree_mismatch PATH BRANCH: why the folder at PATH is not a worktree's top folder with BRANCH checked
+# out (a porcelain path cut at a newline names some other folder); nothing when it is.
+worktree_mismatch() {
+  local head top
+  head=$(git -C "$1" symbolic-ref -q HEAD 2>/dev/null)
+  if [ "$head" != "refs/heads/$2" ]; then
+    head=${head#refs/heads/}
+    printf 'it has %s checked out, not %s\n' "${head:-no branch}" "$2"
+    return
+  fi
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$top" ] || [ "$(real_path "$top")" != "$(real_path "$1")" ]; then
+    printf 'its top folder is %s, not that path\n' "${top:-unknown}"
+  fi
+}
+
+# skip_note PATH BRANCH REASON: on stderr, a note that the worktree listed at PATH for BRANCH is skipped.
+skip_note() {
+  printf 'note: skipped worktree %s (%s): %s\n' "$1" "$2" "$3" >&2
 }
 
 # merged_worktrees: "<branch>\t<tip>\t<path>\t<verdict>" for each worktree whose branch the ledger or a
 # merged PR has at its tip (containment alone is a fresh branch, never enough).
 merged_worktrees() {
-  local name path tip reason
+  local name path tip reason mismatch
   while IFS=$'\t' read -r name path; do
     [ -d "$path" ] || { aside_note "$path" "$name"; continue; }
-    worktree_is "$path" "$name" || continue
+    mismatch=$(worktree_mismatch "$path" "$name")
+    [ -z "$mismatch" ] || { skip_note "$path" "$name" "$mismatch"; continue; }
     tip=$(git rev-parse -q --verify "refs/heads/$name") || continue
     reason=$(classify local "$name" "$tip" "$(git log -1 --format=%ct "$tip")" any | awk -F'\t' '$1 == "merged" {print $5}')
     case "$reason" in "in the merge ledger" | "merged PR "*) ;; *) continue ;; esac
