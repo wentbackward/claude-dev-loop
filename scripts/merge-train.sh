@@ -55,9 +55,10 @@ dl_identities_enabled && identity_mode=yes
 post_status=$(cfg github.post_status "${identity_mode:+true}")
 
 as_role() { "$scripts_dir/as-role.sh" "$@"; }
+DL_UNION_ATTRIBUTES="" # set below; never an inherited path for the trap to remove
+trap 'rc=$?; rm -f "${DL_UNION_ATTRIBUTES:-}"; dl_event merge merge-ended rc="$rc"' EXIT
 DL_UNION_ATTRIBUTES=$(cd "$gate" && dl_union_attributes) ||
   dl_die "cannot write the attributes file for merge.union_files"
-trap 'rc=$?; rm -f "${DL_UNION_ATTRIBUTES:-}"; dl_event merge merge-ended rc="$rc"' EXIT
 dl_event merge merge-started branches="$*"
 
 [ -f "$train_file" ] || { echo "MERGE refused: no green train recorded (run gate-train.sh)"; exit 8; }
@@ -113,6 +114,7 @@ for branch in "$@"; do
   fi
   git checkout -q -B "replay-$branch" "train-$branch"
   if ! dl_git_union rebase -q --onto "$DL_REMOTE/$DL_BASE" "$from" "replay-$branch" >/dev/null 2>&1; then
+    dl_conflict_files "MERGE"
     git rebase --abort >/dev/null 2>&1
     git checkout -q --detach "$DL_REMOTE/$DL_BASE"
     echo "MERGE replay conflict at $branch"

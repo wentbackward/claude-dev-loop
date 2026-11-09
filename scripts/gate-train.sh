@@ -84,6 +84,7 @@ train_ended() {
   case $1 in 0) result=green ;; 1) result=red ;; 3) result=conflict ;; esac
   dl_event gate train-ended rc="$1" result="$result"
 }
+DL_UNION_ATTRIBUTES="" # set below; never an inherited path for the trap to remove
 trap 'train_ended $?' EXIT
 dl_event gate train-started pid="$$" branches="$*"
 # The stages' heavy.sh jobs name this gate in their events, so status.sh can tell them from other jobs.
@@ -124,6 +125,7 @@ for branch in "$@"; do
   git branch -q -f "train-$branch" "$source_head"
   git checkout -q "train-$branch"
   if ! dl_git_union rebase -q --onto "$base_ref" "$(upstream_of "$branch")" >/dev/null 2>&1; then
+    dl_conflict_files "TRAIN"
     git rebase --abort >/dev/null 2>&1
     git checkout -q --detach "$DL_REMOTE/$DL_BASE"
     echo "TRAIN rebase conflict at $branch"
