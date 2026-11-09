@@ -11,6 +11,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   note names the file, the rule, the command and the fix (narrow it, e.g. to the paths it guards); a rule
   such as `Bash(*go * -o*)` is also said to match inside other words. The template's ask rules match
   nothing. Doctor stays read only.
+- Repush notes (#82): `repush.sh` keeps a CRLF notes file CRLF (the Supersedes line and its blank lines
+  take the CRLF ending, and a CR-only blank line before the footer counts as blank), and notes without a
+  final newline still end without one; every byte other than the added Supersedes line is the original's.
+  `tests/smoke.sh --section` was already matching a section id before a title; a test now covers it.
 - Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` name their work dir on their first line
   (`started smoke (work dir PATH)`, a form the summary patterns `^(smoke|identity): ` do not match) and
   remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names
