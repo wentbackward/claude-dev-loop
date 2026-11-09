@@ -79,6 +79,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   that are not build output or an unreadable folder, and ones changed in the last 10 minutes (mtime or
   ctime; `DEV_LOOP_WORKTREE_SETTLE_MINUTES`). merge-train's "kept local ... has changes" line and the
   dev-loop and merge skills name that command instead of `git worktree remove --force`.
+- Skipped worktrees (#93): a worktree that `cleanup.sh` skips because it does not match its listing (it has
+  another branch checked out, as when a path with a newline is cut and names another folder, or its real
+  path is not its top folder) gets a `note: skipped worktree <path> (<branch>): <reason>` line on stderr,
+  in the dry run and with `--apply`, instead of disappearing silently. What is listed, kept and removed
+  does not change.
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
   in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's
