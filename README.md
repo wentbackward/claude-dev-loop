@@ -321,21 +321,25 @@ leftovers it can count without GitHub.
 untracked files keeps its branch, and the "kept local ... has changes" line names `cleanup.sh --apply
 --include worktrees`. `cleanup.sh` lists the worktrees of merged branches (the ledger or a merged PR at
 the tip; a branch the base merely contains is new work and is not listed) with their modified and
-untracked file counts and the first file names, each `remove` or `keep` with the reason. With `--apply
---include worktrees` it writes each `remove` one to a new
-`~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/` (a `-2`, `-3` suffix when two branch names map
-to one folder): `changes.patch` and `staged.patch` (the worktree and the index against `HEAD`, binary,
-whatever the user's diff config), `untracked.tar`, and `manifest.txt` with the branch, tip and file
-lists. It checks that the patches reverse-apply and the tar lists every untracked file, checks right
-before the removal that the worktree's changes, index and untracked files still match the archive, then
-removes the worktree with `git worktree remove --force` and deletes the branch at the merged tip (saved
-to the bundle like any other). Always kept: the main checkout and the gate worktree (compared as real
-paths, so a symlinked `worktrees_dir` counts), a locked worktree, one holding another worktree, one with
-assume-unchanged or skip-worktree files, ignored files that are not build output (`merge.rebuildable`)
-or a folder it cannot read, and one with any file changed (mtime or ctime) in the last 10 minutes (an
-agent may still work there; `DEV_LOOP_WORKTREE_SETTLE_MINUTES` sets the window, 0 turns it off).
-Restore one with `git worktree add <path> <branch>` (from the bundle), then `git apply --cached
-staged.patch`, `git apply --binary changes.patch` and `tar -xf untracked.tar` in it.
+untracked file counts and the first file names, each `remove` or `keep` with the reason; the listing
+takes no index lock (`git --no-optional-locks`). With `--apply --include worktrees` it writes each
+`remove` one to a new `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/` (a `-2`, `-3` suffix
+when two branch names map to one folder): `changes.patch` and `staged.patch` (the worktree and the index
+against `HEAD`, binary, whatever the user's diff config), `untracked.tar`, and `manifest.txt` with the
+branch, tip, file lists and a restore line. It checks that the patches reverse-apply and the tar lists
+every untracked file, checks that the worktree's changes, index and untracked files still match the
+archive, moves the worktree aside (`<path>.removing-<pid>`) and checks again (on a difference it moves
+it back and keeps it), then removes it with `git worktree remove --force` and deletes the branch at the
+merged tip (saved to the bundle when the base does not contain it). Always kept: the main checkout and
+the gate worktree (compared as real paths, so a symlinked `worktrees_dir` counts), a locked worktree, one
+with submodules (their git dirs belong to the worktree), per-worktree refs (`refs/worktree/*`,
+`refs/bisect/*`) or another worktree inside it, one with assume-unchanged or skip-worktree files,
+ignored files that are not build output (`merge.rebuildable`) or a folder it cannot read, and one with
+any file changed (mtime or ctime) in the last 10 minutes (an agent may still work there;
+`DEV_LOOP_WORKTREE_SETTLE_MINUTES` sets the window, 0 turns it off). Restore one as its manifest says:
+`git worktree add <path> <tip>` (when the base does not contain the tip, first fetch the branch from the
+bundle that run printed), then `git apply --cached staged.patch`, `git apply --binary changes.patch` and
+`tar -xf untracked.tar` in it.
 
 ## Current-state docs (optional)
 

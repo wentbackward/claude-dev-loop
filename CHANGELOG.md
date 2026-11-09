@@ -51,13 +51,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - Kept worktrees (#83): `cleanup.sh` lists the worktrees of merged branches (ledger or merged PR) that
   `merge-train.sh` kept for their changes, with their modified and untracked files, each `remove` or
   `keep` with the reason. `--apply --include worktrees` archives each `remove` one first
-  (`changes.patch` and `staged.patch` against `HEAD`, `untracked.tar` and `manifest.txt` in a new
-  `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/`, checked), checks right before the removal that
-  the worktree still matches the archive, then removes it and deletes its branch at the merged tip. The
-  main checkout and the gate worktree (real paths), locked worktrees, ones holding another worktree,
-  skip-worktree files, ignored files that are not build output or an unreadable folder, and ones changed
-  in the last 10 minutes (mtime or ctime; `DEV_LOOP_WORKTREE_SETTLE_MINUTES`) are always kept. merge-train's "kept local ... has changes" line and the dev-loop and merge skills name that
-  command instead of `git worktree remove --force`.
+  (`changes.patch` and `staged.patch` against `HEAD`, `untracked.tar` and `manifest.txt` with a restore
+  line in a new `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/`, checked), checks that the
+  worktree still matches the archive, moves it aside and checks again, then removes it and deletes its
+  branch at the merged tip. Always kept: the main checkout and the gate worktree (real paths), locked
+  worktrees, ones with submodules, per-worktree refs (`refs/worktree/*`, `refs/bisect/*`), another
+  worktree inside, skip-worktree files, ignored files that are not build output or an unreadable folder,
+  and ones changed in the last 10 minutes (mtime or ctime; `DEV_LOOP_WORKTREE_SETTLE_MINUTES`).
+  merge-train's "kept local ... has changes" line and the dev-loop and merge skills name that command
+  instead of `git worktree remove --force`.
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
   in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's
