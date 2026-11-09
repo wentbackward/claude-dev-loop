@@ -37,6 +37,7 @@ smoke_needs() {
     14c) echo 11b 14b ;;
     16) echo 10 12 14 15 ;;
     26) echo 16 ;;
+    27b) echo 27 ;;
   esac
 }
 
@@ -5003,6 +5004,151 @@ grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the
   fail "wtd: no doctor skill row for worktrees"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
+cd "$work/project" || exit 1
+
+# 27. Forced failure (#80): red only when DEV_LOOP_SMOKE_FORCE_FAIL=1, so section 27b can run a red suite.
+expect "work dirs: the forced failure is off" "" "${DEV_LOOP_SMOKE_FORCE_FAIL:-}"
+
+# 27b. Test work dirs (#80): a green suite removes its work dir, a red one or DEV_LOOP_KEEP_WORK=1 keeps it
+# and names it; removal touches only the suite's own mktemp dir in TMPDIR; the gate keeps the newest red
+# work dir of each suite named by its logs and removes the older ones, nothing else.
+kwork="$work/workdirs"
+ktmp="$kwork/tmp"
+mkdir -p "$ktmp/other-dir" "$kwork/elsewhere/dev-loop-smoke.abc123" "$kwork/target" "$ktmp/sub/dev-loop-smoke.abc123"
+echo keep >"$ktmp/other.txt"
+echo keep >"$ktmp/other-dir/file"
+echo keep >"$kwork/target/file"
+ln -s "$kwork/target" "$ktmp/dev-loop-smoke.link12"
+mkdir "$ktmp/dev-loop-smoke.abc123" "$ktmp/dev-loop-identity.abc123" "$ktmp/dev-loop-smoke.x" "$ktmp/not-a-suite.abc123"
+# kremove PATH PREFIX: dl_remove_work_dir with TMPDIR=$ktmp; prints its exit status.
+kremove() { (TMPDIR="$ktmp" && . "$plugin/scripts/lib/workdirs.sh" && dl_remove_work_dir "$1" "$2"; echo $?); }
+expect "work dirs: a path not under TMPDIR is refused" 1 "$(kremove "$kwork/elsewhere/dev-loop-smoke.abc123" dev-loop-smoke)"
+[ -d "$kwork/elsewhere/dev-loop-smoke.abc123" ] && pass "work dirs: the dir outside TMPDIR stays" || fail "work dirs: removed a dir outside TMPDIR"
+expect "work dirs: a dir in a subdirectory of TMPDIR is refused" 1 "$(kremove "$ktmp/sub/dev-loop-smoke.abc123" dev-loop-smoke)"
+expect "work dirs: a symlink is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.link12" dev-loop-smoke)"
+[ -L "$ktmp/dev-loop-smoke.link12" ] && [ -f "$kwork/target/file" ] && pass "work dirs: the symlink and its target stay" ||
+  fail "work dirs: the symlink or its target went"
+expect "work dirs: another suite's prefix is refused" 1 "$(kremove "$ktmp/dev-loop-identity.abc123" dev-loop-smoke)"
+expect "work dirs: an unknown prefix is refused" 1 "$(kremove "$ktmp/not-a-suite.abc123" not-a-suite)"
+expect "work dirs: a name that is not PREFIX.XXXXXX is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.x" dev-loop-smoke)"
+expect "work dirs: TMPDIR itself is refused" 1 "$(kremove "$ktmp" dev-loop-smoke)"
+expect "work dirs: a path ending in /.. is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.abc123/.." dev-loop-smoke)"
+expect "work dirs: an empty path is refused" 1 "$(kremove "" dev-loop-smoke)"
+expect "work dirs: a missing dir is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.zzz999" dev-loop-smoke)"
+expect "work dirs: the suite's own dir is removed" 0 "$(kremove "$ktmp/dev-loop-smoke.abc123" dev-loop-smoke)"
+[ ! -e "$ktmp/dev-loop-smoke.abc123" ] && pass "work dirs: the suite's own dir is gone" || fail "work dirs: the dir is still there"
+expect "work dirs: everything else in TMPDIR stays" \
+  "dev-loop-identity.abc123 dev-loop-smoke.link12 dev-loop-smoke.x not-a-suite.abc123 other-dir other.txt sub" \
+  "$(cd "$ktmp" && ls | paste -sd' ' -)"
+[ -f "$ktmp/other-dir/file" ] && [ -d "$ktmp/sub/dev-loop-smoke.abc123" ] && pass "work dirs: other files keep their content" ||
+  fail "work dirs: other files lost content"
+
+# A whole suite run (section 27) in its own TMPDIR: green removes its dir, red and DEV_LOOP_KEEP_WORK=1 keep it.
+# ksuite NAME [VAR=VALUE...]: run tests/smoke.sh --section 27 with TMPDIR=$kwork/NAME; sets kout and krc.
+ksuite() {
+  local dir="$kwork/$1"
+  shift
+  mkdir -p "$dir"
+  kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 27 2>&1 | tail -n 1)
+  kleft=$(cd "$dir" && ls -d dev-loop-smoke.* 2>/dev/null)
+}
+ksuite green
+expect "work dirs: a green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
+expect "work dirs: a green suite leaves no dev-loop-smoke.* dir" "" "$kleft"
+ksuite red DEV_LOOP_SMOKE_FORCE_FAIL=1
+[ -n "$kleft" ] && [ -d "$kwork/red/$kleft" ] && pass "work dirs: a red suite keeps its work dir" || fail "work dirs: a red suite removed its dir"
+expect "work dirs: a red suite names its work dir" "smoke: 0 passed, 1 failed (work dir $kwork/red/$kleft)" "$kout"
+ksuite keep DEV_LOOP_KEEP_WORK=1
+[ -n "$kleft" ] && pass "work dirs: DEV_LOOP_KEEP_WORK=1 keeps a green suite's dir" || fail "work dirs: DEV_LOOP_KEEP_WORK=1 did not keep it"
+expect "work dirs: DEV_LOOP_KEEP_WORK=1 names the dir" "smoke: 1 passed, 0 failed (work dir $kwork/keep/$kleft)" "$kout"
+grep -q 'dl_suite_end identity "\$work" "\$passed" "\$failed"' "$plugin/tests/identity.sh" &&
+  pass "work dirs: identity.sh ends through dl_suite_end" || fail "work dirs: identity.sh does not end through dl_suite_end"
+
+# The gate: a red check that names its work dir, three times; then a green one.
+gtmp="$kwork/gtmp"
+mkdir -p "$gtmp" "$kwork/gout/dev-loop-smoke.out123"
+mkdir "$gtmp/dev-loop-smoke.decoy1" "$gtmp/dev-loop-identity.decoy1"
+echo keep >"$gtmp/other.txt"
+ln -s "$kwork/target" "$gtmp/dev-loop-smoke.link12"
+git init -q --bare "$kwork/origin.git"
+git clone -q "$kwork/origin.git" "$kwork/project" 2>/dev/null
+cd "$kwork/project" || exit 1
+printf '{"base_branch": "main", "checks": ["true"]}\n' >.dev-loop.json
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+git checkout -q -b feat/80-dirs
+echo two >>src.txt && git commit -q -am "feat: dirs (Refs #80)" && git push -q -u origin feat/80-dirs
+# kgate COMMAND: gate feat/80-dirs with one check running COMMAND, TMPDIR=$gtmp; sets out and rc.
+kgate() {
+  printf '{"base_branch": "main", "checks": [{"name": "suites", "heavy": false, "command": %s}]}\n' "$1" >"$kwork/gate.json"
+  out=$(TMPDIR="$gtmp" DEV_LOOP_HOME="$kwork/home" DEV_LOOP_LOCK_DIR="$kwork/locks" DEV_LOOP_CONFIG="$kwork/gate.json" \
+    KWORK="$kwork" "$plugin/scripts/gate-train.sh" feat/80-dirs 2>&1)
+  rc=$?
+}
+kred='"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); i=$(mktemp -d \"$TMPDIR/dev-loop-identity.XXXXXX\"); echo \"smoke: 0 passed, 1 failed (work dir $s)\"; echo \"identity: 0 passed, 1 failed (work dir $i)\"; echo $s >>\"$KWORK/smoke.made\"; echo $i >>\"$KWORK/identity.made\"; exit 1"'
+kgate '"echo \"smoke: 0 passed, 1 failed (work dir $KWORK/gout/dev-loop-smoke.out123)\"; echo \"smoke: (work dir $TMPDIR/dev-loop-smoke.link12)\"; exit 1"'
+kgate "$kred"
+kgate "$kred"
+kgate "$kred"
+expect "work dirs: the red gate is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
+expect "work dirs: the gate keeps only the newest red smoke dir" "$(tail -n 1 "$kwork/smoke.made")" \
+  "$(for d in $(cat "$kwork/smoke.made"); do [ -d "$d" ] && echo "$d"; done)"
+expect "work dirs: the gate keeps only the newest red identity dir" "$(tail -n 1 "$kwork/identity.made")" \
+  "$(for d in $(cat "$kwork/identity.made"); do [ -d "$d" ] && echo "$d"; done)"
+[ -d "$gtmp/dev-loop-smoke.decoy1" ] && [ -d "$gtmp/dev-loop-identity.decoy1" ] && [ -f "$gtmp/other.txt" ] &&
+  pass "work dirs: the gate leaves dirs its logs never named and other files alone" || fail "work dirs: the gate removed a decoy"
+[ -d "$kwork/gout/dev-loop-smoke.out123" ] && pass "work dirs: the gate leaves a named dir outside TMPDIR alone" ||
+  fail "work dirs: the gate removed a dir outside TMPDIR"
+[ -L "$gtmp/dev-loop-smoke.link12" ] && [ -f "$kwork/target/file" ] && pass "work dirs: the gate leaves a named symlink alone" ||
+  fail "work dirs: the gate removed a symlink or its target"
+kgate '"echo \"smoke: 3 passed, 0 failed (work dir removed)\""'
+expect "work dirs: a green gate keeps the newest red dir" "0 $(tail -n 1 "$kwork/smoke.made")" \
+  "$rc $(for d in $(cat "$kwork/smoke.made"); do [ -d "$d" ] && echo "$d"; done)"
+rm -rf "$gtmp"/dev-loop-smoke.?????? "$gtmp"/dev-loop-identity.??????
+kgate '"true"'
+expect "work dirs: the record forgets dirs that are gone" "" "$(cat "$kwork/home/project/gate-work-dirs.txt" 2>/dev/null)"
+
+# 27c. doctor's TMPDIR check (#80): free space and inodes of TMPDIR's filesystem (df -P, df -i), a note
+# under 10% free, MISSING under 2%, with the count of leftover test work dirs; no inode part where df -i fails.
+dwork="$work/doctor-tmp"
+dtmp="$dwork/tmp"
+mkdir -p "$dtmp/dev-loop-smoke.aaaaaa" "$dtmp/dev-loop-identity.bbbbbb" "$dtmp/dev-loop-smoke.cccccc" "$dwork/fakedf"
+cat >"$dwork/fakedf/df" <<'DF'
+#!/usr/bin/env bash
+case " $* " in
+  *" -i "*)
+    [ -n "${FAKE_DF_INODES:-}" ] || exit 1
+    echo "Filesystem      Inodes  IUsed  IFree IUse% Mounted on"
+    echo "tmpfs          ${FAKE_DF_INODES} /tmp" ;;
+  *)
+    echo "Filesystem     1024-blocks    Used Available Capacity Mounted on"
+    echo "tmpfs          ${FAKE_DF_SPACE} /tmp" ;;
+esac
+DF
+chmod +x "$dwork/fakedf/df"
+# kdoctor SPACE INODES: doctor.sh's TMPDIR line with fake df fields (total used free use%); INODES empty: no df -i.
+kdoctor() {
+  (cd "$dwork" && PATH="$dwork/fakedf:$PATH" TMPDIR="$dtmp" FAKE_DF_SPACE="$1" FAKE_DF_INODES="$2" \
+    "$plugin/scripts/doctor.sh" 2>&1 | grep 'TMPDIR')
+}
+expect "doctor tmp: plenty of space and inodes is ok, with the leftover count" \
+  "ok      TMPDIR $dtmp: 80% space free, 90% inodes free; 3 leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)" \
+  "$(kdoctor "1000 200 800 20%" "1000 100 900 10%")"
+expect "doctor tmp: under 10% free inodes is a note" \
+  "note    TMPDIR $dtmp: 80% space free, 5% inodes free; 3 leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)" \
+  "$(kdoctor "1000 200 800 20%" "1000 950 50 95%")"
+expect "doctor tmp: under 2% free space is MISSING" \
+  "MISSING TMPDIR $dtmp: 1% space free, 90% inodes free; 3 leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)" \
+  "$(kdoctor "1000 990 10 99%" "1000 100 900 10%")"
+expect "doctor tmp: without df -i the inode part is left out quietly" \
+  "note    TMPDIR $dtmp: 5% space free; 3 leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)" \
+  "$(kdoctor "1000 950 50 95%" "")"
+rm -rf "$dtmp"/dev-loop-*
+expect "doctor tmp: no leftovers, no count" "ok      TMPDIR $dtmp: 80% space free" "$(kdoctor "1000 200 800 20%" "")"
+expect "doctor tmp: a filesystem without inode counts (0) leaves the inode part out" "ok      TMPDIR $dtmp: 80% space free" \
+  "$(kdoctor "1000 200 800 20%" "0 0 0 -")"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
+  pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
 cd "$work/project" || exit 1
 echo "smoke: $passed passed, $failed failed (work dir $work)"
 [ "$failed" -eq 0 ]
