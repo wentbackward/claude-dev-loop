@@ -17,6 +17,9 @@
 # train stops as it would without the option. Lines of CRLF files keep their CR; the result of a merge with
 # conflicts always ends with a newline, even when a side's last line has none.
 set -u
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+dl_help "$0" "${1:-}"
 [ $# -eq 3 ] || { echo "usage: union-merge.sh BASE OURS THEIRS" >&2; exit 2; }
 base=$1 ours=$2 theirs=$3
 size=32
