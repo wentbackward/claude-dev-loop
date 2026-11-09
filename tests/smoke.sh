@@ -6980,11 +6980,12 @@ udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
 udriver
 expect "union: the driver keeps both sides of lines only added" "0|a|ours|theirs" "$?|$(paste -sd'|' - <"$udrv/ours")"
 real_awk=$(command -v awk)
-# awk fails when it reads stdin (keep_both), or when it is given files (marker_like).
+# awk fails when it reads stdin (keep_both), or when it is given files (marker_like; with status 2 or 1).
 printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exec %s "$@"; done\nexit 2\n' "$real_awk" >"$udrv/bin/awk-stdin"
 printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exit 2; done\nexec %s "$@"\n' "$real_awk" >"$udrv/bin/awk-files"
-chmod +x "$udrv/bin/awk-stdin" "$udrv/bin/awk-files"
-for shim in awk-stdin awk-files; do
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exit 1; done\nexec %s "$@"\n' "$real_awk" >"$udrv/bin/awk-files1"
+chmod +x "$udrv/bin/awk-stdin" "$udrv/bin/awk-files" "$udrv/bin/awk-files1"
+for shim in awk-stdin awk-files awk-files1; do
   ln -sf "$udrv/bin/$shim" "$udrv/bin/awk"
   udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
   PATH="$udrv/bin:$PATH" udriver
@@ -6993,7 +6994,54 @@ for shim in awk-stdin awk-files; do
     pass "union: a failing awk ($shim) stops the driver, the file unchanged" ||
     fail "union: with a failing awk ($shim) the driver gave $rc and: $(paste -sd'|' - <"$udrv/ours")"
 done
+# The driver diffs as git's own merge does (histogram): what merge-tree merges cleanly is clean, and what
+# stops a plain rebase stops the driver too (myers would decide both the other way).
+udriver_files 'x\na\na\n' 'b\na\nx\na\n}\n' 'x\nx\na\na\n'
+udriver
+expect "union: a merge git does cleanly (histogram) is clean in the driver, with git's result" "0|b|a|x|x|a|}" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files 'b\na\n}\nb\nb\nb\na\nb\n' 'a\n}\nb\na\nb\na\nb\n' 'b\na\nb\nb\nb\n}\na\nb\n'
+udriver
+expect "union: a merge that stops a plain rebase stops the driver, the file unchanged" "1|a|}|b|a|b|a|b" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+# A git whose merge-file lacks --diff-algorithm (before 2.43) makes the driver stop, never fall back.
+mkdir -p "$udrv/oldgit"
+printf '#!/bin/sh\nfor a; do case $a in --diff-algorithm*) echo "error: unknown option" >&2; exit 129 ;; esac; done\nexec %s "$@"\n' \
+  "$(command -v git)" >"$udrv/oldgit/git" && chmod +x "$udrv/oldgit/git"
+udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+PATH="$udrv/oldgit:$PATH" udriver
+expect "union: a git without merge-file --diff-algorithm stops the driver, the file unchanged" "1|a|ours" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+# add/add: both sides created the file with different content (an empty base) is a conflict.
+udriver_files '' 'a\n' 'b\n'
+udriver
+expect "union: an add/add with different content stops the driver, the file unchanged" "1|a" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
 expect "union: the driver removes its temporary files" "" "$(ls -A "$udrv/tmp")"
+# Through the gate: a marker-like line in a listed file, an amended decision next to an appended one, and
+# overlapping edits each stop the train and name the file.
+ucase() { # ucase BRANCH FILE AWK-PROGRAM: a branch from origin/main whose FILE is rewritten by AWK-PROGRAM
+  git checkout -q -B "$1" origin/main && awk "$3" "$2" >"$2.tmp" && mv "$2.tmp" "$2" &&
+    git commit -q -am "feat: $1" && git push -q -u origin "$1" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$1" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+ustops() { # ustops DESCRIPTION FILE BRANCH1 BRANCH2: the gate stops at BRANCH2 and names FILE
+  out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate "$3" "$4")
+  expect "$1" "3 TRAIN rebase conflict at $4|TRAIN conflict in: $2" \
+    "$? $(echo "$out" | tail -n 1)|$(echo "$out" | tail -n 2 | head -n 1)"
+}
+git checkout -q main && git merge -q --ff-only origin/main &&
+  printf '\n## X\n\n- **Alternatives:** none (X).\n' >>docs/DECISIONS.md && printf 'a\nb\nc\nd\n' >>CHANGELOG.md &&
+  git commit -q -am "docs: fixtures" && git push -q origin main
+ucase feat/918-r CHANGELOG.md '{ print } /^## Unreleased$/ { getline; print; print "- feat R"; print "================================" }'
+ucase feat/919-s CHANGELOG.md '{ print } /^## Unreleased$/ { getline; print; print "- feat S" }'
+ustops "union: a marker-like line in a listed file stops the train" CHANGELOG.md feat/918-r feat/919-s
+ucase feat/920-t docs/DECISIONS.md '/^- \*\*Alternatives:\*\* none \(X\)\.$/ { $0 = "- **Alternatives:** x." } { print }'
+ucase feat/921-u docs/DECISIONS.md '{ print } END { print ""; print "## U"; print ""; print "- **Alternatives:** none." }'
+ustops "union: an amended decision next to an appended one stops the train" docs/DECISIONS.md feat/920-t feat/921-u
+ucase feat/922-v CHANGELOG.md '/^b$/ { $0 = "B1" } /^c$/ { $0 = "C1" } { print }'
+ucase feat/923-w CHANGELOG.md '/^c$/ { $0 = "C2" } /^d$/ { $0 = "D2" } { print }'
+ustops "union: overlapping edits in a listed file stop the train" CHANGELOG.md feat/922-v feat/923-w
 out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
 expect "union: another conflict names its file" "TRAIN conflict in: src.txt" "$(echo "$out" | tail -n 2 | head -n 1)"
 # A wildcard entry is refused: entries are literal paths.
