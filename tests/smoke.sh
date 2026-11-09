@@ -3912,6 +3912,30 @@ expect "repush: the footer stays the last line, once, after the Supersedes line"
     paste -sd'|' -)|$(grep -c 'Generated with' "$(rnotes fix/730-footer-v2)")"
 expect "repush: the body before the footer is kept" "- f" "$(sed -n 4p "$(rnotes fix/730-footer-v2)")"
 git worktree remove --force "$work/repush-730"
+# CRLF notes stay CRLF and notes without a final newline still end without one (#82): the only change is
+# the Supersedes line (and its blank line), before the footer; every other byte is the original's.
+rfooter=$'\360\237\244\226 Generated with [Claude Code](https://claude.com/claude-code)'
+rcheck() { # rcheck NAME BRANCH EOL BODY [FOOTER]: notes BODY+FOOTER re-pushed; the rest byte-compares
+  local sup
+  rbranch "$2" && printf '%s%s' "$4" "$5" >"$(rnotes "$2")"
+  repush "$work/repush" "$2"
+  expect "repush: $1 notes are carried over" "0 $2-v2" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+  sup=$(grep -a '^Supersedes `' "$(rnotes "$2-v2")" | tr -d '\r')
+  printf '%s\n' "$sup" | grep -qE "^Supersedes \`$2\` at [0-9a-f]{40} \\(" &&
+    pass "repush: $1 notes get the Supersedes line" || fail "repush: $1 notes Supersedes line: $sup"
+  if [ -n "$5" ]; then
+    printf '%s%s%s%s%s' "$4" "$sup" "$3" "$3" "$5" >"$work/repush.expected"
+  else
+    printf '%s%s%s%s' "$4" "$3" "$3" "$sup" >"$work/repush.expected"
+  fi
+  cmp -s "$work/repush.expected" "$(rnotes "$2-v2")" &&
+    pass "repush: $1 notes are unchanged but for the Supersedes line" ||
+    fail "repush: $1 notes differ: $(od -c "$(rnotes "$2-v2")" | tail -n 4)"
+}
+rcheck "CRLF" fix/731-crlf $'\r\n' $'fix: crlf (#731)\r\n\r\n## Summary\r\n- c\r\n\r\n' "$rfooter"$'\r\n'
+rcheck "CRLF unterminated" fix/732-crlf-open $'\r\n' $'fix: c (#732)\r\n\r\n## Summary\r\n- c\r\n\r\n' "$rfooter"
+rcheck "unterminated" fix/733-open $'\n' $'fix: open (#733)\n\n## Summary\n- o\n\n' "$rfooter"
+rcheck "unterminated, no footer" fix/734-open-plain $'\n' $'fix: plain (#734)\n\n## Summary\n- p\n\nCloses #734' ""
 
 # No skill or agent text tells anyone to force-push; the ones that rebase name repush.sh.
 forced=$(grep -rnE -- 'push --force|push -f|--force-with-lease|force-push|force push' "$plugin/skills" "$plugin/agents" |
@@ -4919,6 +4943,22 @@ mkdir -p "$horder/sorted/tests"
 chmod +x "$horder/sorted/tests/smoke.sh"
 expect "smoke: the order check stops at the summary (a header after it is not a section)" "26 27" \
   "$("$horder/sorted/tests/smoke.sh" --list 2>&1 | cut -f1 | paste -sd' ' -)"
+# An argument that is a section id and also text in an earlier section's title selects the id (#82).
+mkdir -p "$horder/idfirst/tests" "$horder/idfirst/tmp"
+ln -s "$plugin/scripts" "$horder/idfirst/scripts" # the shared setup sources its libraries
+{
+  sed -n '1,/^# 1\. /p' "$hsmoke" | sed '$d'
+  printf '%s\n' '# 17. Seventeen, before section 19' 'echo "ran section 17"' '# 19. Nineteen' 'echo "ran section 19"'
+  sed -n "/$smoke_foot/,\$p" "$hsmoke"
+} >"$horder/idfirst/tests/smoke.sh"
+chmod +x "$horder/idfirst/tests/smoke.sh"
+hout=$(TMPDIR="$horder/idfirst/tmp" "$horder/idfirst/tests/smoke.sh" --section 19 2>&1)
+expect "smoke: --section 19 (also in section 17's title) passes" 0 $?
+expect "smoke: an id is matched before a title (19 runs section 19, not 17)" "ran section 19" \
+  "$(printf '%s\n' "$hout" | grep '^ran section ')"
+hout=$(TMPDIR="$horder/idfirst/tmp" "$horder/idfirst/tests/smoke.sh" --section 'before section' 2>&1)
+expect "smoke: a text that is no id still selects by title" "ran section 17" \
+  "$(printf '%s\n' "$hout" | grep '^ran section ')"
 grep -qF "#85" "$plugin/CHANGELOG.md" && pass "smoke: CHANGELOG has an entry for #85" || fail "smoke: no CHANGELOG #85 entry"
 
 # 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
