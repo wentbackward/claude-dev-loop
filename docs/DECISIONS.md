@@ -1133,6 +1133,13 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `printf -v` count as variable setters. `--` stays refused except for a small test-harness list after
   `cargo test --` (plain filter words too) and `go test -args` (`-test.v`, `-test.run`, `-test.count`, no
   plain words); a flag that takes a value must get one.
+  Review round 4: a flag value given as its own word may not start with `-` or `+`, for every runner
+  (pytest scans every argument for `-p` before its parser, cargo may read the word as its own option);
+  an attached value (`-k=-slow`, `-kEXPR`) may. `go test` and `go vet` packages must be relative paths
+  (`.`, `..`, `./x`, `../x`), not import paths, which may run the standard library's or a dependency's
+  tests outside the worktree. `--test-threads` after `cargo test --` takes a count from 1 to 256. The
+  README states that only the same line is checked because each Bash call starts in a fresh shell, and
+  that variables from the user's profile reach the runners (a limit like the config files).
 - **Reason:** review round 1 showed that ask rules over the command text cannot protect a runner
   wildcard: abbreviations, quoting, tabs and options no list names get through, as in #71. An allowlist
   checked on the parsed argv closes the class; small explicit lists keep it reviewable. Checking the whole

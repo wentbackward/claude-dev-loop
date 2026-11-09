@@ -1259,9 +1259,14 @@ Go flags take one or two dashes and `-flag=value`; the others take bundled short
 (`--ev`, `--basete`) or a flag the table leaves out (`-test.testlogfile=`, `-compiler`, `--basetemp`,
 `-p`, `--prefix`, `--target-dir`, `-Z`) is refused; so is `--`, which hands what follows to the runner or
 the test binary, except for the test harness: after `cargo test --` the harness options `--nocapture`,
-`--show-output`, `--test-threads=N`, `--exact`, `--ignored`, `--include-ignored`, `-q`/`--quiet` and plain
+`--show-output`, `--test-threads=N` (N from 1 to 256), `--exact`, `--ignored`, `--include-ignored`, `-q`/`--quiet` and plain
 filter words pass, and after `go test -args` only `-test.v`, `-test.run=X` and `-test.count=N`. A flag that
-takes a value needs one. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
+takes a value needs one; a value in its own word may not start with `-` or `+` (pytest reads `-p <plugin>`
+anywhere in its arguments before its own parser, and cargo may read the word as an option of its own, so
+`pytest -k -p evil` and `cargo test -p --config x` are refused), while an attached one may (`-k=-slow`,
+`-run=-x`, `-kEXPR`). A `go test` or `go vet` package must be a relative path (`.`, `./pkg`, `./...`): an
+import path (`std`, `all`, `fmt`, `golang.org/x/tools/...`) is refused, since it runs the test code of the
+standard library or a dependency outside the worktree. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
 arguments, so a file the agent writes could carry any option; a flag value may not start with `@` either),
 hold `=` (`make` and `npm` read `VAR=value` as a setting), a blank or a control character, or be an
 unquoted glob (the shell expands it, maybe to a file named like an option). `make` takes one target: a
@@ -1293,7 +1298,10 @@ still change that code before it runs it. The same holds for the runners' own co
 agent can write and the runner reads: pytest's `addopts` (`pytest.ini`, `pyproject.toml`, `setup.cfg`,
 `tox.ini`), `.npmrc` (`script-shell`, `node-options`), `.yarnrc.yml` (`yarnPath`), `.cargo/config.toml`
 (`target.<triple>.runner`, `build.rustc-wrapper`), and the machine-wide `go env -w GOFLAGS=...` set
-earlier. The path check reads the file system at the time of the check, so a symlink made earlier in the
+earlier. Only the same line is checked because Claude Code starts each Bash call in a fresh shell: the
+working directory carries over (the guard reads it from the event's `cwd`), exported variables and
+functions do not. That shell starts from a snapshot of the user's profile, so variables set there
+(`GOFLAGS`, `MAKEFLAGS`, `PYTEST_ADDOPTS`, ...) reach the runners: a limit like the config files. The path check reads the file system at the time of the check, so a symlink made earlier in the
 same line (`ln -s /etc tests/l2 && pytest tests/l2`) is not caught. Like the git guard it is a tripwire,
 not the boundary.
 

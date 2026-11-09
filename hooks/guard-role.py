@@ -1577,12 +1577,13 @@ def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
 
 
 # Targeted commands (#72): the runner forms a "targeted" entry may start with, and the flags that are safe
-# after each, as {flag: "none" | "value" | "optional"} (a value that is the next word or follows "="; an
-# optional one only attached, or a next word of digits). Style "go": one or two dashes, -flag=value, no
+# after each, as {flag: "none" | "value" | "optional" | "count"} (a value that is the next word or follows
+# "=", in its own word never starting with - or +; an optional one only attached, or a next word of digits;
+# a count is a value from 1 to 256). Style "go": one or two dashes, -flag=value, no
 # bundles; style "gnu": bundled short letters (-xvs, -kEXPR), --long and --long=value. A form ending in
 # "<word>" needs one more plain word in the entry (a make target, an npm script). Every other flag, "--",
 # and anything the runner would read as a setting is refused, so the lists stay small.
-NO, VAL, OPT = "none", "value", "optional"
+NO, VAL, OPT, COUNT = "none", "value", "optional", "count"
 GO_TEST_FLAGS = {"-run": VAL, "-skip": VAL, "-count": VAL, "-v": NO, "-race": NO, "-short": NO, "-timeout": VAL,
                  "-failfast": NO, "-cover": NO, "-covermode": VAL, "-parallel": VAL, "-cpu": VAL, "-bench": VAL,
                  "-benchtime": VAL, "-benchmem": NO, "-json": NO, "-shuffle": VAL, "-tags": VAL}
@@ -1604,11 +1605,12 @@ RUFF_CHECK_FLAGS = {"--fix": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--stati
 RUFF_FORMAT_FLAGS = {"--check": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--no-cache": NO}
 # What a runner hands to the test binary after a separator: (separator, style, safe flags, plain words
 # allowed). Anything else after the separator is refused, as is "--" for the other runners.
-CARGO_HARNESS_FLAGS = {"--nocapture": NO, "--show-output": NO, "--test-threads": VAL, "--exact": NO,
+CARGO_HARNESS_FLAGS = {"--nocapture": NO, "--show-output": NO, "--test-threads": COUNT, "--exact": NO,
                        "--ignored": NO, "--include-ignored": NO, "-q": NO, "--quiet": NO}
 GO_ARGS_FLAGS = {"-test.v": NO, "-test.run": VAL, "-test.count": VAL}
 TEST_BINARY_ARGS = {("cargo", "test"): ("--", "gnu", CARGO_HARNESS_FLAGS, True),
                     ("go", "test"): ("-args", "go", GO_ARGS_FLAGS, False)}
+GO_PACKAGE_FORMS = {("go", "test"), ("go", "vet")}
 TARGETED_FORMS = [
     (("go", "test"), "go", GO_TEST_FLAGS), (("go", "vet"), "go", GO_VET_FLAGS), (("gofmt",), "go", GOFMT_FLAGS),
     (("pytest",), "gnu", PYTEST_FLAGS), (("python", "-m", "pytest"), "gnu", PYTEST_FLAGS),
@@ -1654,11 +1656,14 @@ def within(path: str, root: str) -> bool:
     return all(candidate == top or candidate.startswith(top.rstrip("/") + "/") for candidate, top in pairs)
 
 
-def positional_problem(word: Word, dirs: set[str], root: str) -> str | None:
-    """Why a word that is not a flag is not a plain path, package or pattern inside the project, or None."""
+def positional_problem(word: Word, dirs: set[str], root: str, package: bool = False) -> str | None:
+    """Why a word that is not a flag is not a plain path, package or pattern inside the project, or None.
+    package: the word is a go package, which must be a relative path (., ./x, ./..., ..), not an import path."""
     text = word.text
     if not text:
         return "an empty argument"
+    if package and text not in {".", ".."} and not text.startswith(("./", "../")):
+        return f"{text} is an import path, which may name the standard library or a dependency (write ./{text})"
     if text.startswith(("-", "+")):
         return f"{text} is not on the safe list"
     if text.startswith("@"):
@@ -1671,6 +1676,22 @@ def positional_problem(word: Word, dirs: set[str], root: str) -> str | None:
         if not within(os.path.join(directory, text), root):
             return f"{text} is a path outside the project"
     return None
+
+
+def value_problem(flag: str, kind: str, value: str, separate: bool) -> str | None:
+    """Why the value of a flag is refused, or None: a separate word starting with - or + (pytest reads -p
+    anywhere, cargo may read the word as its own option), or a count outside 1 to 256."""
+    if separate and value.startswith(("-", "+")):
+        return f"{flag} {value}: a value in its own word may not start with - or + (attach it, {flag}=...)"
+    if kind == COUNT and not (value.isdigit() and 1 <= int(value) <= 256):
+        return f"{flag} takes a count from 1 to 256, not {value}"
+    return None
+
+
+def takes_next(kind: str, args: list[Word], index: int) -> bool:
+    """True when a flag of this kind takes the word at index as its value: always for a value, for an
+    optional value only when the word is digits."""
+    return kind in {VAL, COUNT} or (kind == OPT and index < len(args) and args[index].text.isdigit())
 
 
 def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple[str | None, int, list[str]]:
@@ -1687,34 +1708,37 @@ def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple
         if kind is None or (kind == NO and eq):
             return f"{text} is not on the safe list", index, []
         if eq:
-            return None, index, [value]
-        if kind == VAL and index >= len(args):
-            return f"{text} needs a value", index, []
-        if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
-            return None, index + 1, [arg.text for arg in args[index : index + 1]]
-        return None, index, []
+            return value_problem(key, kind, value, False), index, [value]
+        return next_value(text, kind, args, index)
     letters = text[1:]
     while letters:
-        kind = flags.get("-" + letters[0])
+        flag = "-" + letters[0]
+        kind = flags.get(flag)
         if kind is None:
-            return f"{text} is not on the safe list (-{letters[0]})", index, []
+            return f"{text} is not on the safe list ({flag})", index, []
         letters = letters[1:]
-        if kind in {VAL, OPT} and letters:
-            return None, index, [letters]
-        if kind == VAL and index >= len(args):
-            return f"{text} needs a value", index, []
-        if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
-            return None, index + 1, [arg.text for arg in args[index : index + 1]]
-        if kind == OPT:
-            break
+        if kind != NO and letters:
+            return value_problem(flag, kind, letters, False), index, [letters]
+        if kind != NO:
+            return next_value(text, kind, args, index)
     return None, index, []
 
 
+def next_value(text: str, kind: str, args: list[Word], index: int) -> tuple[str | None, int, list[str]]:
+    """flag_problem's result for a flag whose value, if any, is the next word (index)."""
+    if kind in {VAL, COUNT} and index >= len(args):
+        return f"{text} needs a value", index, []
+    if not takes_next(kind, args, index):
+        return None, index, []
+    value = args[index].text
+    return value_problem(text, kind, value, True), index + 1, [value]
+
+
 def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str,
-                      max_positional: int = -1, tail: tuple | None = None) -> str | None:
+                      max_positional: int = -1, tail: tuple | None = None, packages: bool = False) -> str | None:
     """Why the arguments after a runner form are refused (the first bad one), or None. max_positional caps
     the plain words (-1: no cap); tail is the form's TEST_BINARY_ARGS entry: after its separator the test
-    binary's own safe list applies."""
+    binary's own safe list applies; packages: the plain words are go packages (positional_problem)."""
     index, positional, plain_ok = 0, 0, True
     while index < len(args):
         word = args[index]
@@ -1722,7 +1746,7 @@ def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str],
             return f"{word.text} is a glob the shell expands"
         if tail and word.text == tail[0]:
             _, style, flags, plain_ok = tail
-            tail, index = None, index + 1
+            tail, index, packages = None, index + 1, False
             continue
         if not plain_ok and not word.text.startswith("-"):
             return f"{word.text} after the test binary's separator is not on the safe list"
@@ -1737,7 +1761,7 @@ def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str],
                     return f"{value} is a response file (@file), which a runner may expand into options"
             index = after
             continue
-        problem = positional_problem(word, dirs, root)
+        problem = positional_problem(word, dirs, root, packages)
         if problem:
             return problem
         positional += 1
@@ -1793,7 +1817,8 @@ def targeted_refusal(entry: str) -> str:
             return f"a bare runner: name the {what} (\"{entry} <{what}>\")"
         if rest[0].text.startswith(("-", "+", "@")):
             return f"the {what} after \"{' '.join(form_words(form))}\" must be a plain name, not {rest[0].text}"
-    problem = arguments_problem(style, flags, rest, {"/project"}, "/project", max_positional(form))
+    problem = arguments_problem(style, flags, rest, {"/project"}, "/project", max_positional(form),
+                                packages=form in GO_PACKAGE_FORMS)
     return problem or ""
 
 
@@ -1883,7 +1908,7 @@ def command_problem(command: Simple, dirs: set[str], forms: list[tuple], configu
         return True, None
     form, style, flags = found
     return True, arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root, max_positional(form),
-                                   TEST_BINARY_ARGS.get(form))
+                                   TEST_BINARY_ARGS.get(form), form in GO_PACKAGE_FORMS)
 
 
 # Builtins that set a variable (or where a program name resolves) for the commands after them in the line.
