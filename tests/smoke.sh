@@ -5585,6 +5585,351 @@ expect "doctor tmp: TMPDIR=/ is checked as /" "ok      TMPDIR /: 80% space free"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
 cd "$work/project" || exit 1
+# 29. Kept worktrees (#83): cleanup.sh lists the worktrees of merged branches that merge-train kept for
+# their changes (a dry run changes nothing); --apply --include worktrees archives each one's patch, staged
+# patch and untracked files first, checks the archive and the worktree again, and then removes it. Never an
+# unmerged branch's, a locked one, the main checkout, the gate worktree (also through a symlink), one
+# holding another worktree, ignored files that are not build output, skip-worktree files or unreadable
+# folders, one changed in the last 10 minutes, or one that changed during the run.
+kwork="$work/kwt"
+git init -q --bare "$kwork/origin.git"
+git clone -q "$kwork/origin.git" "$kwork/project" 2>/dev/null
+cd "$kwork/project" || exit 1
+printf '{"base_branch": "main", "checks": ["true"]}\n' >.dev-loop.json
+printf 'one\n' >src.txt && printf 'a\000bin' >logo.bin
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+khome="$kwork/home"
+# kenv COMMAND...: run COMMAND in the project with the section's own state; KSETTLE (default 0) is the
+# settle window in minutes (0: no time check, since a test cannot backdate a file's ctime).
+kenv() {
+  (cd "$kwork/project" && DEV_LOOP_HOME="$khome" FAKE_GH_DIR="$kwork/gh" \
+    DEV_LOOP_WORKTREE_SETTLE_MINUTES="${KSETTLE:-0}" "$@" 2>&1)
+}
+# kbranch NAME [merged]: a pushed branch with one commit; "merged" records its tip in the merge ledger.
+kbranch() {
+  git -C "$kwork/project" checkout -q -B "$1" origin/main && echo "$1" >"$kwork/project/k-${1##*/}.txt" &&
+    git -C "$kwork/project" add . && git -C "$kwork/project" commit -q -m "feat: $1" &&
+    git -C "$kwork/project" push -q -u origin "$1" && git -C "$kwork/project" checkout -q main
+  [ "${2:-}" != merged ] || {
+    mkdir -p "$khome/project"
+    printf '{"branch":"%s","source_head":"%s","head":"%s"}\n' "$1" "$(git -C "$kwork/project" rev-parse "$1")" \
+      "$(git -C "$kwork/project" rev-parse "$1")" >>"$khome/project/merged.jsonl"
+  }
+}
+# kold DIR: backdate the mtime of every file of DIR (their ctime stays now).
+kold() { find "$1" -exec touch -t 202001010000 {} +; }
+# kwt NAME PATH: a worktree of NAME at PATH with an untracked file, a staged change and unstaged text and
+# binary changes.
+kwt() {
+  git -C "$kwork/project" worktree add -q "$2" "$1" && echo "scratch ${1##*/}" >"$2/scratch.txt" &&
+    printf 'b\000changed' >"$2/logo.bin" && echo more >>"$2/src.txt" && git -C "$2" add src.txt &&
+    echo unstaged >>"$2/src.txt"
+}
+kexclude() { printf '%s\n' "$1" >>"$(git -C "$kwork/project" rev-parse --git-common-dir)/info/exclude"; }
+# kledger NAME: record the tip of NAME in the merge ledger.
+kledger() {
+  mkdir -p "$khome/project" &&
+    printf '{"branch":"%s","source_head":"%s","head":"%s"}\n' "$1" "$(git -C "$kwork/project" rev-parse "$1")" \
+      "$(git -C "$kwork/project" rev-parse "$1")" >>"$khome/project/merged.jsonl"
+}
+kbranch feat/1-untracked merged && kwt feat/1-untracked "$kwork/wt1"
+kbranch feat/2-unmerged && kwt feat/2-unmerged "$kwork/wt2"
+kbranch feat/3-locked merged && kwt feat/3-locked "$kwork/wt3" && git -C "$kwork/project" worktree lock "$kwork/wt3"
+kbranch feat/5-gate merged && kwt feat/5-gate "$kwork/project-gate"
+kbranch feat/6-env merged && kwt feat/6-env "$kwork/wt6" && kexclude .env && echo SECRET=x >"$kwork/wt6/.env"
+kbranch feat/7-spaced merged && kwt feat/7-spaced "$kwork/wt with spaces"
+kbranch feat/8-recent merged && kwt feat/8-recent "$kwork/wt8"
+# A fresh branch at the base (no commits of its own) is "merged" by containment only: an agent's new work.
+git -C "$kwork/project" branch -q feat/9-fresh origin/main && kwt feat/9-fresh "$kwork/wt9"
+# The gate under a worktrees_dir, reached through a symlink (dl_gate_dir names the link, git the real path).
+kbranch feat/10-gate merged && mkdir -p "$kwork/realwt" && ln -s "$kwork/realwt" "$kwork/wtlink" &&
+  kwt feat/10-gate "$kwork/realwt/gate"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": "../wtlink"}\n' >"$kwork/link.json"
+printf '{"base_branch": "main", "checks": ["true"], "worktrees_dir": "../realwt"}\n' >"$kwork/real.json"
+# A merged worktree holding an unmerged one in its ignored dist/ folder (build output by name).
+kbranch feat/11-outer merged && kwt feat/11-outer "$kwork/wt11" && kexclude dist/ && mkdir -p "$kwork/wt11/dist" &&
+  kbranch feat/12-inner && git -C "$kwork/project" worktree add -q "$kwork/wt11/dist/inner" feat/12-inner &&
+  echo work >"$kwork/wt11/dist/inner/work.txt"
+# Local changes hidden by skip-worktree; an unreadable folder.
+kbranch feat/13-skip merged && kwt feat/13-skip "$kwork/wt13" && git -C "$kwork/wt13" update-index --skip-worktree k-13-skip.txt &&
+  echo hidden >>"$kwork/wt13/k-13-skip.txt"
+kbranch feat/14-unreadable merged && kwt feat/14-unreadable "$kwork/wt14" && mkdir -p "$kwork/wt14/locked-away" &&
+  echo x >"$kwork/wt14/locked-away/f.txt" && chmod 000 "$kwork/wt14/locked-away"
+# Two branch names that map to one archive name.
+kbranch feat/30/a merged && kwt feat/30/a "$kwork/wt30a"
+kbranch feat/30_a merged && kwt feat/30_a "$kwork/wt30b"
+# A submodule with a local commit and an uncommitted change (its git dir belongs to the worktree).
+git init -q --bare "$kwork/subrepo.git" && git clone -q "$kwork/subrepo.git" "$kwork/subsrc" 2>/dev/null &&
+  echo s >"$kwork/subsrc/s.txt" && git -C "$kwork/subsrc" add . && git -C "$kwork/subsrc" commit -q -m sub &&
+  git -C "$kwork/subsrc" push -q origin HEAD:main
+git -C "$kwork/project" worktree add -q -b feat/40-sub "$kwork/wt40" origin/main &&
+  git -C "$kwork/wt40" -c protocol.file.allow=always submodule add -q "$kwork/subrepo.git" sub >/dev/null 2>&1 &&
+  git -C "$kwork/wt40" commit -q -m "feat: sub" && git -C "$kwork/wt40" push -q -u origin feat/40-sub && kledger feat/40-sub &&
+  echo edit >>"$kwork/wt40/sub/s.txt" && git -C "$kwork/wt40/sub" commit -q -am "local" && echo dirty >>"$kwork/wt40/sub/s.txt"
+ksublocal=$(git -C "$kwork/wt40/sub" rev-parse HEAD)
+# Per-worktree refs (refs/worktree/*, refs/bisect/*) live in the worktree's git dir.
+kbranch feat/24-wtref merged && kwt feat/24-wtref "$kwork/wt24" && git -C "$kwork/wt24" update-ref refs/worktree/mark HEAD
+kbranch feat/25-bisect merged && kwt feat/25-bisect "$kwork/wt25" && git -C "$kwork/wt25" update-ref refs/bisect/bad HEAD
+# A branch merged with a merge commit: the base contains its tip, so the bundle does not hold it.
+kbranch feat/41-mergecommit merged && kwt feat/41-mergecommit "$kwork/wt41"
+ktip41=$(git -C "$kwork/project" rev-parse feat/41-mergecommit)
+kmerge=$(git -C "$kwork/project" commit-tree "$(git -C "$kwork/project" rev-parse "$ktip41^{tree}")" -p origin/main -p "$ktip41" \
+  -m "Merge feat/41-mergecommit") && git -C "$kwork/project" push -q origin "$kmerge:refs/heads/main" &&
+  git -C "$kwork/project" fetch -q origin
+# The main checkout has a merged branch checked out, with an untracked file.
+kbranch feat/4-main merged && git -C "$kwork/project" checkout -q feat/4-main && echo mine >"$kwork/project/mine.txt"
+kold "$kwork/wt1"
+# kindex WORKTREE: the checksum of the worktree's index file.
+kindex() { cksum <"$(cd "$1" && cd "$(dirname "$(git rev-parse --git-path index)")" && pwd)/index"; }
+kindex1=$(kindex "$kwork/wt1")
+
+# The settle window: an old mtime does not hide a fresh ctime; a fresh file keeps its worktree.
+out=$(KSETTLE=10 kenv "$plugin/scripts/cleanup.sh")
+kline() { printf '%s\n' "$out" | grep -F -- "$1" | head -n 1; }
+case "$(kline "$kwork/wt1 ")" in keep*"last 10 minutes"*) pass "kwt: a backdated mtime with a fresh ctime keeps its worktree" ;;
+  *) fail "kwt: wt1 under the settle window: $out" ;; esac
+case "$(kline "$kwork/wt8 ")" in keep*"last 10 minutes"*) pass "kwt: a worktree changed in the last 10 minutes is kept" ;;
+  *) fail "kwt: wt8: $out" ;; esac
+
+out=$(kenv "$plugin/scripts/cleanup.sh")
+case "$(kline "$kwork/wt1 ")" in
+  remove*feat/1-untracked*"2 modified, 1 untracked: "*scratch.txt*) pass "kwt: the dry run lists a merged worktree with its changes and file names, to remove" ;;
+  *) fail "kwt: wt1 not listed for removal: $out" ;;
+esac
+[ -f "$kwork/wt1/scratch.txt" ] && [ -n "$(git -C "$kwork/project" branch --list feat/1-untracked)" ] &&
+  [ ! -d "$khome/project/archive" ] && pass "kwt: the dry run changes nothing and archives nothing" || fail "kwt: the dry run changed something"
+expect "kwt: an unmerged branch's worktree is not listed" "" "$(kline "$kwork/wt2 ")"
+expect "kwt: a fresh branch the base contains (no ledger, no PR) is not listed" "" "$(kline "$kwork/wt9")"
+case "$(kline "$kwork/wt3 ")" in keep*locked*) pass "kwt: a locked worktree is kept" ;; *) fail "kwt: wt3: $out" ;; esac
+case "$(kline "$kwork/project-gate ")" in keep*"the gate worktree"*) pass "kwt: the gate worktree is kept" ;; *) fail "kwt: gate: $out" ;; esac
+case "$(kline "$kwork/project ")" in keep*"the main checkout"*) pass "kwt: the main checkout is kept" ;; *) fail "kwt: main: $out" ;; esac
+case "$(kline "$kwork/wt6 ")" in keep*"not build output (.env)"*) pass "kwt: a worktree with an ignored .env is kept" ;; *) fail "kwt: wt6: $out" ;; esac
+case "$(kline "$kwork/wt with spaces ")" in remove*feat/7-spaced*) pass "kwt: a worktree path with spaces is listed" ;; *) fail "kwt: spaces: $out" ;; esac
+case "$(kline "$kwork/wt11 ")" in keep*"another worktree"*) pass "kwt: a worktree holding another worktree is kept" ;; *) fail "kwt: wt11: $out" ;; esac
+case "$(kline "$kwork/wt13 ")" in keep*skip-worktree*) pass "kwt: a worktree with skip-worktree files is kept" ;; *) fail "kwt: wt13: $out" ;; esac
+expect "kwt: the dry runs leave a worktree's index alone (no optional locks)" "$kindex1" "$(kindex "$kwork/wt1")"
+case "$(kline "$kwork/wt40 ")" in keep*"has submodules"*) pass "kwt: a worktree with a submodule is kept" ;; *) fail "kwt: wt40: $out" ;; esac
+case "$(kline "$kwork/wt24 ")" in keep*"per-worktree refs"*) pass "kwt: a worktree with refs/worktree refs is kept" ;; *) fail "kwt: wt24: $out" ;; esac
+case "$(kline "$kwork/wt25 ")" in keep*"per-worktree refs"*) pass "kwt: a worktree in a bisect is kept" ;; *) fail "kwt: wt25: $out" ;; esac
+case "$(kline "$kwork/wt14 ")" in keep*"could not be read"*) pass "kwt: a worktree with an unreadable folder is kept" ;; *) fail "kwt: wt14: $out" ;; esac
+for kcfg in real link; do
+  out=$(kenv env DEV_LOOP_CONFIG="$kwork/$kcfg.json" "$plugin/scripts/cleanup.sh")
+  case "$(kline "$kwork/realwt/gate ")" in keep*"the gate worktree"*) pass "kwt: the worktrees_dir gate is kept ($kcfg path)" ;;
+    *) fail "kwt: worktrees_dir gate ($kcfg): $out" ;; esac
+done
+git -C "$kwork/project" worktree remove --force "$kwork/realwt/gate"
+
+out=$(kenv "$plugin/scripts/cleanup.sh" --apply)
+[ -d "$kwork/wt1" ] && [ -n "$(git -C "$kwork/project" branch --list feat/1-untracked)" ] &&
+  pass "kwt: --apply without --include worktrees removes no worktree" || fail "kwt: --apply removed wt1: $out"
+
+# The user's diff config must not change the patch.
+git -C "$kwork/project" config diff.noprefix true && git -C "$kwork/project" config color.diff always
+out=$(kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+git -C "$kwork/project" config --unset diff.noprefix && git -C "$kwork/project" config --unset color.diff
+archive=$(printf '%s\n' "$out" | sed -n 's/^archived worktree .* to //p' | head -n 1)
+[ ! -d "$kwork/wt1" ] && [ ! -d "$kwork/wt with spaces" ] && pass "kwt: --apply --include worktrees removes the merged worktrees" ||
+  fail "kwt: not removed: $out"
+expect "kwt: their branches are deleted at the merged tip" "" \
+  "$(git -C "$kwork/project" branch --list --format='%(refname:short)' feat/1-untracked feat/7-spaced)"
+k1=$(dirname "$archive")/feat_1-untracked
+if [ -f "$k1/changes.patch" ] && [ -f "$k1/staged.patch" ] && [ -f "$k1/untracked.tar" ] && [ -f "$k1/manifest.txt" ]; then
+  pass "kwt: the archive holds the patches, the untracked files and a manifest"
+else
+  fail "kwt: archive incomplete ($archive): $out"
+fi
+expect "kwt: the archived tar holds the untracked file" "scratch.txt" "$(tar -tf "$k1/untracked.tar" 2>/dev/null)"
+grep -q '^GIT binary patch' "$k1/changes.patch" && grep -q '^+unstaged' "$k1/changes.patch" &&
+  grep -q '^diff --git a/src.txt b/src.txt' "$k1/changes.patch" && ! grep -q $'\033' "$k1/changes.patch" &&
+  pass "kwt: the patch holds the binary and the text change, plain, whatever diff.noprefix and color.diff say" ||
+  fail "kwt: patch: $(head -n 5 "$k1/changes.patch")"
+grep -q '^+more' "$k1/staged.patch" && ! grep -q '^+unstaged' "$k1/staged.patch" &&
+  pass "kwt: the staged patch holds the index's change only" || fail "kwt: staged patch: $(cat "$k1/staged.patch")"
+grep -qF "feat/1-untracked" "$k1/manifest.txt" && grep -qF "scratch.txt" "$k1/manifest.txt" &&
+  pass "kwt: the manifest names the branch and the untracked files" || fail "kwt: manifest: $(cat "$k1/manifest.txt" 2>&1)"
+# Restore: a worktree at the archived tip (from the bundle), the index, the changes and the files back.
+bundle=$(printf '%s\n' "$out" | sed -n 's/^archived [0-9]* tips to //p')
+git -C "$kwork/project" fetch -q "$bundle" refs/heads/feat/1-untracked:refs/heads/restored1 &&
+  git -C "$kwork/project" worktree add -q "$kwork/restored1" restored1 &&
+  git -C "$kwork/restored1" apply --cached "$k1/staged.patch" &&
+  git -C "$kwork/restored1" apply --binary "$k1/changes.patch" && tar -xf "$k1/untracked.tar" -C "$kwork/restored1" &&
+  expect "kwt: the archive restores the index, the changes and the files" "more unstaged scratch 1-untracked" \
+    "$(git -C "$kwork/restored1" show :src.txt | tail -n 1) $(tail -n 1 "$kwork/restored1/src.txt") $(cat "$kwork/restored1/scratch.txt")" ||
+  fail "kwt: restore failed: $out"
+kd=$(dirname "$archive")
+grep -qF "git fetch <bundle> refs/heads/feat/1-untracked:refs/heads/feat/1-untracked" "$k1/manifest.txt" &&
+  grep -qF "the base does not contain $(sed -n 's/^tip: //p' "$k1/manifest.txt")" "$k1/manifest.txt" &&
+  pass "kwt: a squash-merged worktree's manifest restores from the bundle" || fail "kwt: k1 restore line: $(cat "$k1/manifest.txt")"
+grep -qF "restore: git worktree add <path> $ktip41" "$kd/feat_41-mergecommit/manifest.txt" &&
+  grep -qF "the base contains $ktip41" "$kd/feat_41-mergecommit/manifest.txt" && ! grep -q "fetch <bundle>" "$kd/feat_41-mergecommit/manifest.txt" &&
+  git -C "$kwork/project" worktree add -q --detach "$kwork/restored41" "$ktip41" &&
+  pass "kwt: a merge-commit-merged worktree's manifest restores from the base's tip" ||
+  fail "kwt: k41 restore line: $(cat "$kd/feat_41-mergecommit/manifest.txt" 2>&1)"
+[ -f "$kwork/wt40/sub/s.txt" ] && [ "$(tail -n 1 "$kwork/wt40/sub/s.txt")" = dirty ] &&
+  git -C "$kwork/wt40/sub" cat-file -e "$ksublocal^{commit}" 2>/dev/null &&
+  pass "kwt: a submodule's local commit and uncommitted change survive" || fail "kwt: the submodule's work went"
+expect "kwt: two branches with one archive name get an archive each" "scratch a|scratch 30_a" \
+  "$(cat "$kd/feat_30_a/manifest.txt" "$kd/feat_30_a-2/manifest.txt" >/dev/null 2>&1 &&
+    tar -xOf "$kd/feat_30_a/untracked.tar" scratch.txt | tr '\n' '|'; tar -xOf "$kd/feat_30_a-2/untracked.tar" scratch.txt)"
+for d in wt2 wt3 project-gate wt6 wt9 wt11 wt13 wt14 wt24 wt25; do
+  [ -f "$kwork/$d/scratch.txt" ] || fail "kwt: --include worktrees removed $d"
+done
+[ -f "$kwork/wt11/dist/inner/work.txt" ] && pass "kwt: the inner worktree's work stays" || fail "kwt: the inner worktree went"
+[ -f "$kwork/project/mine.txt" ] && [ "$(git -C "$kwork/project" branch --show-current)" = feat/4-main ] &&
+  pass "kwt: the kept worktrees, the gate and the main checkout are untouched" || fail "kwt: main checkout changed"
+expect "kwt: the kept worktrees' branches stay" \
+  "feat/11-outer feat/12-inner feat/13-skip feat/14-unreadable feat/2-unmerged feat/24-wtref feat/25-bisect feat/3-locked feat/4-main feat/40-sub feat/5-gate feat/6-env feat/9-fresh" \
+  "$(git -C "$kwork/project" branch --list --format='%(refname:short)' 'feat/*' | LC_ALL=C sort | paste -sd' ' -)"
+
+# Refusals during the run: a worktree that changes after it was archived (a tar that writes after archiving),
+# a branch that moves after the listing (a find that commits on its second call), a file name the archive
+# cannot hold (a newline), and an archive directory that cannot be written: each worktree and branch stay.
+kbranch feat/20-late merged && kwt feat/20-late "$kwork/wt20"
+kbranch feat/21-moved merged && kwt feat/21-moved "$kwork/wt21"
+kbranch feat/22-newline merged && kwt feat/22-newline "$kwork/wt22" && echo x >"$kwork/wt22/$(printf 'a\nb')"
+kbranch feat/23-aside merged && kwt feat/23-aside "$kwork/wt23"
+mkdir -p "$kwork/shim"
+cat >"$kwork/shim/tar" <<SHIM
+#!/usr/bin/env bash
+"$(type -P tar)" "\$@"; rc=\$?
+case " \$* " in *" -cf "*) if [ "\$PWD" = "$kwork/wt20" ] && [ ! -f "$kwork/shim/tar.done" ]; then
+  : >"$kwork/shim/tar.done"; echo late >>"$kwork/wt20/k-20-late.txt"; echo late >"$kwork/wt20/late.txt"; fi ;; esac
+exit \$rc
+SHIM
+cat >"$kwork/shim/find" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "$kwork/wt21" ]; then
+  n=\$(( \$(cat "$kwork/shim/find.n" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$kwork/shim/find.n"
+  [ "\$n" != 2 ] || git -C "$kwork/wt21" commit -q --allow-empty -m "feat: more" >/dev/null 2>&1
+fi
+case "\$1" in "$kwork/wt23.removing-"*)
+  [ -f "$kwork/shim/find23.done" ] || { : >"$kwork/shim/find23.done"; echo late >"\$1/late.txt"; } ;;
+esac
+exec "$(type -P find)" "\$@"
+SHIM
+chmod +x "$kwork/shim/tar" "$kwork/shim/find"
+out=$(PATH="$kwork/shim:$PATH" kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+echo "$out" | grep -qF "kept worktree $kwork/wt20: it changed while it was archived" && [ -f "$kwork/wt20/late.txt" ] &&
+  [ -n "$(git -C "$kwork/project" branch --list feat/20-late)" ] &&
+  pass "kwt: a worktree changed after its archive was taken is kept, with its branch" || fail "kwt: wt20: $out"
+echo "$out" | grep -qF "kept worktree $kwork/wt21: it changed since the classification" && [ -d "$kwork/wt21" ] &&
+  [ -n "$(git -C "$kwork/project" branch --list feat/21-moved)" ] &&
+  pass "kwt: a branch that moved after the listing keeps its worktree and branch" || fail "kwt: wt21: $out"
+echo "$out" | grep -qF "kept worktree $kwork/wt22: its archive could not be written or checked" && [ -d "$kwork/wt22" ] &&
+  [ -n "$(git -C "$kwork/project" branch --list feat/22-newline)" ] &&
+  pass "kwt: a worktree whose archive does not verify is kept, with its branch" || fail "kwt: wt22: $out"
+echo "$out" | grep -qF "kept worktree $kwork/wt23: it changed after it was moved aside" && [ -f "$kwork/wt23/late.txt" ] &&
+  [ -z "$(ls -d "$kwork/wt23.removing-"* 2>/dev/null)" ] && [ "$(git -C "$kwork/project" worktree list --porcelain | grep -c "^worktree $kwork/wt23$")" = 1 ] &&
+  [ -n "$(git -C "$kwork/project" branch --list feat/23-aside)" ] &&
+  pass "kwt: a worktree that changes after it was moved aside is moved back and kept" || fail "kwt: wt23: $out"
+[ -z "$(find "$khome/project/archive" -name 'feat_2[0-3]-*' 2>/dev/null)" ] &&
+  pass "kwt: a worktree kept during the run leaves no archive folder behind" ||
+  fail "kwt: archive folders left: $(find "$khome/project/archive" -name 'feat_2[0-3]-*' 2>/dev/null)"
+rm -rf "$kwork/wt22/$(printf 'a\nb')"
+chmod 555 "$khome/project/archive"
+out=$(kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+chmod 755 "$khome/project/archive"
+echo "$out" | grep -qF "kept worktree $kwork/wt22: its archive could not be written or checked" && [ -d "$kwork/wt22" ] &&
+  [ -n "$(git -C "$kwork/project" branch --list feat/22-newline)" ] &&
+  pass "kwt: an archive directory that cannot be written keeps the worktree and its branch" || fail "kwt: unwritable: $out"
+
+# The settle window above 0 after the move: renaming the worktree sets its own folder's ctime to now, which
+# must not count as a change. A find shim turns -mmin/-cmin into -newer/-cnewer against a file touched right
+# after the setup (no sleep: a setup file is at most as new, never newer), so only a later change is recent;
+# the move comes many git calls later.
+kbranch feat/50-settle merged && kwt feat/50-settle "$kwork/wt50"
+: >"$kwork/settle.ref"
+mkdir -p "$kwork/shim2"
+cat >"$kwork/shim2/find" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in "$kwork/wt50"*) ;; *) exec "$(type -P find)" "\$@" ;; esac
+args=()
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -mmin) args+=(-newer "$kwork/settle.ref"); shift ;;
+    -cmin) args+=(-cnewer "$kwork/settle.ref"); shift ;;
+    *) args+=("\$1") ;;
+  esac
+  shift
+done
+exec "$(type -P find)" "\${args[@]}"
+SHIM
+chmod +x "$kwork/shim2/find"
+out=$(PATH="$kwork/shim2:$PATH" KSETTLE=10 kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+[ ! -d "$kwork/wt50" ] && [ -z "$(ls -d "$kwork/wt50.removing-"* 2>/dev/null)" ] &&
+  [ -z "$(git -C "$kwork/project" branch --list feat/50-settle)" ] && ! echo "$out" | grep -qF "moved aside" &&
+  [ -n "$(find "$khome/project/archive" -name feat_50-settle 2>/dev/null)" ] &&
+  pass "kwt: with a settle window, the move aside does not count as a change: the worktree is removed" ||
+  fail "kwt: wt50 under a settle window: $out"
+
+# A move aside that fails half-way (a git shim renames the folder and fails) names both paths and removes
+# nothing; the next dry run notes the folder. A merge in progress (with --no-commit, or with a conflict) keeps
+# its worktree.
+kbranch feat/51-halfmove merged && kwt feat/51-halfmove "$kwork/wt51"
+kbranch feat/52-merging merged && git -C "$kwork/project" worktree add -q "$kwork/wt52" feat/52-merging &&
+  git -C "$kwork/wt52" merge -q --no-commit --no-ff feat/2-unmerged >/dev/null 2>&1
+kbranch feat/53-conflict merged && git -C "$kwork/project" worktree add -q "$kwork/wt53" feat/53-conflict &&
+  git -C "$kwork/project" checkout -q -b side53 origin/main && echo other >"$kwork/project/k-53-conflict.txt" &&
+  git -C "$kwork/project" add k-53-conflict.txt && git -C "$kwork/project" commit -q -m "chore: side" &&
+  git -C "$kwork/project" checkout -q feat/4-main
+git -C "$kwork/wt53" merge -q side53 >/dev/null 2>&1
+out=$(kenv "$plugin/scripts/cleanup.sh")
+case "$(kline "$kwork/wt52 ")" in keep*"merge/rebase/cherry-pick is in progress"*) pass "kwt: a worktree in a merge --no-commit is kept" ;;
+  *) fail "kwt: wt52: $out" ;; esac
+case "$(kline "$kwork/wt53 ")" in keep*"merge/rebase/cherry-pick is in progress"*) pass "kwt: a worktree in a conflicted merge is kept" ;;
+  *) fail "kwt: wt53: $out" ;; esac
+mkdir -p "$kwork/shim3"
+cat >"$kwork/shim3/git" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1 \$2 \$3" = "worktree move $kwork/wt51" ]; then mv "\$3" "\$4"; exit 1; fi
+exec "$(type -P git)" "\$@"
+SHIM
+chmod +x "$kwork/shim3/git"
+out=$(PATH="$kwork/shim3:$PATH" kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+kaside=""
+for d in "$kwork/wt51.removing-"*; do [ ! -d "$d" ] || kaside=$d; done
+echo "$out" | grep -F "kept worktree $kwork/wt51:" | grep -qF "$kaside" && [ -n "$kaside" ] &&
+  [ -f "$kaside/scratch.txt" ] && [ -n "$(git -C "$kwork/project" branch --list feat/51-halfmove)" ] &&
+  pass "kwt: a move aside that fails half-way names both paths and removes nothing" || fail "kwt: wt51: $out"
+[ -f "$kwork/wt52/.git" ] && git -C "$kwork/wt52" rev-parse -q --verify MERGE_HEAD >/dev/null &&
+  [ -n "$(git -C "$kwork/wt53" ls-files -u)" ] &&
+  pass "kwt: worktrees with a merge in progress stay, with the merge" || fail "kwt: wt52/wt53 went: $out"
+out=$(kenv "$plugin/scripts/cleanup.sh")
+echo "$out" | grep -F "$kwork/wt51 " | grep -qF "$kaside" &&
+  pass "kwt: the next dry run notes a missing worktree whose folder was moved aside" || fail "kwt: no note for wt51: $out"
+[ -z "$kaside" ] || mv "$kaside" "$kwork/wt51"
+
+# A worktree path with a newline: the porcelain line cut at the newline names another worktree (wt60, of
+# feat/61), which must not be listed under the newline worktree's branch.
+knl="$kwork/wt60$(printf '\nx')"
+kbranch feat/60-newline merged && kwt feat/60-newline "$knl"
+kbranch feat/61-cut merged && kwt feat/61-cut "$kwork/wt60"
+out=$(kenv "$plugin/scripts/cleanup.sh")
+! printf '%s\n' "$out" | grep -qF "feat/60-newline" && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
+  pass "kwt: a worktree path with a newline is not listed under another worktree's path" || fail "kwt: wt60: $out"
+git -C "$kwork/project" worktree remove --force "$knl"
+
+# merge-train's kept line names the command; the dev-loop skill and the CHANGELOG point at it.
+kept=$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_remove_merged_local feat/2-unmerged "$(git rev-parse feat/2-unmerged)"' \
+  _ "$plugin" 2>&1)
+case "$kept" in
+  *"kept local feat/2-unmerged: its worktree $kwork/wt2 has changes"*"cleanup.sh --apply --include worktrees"*)
+    pass "kwt: the kept line names cleanup.sh --apply --include worktrees" ;;
+  *) fail "kwt: kept line: $kept" ;;
+esac
+grep -qF -- "--include worktrees" "$plugin/skills/dev-loop/SKILL.md" &&
+  grep -qF "git worktree remove --force" "$plugin/skills/dev-loop/SKILL.md" &&
+  pass "kwt: the dev-loop skill points at the command instead of git worktree remove --force" ||
+  fail "kwt: the dev-loop skill does not point at --include worktrees"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#83' &&
+  pass "kwt: CHANGELOG has a #83 entry under Unreleased" || fail "kwt: no #83 entry under ## Unreleased"
+git -C "$kwork/project" checkout -q main
+git -C "$kwork/project" worktree unlock "$kwork/wt3"
+chmod 755 "$kwork/wt14/locked-away"
+for d in wt2 wt3 project-gate wt6 wt9 wt11/dist/inner wt11 wt13 wt14 wt20 wt21 wt22 wt23 wt24 wt25 wt40 wt50 wt51 wt52 wt53 wt60 restored1 restored41; do
+  [ ! -d "$kwork/$d" ] || git -C "$kwork/project" worktree remove --force "$kwork/$d"
+done
+cd "$work/project" || exit 1
 
 # 30. Ask rules (#84): doctor tests each ask rule of the project's settings and of the user settings
 # (DEV_LOOP_CLAUDE_DIR; only permissions.ask) against the loop's commands and the configured ones (fast_check,

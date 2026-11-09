@@ -878,3 +878,44 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   of awk, and a byte-compare test then states exactly what changes.
 - **Alternatives:** normalising the notes to LF (rewrites every line of a CRLF file); adding a final
   newline (changes a byte the author wrote, harmless but not "unchanged").
+
+## 2026-11-09 — Removing merged worktrees kept for their changes (#83)
+
+- **Decision:** `cleanup.sh --apply --include worktrees` removes a worktree only when its branch is
+  "merged" by the merge ledger or a merged PR at its tip; a loop branch merely contained in the base (a
+  fresh branch with no commits yet, where an agent may be starting) is not listed. Settle rule: a
+  worktree with any file whose mtime or ctime is within `DEV_LOOP_WORKTREE_SETTLE_MINUTES` (default 10;
+  0 turns the check off, for tests, which cannot backdate a ctime) is kept. Also always kept, listed with
+  the reason for a person: the main checkout and the gate worktree (real paths), a locked worktree, one
+  with submodules (a gitlink in the index or a modules dir: their git dirs live in the worktree's git dir
+  and go with it), per-worktree refs (`refs/worktree/*`, `refs/bisect/*`), another registered worktree
+  inside, a merge, rebase, cherry-pick, revert or sequence in progress (its state files, or unmerged index
+  entries: the removal would drop the operation), assume-unchanged or skip-worktree entries (their changes are invisible to the diff),
+  unrebuildable ignored files, or a path `find` cannot read. An independent repository (not a submodule)
+  inside an ignored folder that counts as build output is deleted with the worktree, its commits included,
+  as `merge-train.sh` already does for a clean worktree. The issue's "unless named explicitly" is not
+  built, and `--include worktrees` is never implied by `"factory": "dark"`.
+- **Archive:** `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/`, next to the branch bundles (the
+  setup skill's archive dir), a new folder per worktree (`-2`, `-3` when two branch names map to one).
+  The patches come from `git diff-index` with explicit prefixes and no external diff, textconv or color,
+  after an index refresh. Not archived: ignored build output (rebuildable by definition), the worktree's
+  HEAD reflog and its `config.worktree`. The restore line starts from the recorded tip: the base holds it
+  after a merge-commit merge, the run's bundle otherwise. The branch is then reclassified as merged and
+  goes through the existing bundle and conditional `update-ref` deletion.
+- **Removal:** the worktree is compared with the archive (both patches and the untracked list), moved
+  aside to `<path>.removing-<pid>` with `git worktree move`, compared again, and only then removed; on a
+  difference it is moved back and kept. The settle check after the move leaves the worktree's own folder
+  out (`find -mindepth 1`): the rename sets its ctime to now. A new tool call by an agent fails on the
+  missing path, but a process whose cwd is inside the worktree keeps writing into the moved folder by
+  relative path, silently, and writes after the second comparison are removed with it; that window is
+  not closed. A move that fails with the moved folder in place is reported with both paths and nothing
+  is removed; the next dry run notes a registered worktree whose path is missing while its
+  `.removing-*` folder exists (`git worktree repair`). When a worktree is kept whole at its path after
+  its archive was written (it changed while archived or after the move and was moved back, or it could
+  not be moved), the run removes that incomplete archive, so no archive folder piles up per run; when it
+  is left off its path (a half-done move, a failed move back or a failed removal) the archive stays.
+- **Reason:** the deleting direction must be conditional on a classification that cannot match new work;
+  the explicit override would reintroduce the forced removal the ask rules guard against.
+- **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after the
+  settle window); a `--worktree <path>` override (a forced removal by another name); archiving the
+  ignored files or the submodules too (large, and a submodule's git dir is a repository of its own).
