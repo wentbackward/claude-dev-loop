@@ -9,7 +9,7 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names
   it as before, and `DEV_LOOP_KEEP_WORK=1` always keeps it. Removal (`scripts/lib/workdirs.sh`) only
   touches the suite's own `mktemp -d` dir: a real directory (not a symlink) owned by the user, directly in
-  `TMPDIR`, named `dev-loop-smoke.XXXXXX` or `dev-loop-identity.XXXXXX`. After the checks, `gate-train.sh`
+  `TMPDIR` on disk (no `.` or `..` in the path, symlinks resolved), named `dev-loop-smoke.XXXXXX` or `dev-loop-identity.XXXXXX`. After the checks, `gate-train.sh`
   records the work dirs named (`(work dir PATH)`) in the logs of the stages that ran in this run, so also
   a run that crashed or was stopped before its summary, in `gate-work-dirs.txt` in the state directory,
   and keeps only the newest recorded one of each suite, removing the older ones under the same rule unless

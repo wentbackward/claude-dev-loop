@@ -624,7 +624,7 @@ stage_logs=()
 for ((i = 0; i < stages; i++)); do
   case "${results[i]}" in rc=* | stopped | stalled) stage_logs+=("$(log_of "$i")") ;; esac
 done
-dl_prune_work_dirs "$DL_STATE/gate-work-dirs.txt" "${stage_logs[@]}"
+dl_prune_work_dirs "$DL_STATE/gate-work-dirs.txt" ${stage_logs[@]+"${stage_logs[@]}"}
 
 git checkout -q --detach "$DL_REMOTE/$DL_BASE"
 if [ -n "$all_green" ]; then
