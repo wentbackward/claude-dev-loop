@@ -7,7 +7,10 @@
   ],
   "heavy": { "slots": 2, "memory_max": "4G" },
   "stop_gate": { "require_clean_tree": true, "max_blocks": 5 },
-  "merge": { "method": "squash", "delete_branch": true, "delete_local": true },
+  "merge": {
+    "method": "squash", "delete_branch": true, "delete_local": true,
+    "union_files": ["CHANGELOG.md", "docs/DECISIONS.md"]
+  },
   "cleanup": { "stale_days": 14, "keep_days": 30 },
   "models": {
     "implementer": "inherit",
