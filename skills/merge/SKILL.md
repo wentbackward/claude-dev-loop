@@ -29,7 +29,7 @@ in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 | exit | meaning | what to do |
 |------|---------|------------|
 | 0 | all merged | read any "kept local" lines, comment on the issues, start the next tickets |
-| 3 | replay conflict | the base changed under the train: have the implementer rebase the branch and publish it with `repush.sh <branch>` (never a force push), review the change, gate the `<branch>-vN` it reports |
+| 3 | replay conflict (never in the `merge.union_files`, whose both sides are kept as in the gate; a base that gained an entry there is exit 4) | the base changed under the train: have the implementer rebase the branch and publish it with `repush.sh <branch>` (never a force push), review the change, gate the `<branch>-vN` it reports |
 | 4 | tree differs from the gated one | the base moved since the gate: re-gate the remaining branches |
 | 5 | notes file missing | write it (ask the implementer), then re-run |
 | 6 | branch changed since the gate | someone pushed after the gate: review and re-gate |

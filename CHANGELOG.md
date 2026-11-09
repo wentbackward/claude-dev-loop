@@ -22,6 +22,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the gate and the format hook run these outside the Bash tool, so the rule stops only an agent that runs
   the command itself through the Bash tool. The DECISIONS entry of #84 names the characters of the
   short-word remark (letters, digits, `_`, `-`).
+- Union logs (#95): `merge.union_files` (off by default) lists the append-only logs every branch adds to,
+  e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`. The gate's stacking (`gate-train.sh`) and the merge
+  replay (`merge-train.sh`) keep both sides of a conflict in those files, the base side first, then the
+  branch, so two branches that each add an entry gate together and merge in order without a rebase or a
+  `-vN` push; a base that gained an entry after the gate is a re-gate (exit 4), not a replay conflict.
+  Git's `merge=union` comes from a temporary attributes file passed to that one rebase
+  (`-c core.attributesFile`), followed by the user's own global attributes; no git config or
+  `.gitattributes` is changed, and a merge driver the repository or the user set for a listed file wins.
+  A conflict in any other file stops the train as before; the replayed tree must still equal the gated one.
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,

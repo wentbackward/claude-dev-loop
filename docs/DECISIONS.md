@@ -1055,3 +1055,23 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** only rulesets (misses classic protection); MISSING for an unprotected remote (the loop
   works without it; it is the owner's choice); `--paginate` (concatenated pages need merging; 100 rulesets
   are plenty); querying a GitHub Enterprise host (links and API differ; left to a later ticket).
+
+## 2026-11-09 — Union merge for the append-only logs, off by default (#95)
+
+- **Decision:** `merge.union_files` (a list of paths from the repository root) is off by default (`[]`);
+  a project lists its logs to turn it on. The gate's stacking and the merge replay run their rebase with
+  `git -c core.attributesFile=<temporary file>` holding `/<path> merge=union` for each listed path,
+  followed by the user's own global attributes file (`core.attributesFile`, else the XDG default), so the
+  user's attributes still apply and a driver they set for a listed file wins; the repository's
+  `.gitattributes` and `info/attributes` rank above any `core.attributesFile` in git, so a driver they set
+  wins too. The file is removed when the script exits. Entries with spaces or starting `!` or `#` are
+  skipped with a warning. Union keeps both sides once each, "ours" first: in a rebase that is the base,
+  then the branch.
+- **Reason:** CLAUDE.md requires every option to be off or backwards compatible by default; a default list
+  would turn conflicts that stop the train today into silent merges in every existing project. The merge
+  replay uses the same attributes, so the replayed tree still equals the gated one, and a base that
+  gained an entry after the gate reads as a re-gate (exit 4) instead of a rebase.
+- **Alternatives:** the issue's default `["CHANGELOG.md", "docs/DECISIONS.md"]` when the files exist
+  (changes behaviour without a key); writing `.git/info/attributes` in the gate worktree (changes the
+  repository's state and would also apply to the checks); a custom merge driver that orders entries
+  (more code, and union already keeps every line).
