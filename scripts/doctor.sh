@@ -369,6 +369,66 @@ doctor_ask_rules() {
   done
 }
 
+# Commands a wildcard allow rule for a runner, an interpreter or a git subcommand lets through and that bypass
+# the stop conditions, "<command><TAB><reason>" lines, in the order doctor_targeted tries them.
+DOCTOR_RISKY_COMMANDS="make --eval=x test	make runs any code through --eval, -f, -C ../other and VAR=value overrides
+go test -toolexec=x ./...	go runs any program through -exec, -toolexec, -vettool and -ldflags, and writes anywhere with -o
+go env -w GOFLAGS=x	go env -w changes this machine's Go settings for every project
+npm run x -- --y	npm runs any package script, with any arguments after -- and settings such as --script-shell
+npm test --script-shell=x	npm test takes settings such as --script-shell and --prefix, and any arguments after --
+npx x	npx downloads and runs any package
+pnpm dlx x	pnpm runs any script and downloads and runs any package (dlx)
+yarn dlx x	yarn runs any script and downloads and runs any package (dlx)
+cargo test --config x	cargo runs any binary (cargo run) and any runner through --config
+python -c x	python runs any code (-c, any script)
+python3 -c x	python3 runs any code (-c, any script)
+node -e x	node runs any code (-e, any script)
+uv run x	uv run runs any program
+pytest -p x	pytest loads any plugin (-p) and writes anywhere (--basetemp)
+bash -c x	bash runs any command string
+sh -c x	sh runs any command string
+git branch -D x	git branch -D (--delete --force) deletes a branch with unmerged work
+git checkout .	git checkout . discards uncommitted changes
+git restore --worktree .	git restore --worktree discards uncommitted changes
+git switch --discard-changes x	git switch --discard-changes discards uncommitted changes
+git stash drop	git stash drop and clear delete stashed work
+git reset --hard HEAD~3	git reset --hard discards commits and uncommitted changes
+git clean -fdx	git clean -fdx deletes untracked and ignored files"
+
+# The runners and interpreters whose wildcard allow rules doctor_targeted notes even without a risky sample.
+DOCTOR_RUNNERS=" make gmake go gofmt npm npx pnpm yarn bun cargo python python3 node deno uv pytest ruff bash sh zsh "
+
+# doctor_targeted: a note per refused "targeted" entry, with the reason, and per allow rule in the project's two
+# settings files that wildcards a runner, an interpreter or a git subcommand with destructive options (it lets
+# a risky command through, or is a wildcard after a runner's name), unless permissions.sh wrote it for an
+# accepted "targeted" entry, whose arguments the guard checks. Read only; the user's own files are not read.
+doctor_targeted() {
+  local root rel rule cmd reason entry accepted body first
+  root=$(cd "$scripts_dir/.." && pwd)
+  while IFS=$'\t' read -r entry reason; do
+    optional "permissions: targeted \"$entry\" not written: $reason"
+  done < <(dl_perm_targeted_refused "$root")
+  accepted=$(dl_perm_targeted_rules "$root" | cut -f2)
+  for rel in .claude/settings.json .claude/settings.local.json; do
+    while IFS= read -r rule; do
+      printf '%s\n' "$accepted" | grep -qxF -- "$rule" && continue
+      reason=""
+      while IFS=$'\t' read -r cmd reason; do
+        dl_perm_match "$rule" "$cmd" && break
+        reason=""
+      done <<<"$DOCTOR_RISKY_COMMANDS"
+      if [ -z "$reason" ]; then
+        case $rule in "Bash("*\**")") ;; *) continue ;; esac
+        body=${rule#Bash(}
+        first=${body%%[ :*]*}
+        case $DOCTOR_RUNNERS in *" $first "*) ;; *) continue ;; esac
+        reason="a wildcard after $first: it runs a command no \"targeted\" entry lists without asking (the guard checks a runner's arguments only for the forms \"targeted\" lists, and even then not which target or script runs)"
+      fi
+      optional "permissions: allow rule $rule in $rel is a wildcard: $reason (list the exact forms in \"targeted\", then the owner runs permissions.sh --apply and removes this rule)"
+    done < <(dl_perm_rules "$DL_ROOT/$rel" allow)
+  done
+}
+
 # doctor_first_match RULE COMMANDS: true when the Bash permission RULE matches one of the COMMANDS (one per
 # line); sets first_match (declared local by the caller) to the first such command, without a subshell.
 doctor_first_match() {
@@ -821,6 +881,7 @@ else
   doctor_permissions
   doctor_release_denies
   doctor_ask_rules
+  doctor_targeted
   doctor_worktrees
   doctor_notes_dir
   doctor_protection

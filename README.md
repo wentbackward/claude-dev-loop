@@ -162,7 +162,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
-| hook | role guard | in every loop project: refuses git commands that hit a stop condition (see Permission modes: the git guard; off with `"guard": false`); with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
+| hook | role guard | in every loop project: refuses git commands that hit a stop condition (see Permission modes: the git guard; off with `"guard": false`); with `targeted`: refuses a targeted runner's arguments off its safe list (see Permission modes: targeted commands); with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 Every script under `scripts/` prints its usage for `-h` or `--help` as its first argument and exits 0
 without touching anything; the scripts that take branches (`gate-train.sh`, `merge-train.sh`, `repush.sh`,
@@ -820,6 +820,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `base_branch` | `main` | the branch everything merges into |
 | `remote` | `origin` | the remote branches are pushed to |
 | `fast_check` | none | seconds-long check (format + lint), run by the Stop hook |
+| `targeted` | none | command prefixes implementers run while working (e.g. `["go test ./", "pytest tests/", "make test"]`), each starting with an accepted runner form: `permissions.sh` writes one `Bash(<prefix> *)` allow rule per entry and refuses the others with the reason, and the role guard checks the arguments of every command of those runners against the runner's safe list (see Permission modes: targeted commands); without the key nothing changes |
 | `format` | none | formats one file; `{file}` is the quoted path (else appended) |
 | `format_extensions` | all | only format files ending in one of these (e.g. `[".py"]`) |
 | `checks` (required for the gate) | — | the full checks, in order: `{"name", "command", "heavy": true, "summary": "<regex>"}` or a plain command string; names are unique (each is its log file) and `affected` is reserved |
@@ -1023,7 +1024,9 @@ the owner that line and wait instead of editing the settings files.
     as `--onto`, asks); `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
     `gh pr diff`, `gh pr checks`); exactly `git push -u <remote> HEAD`, the one push the loop makes (the
     implementer pushes its checked-out branch in this form); one exact rule for each command of
-    `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
+    `fast_check` and `checks` (a compound command `a && b` gets one rule per part); with `targeted`, one
+    `Bash(<prefix> *)` per accepted entry (`Bash(<prefix>*)` when it ends in `/`), whose arguments the
+    guard checks (below).
   - **ask**, matched anywhere in a command (also after `git -C <dir>` or `git -c <key>=<value>`): `git tag`,
     `gh release`, pushes with `--tags`, `--follow-tags`, `refs/` (tags and heads), `--mirror`, `--all`,
     `--delete` or `-d`, a push naming the base branch (`<base>`, `:<base>`), a push deleting a loop branch
@@ -1210,6 +1213,106 @@ are written. A command containing `*`, `?` or ending in `:*` becomes a wildcard 
 text; a trailing `:*` matches any arguments), so keep those commands free of such characters or accept the
 broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 
+### Targeted commands
+
+While implementing, the loop runs targeted tests and formatters (`go test ./pkg -run TestX`,
+`pytest tests/test_x.py -k y`, `gofmt -l f.go`, `make test`); without a rule each one asks in auto mode. A
+runner wildcard such as `Bash(make *)`, `Bash(go *)` or `Bash(python3 *)` stops the prompts but runs
+anything: `make --eval=...`, `make -C ../other`, `make test CC=<cmd>`, `go test -toolexec`/`-exec`/`-o`,
+`go env -w` (machine-wide), `pytest -p <plugin>`, `npm test --script-shell=<cmd>`, `npx <package>`,
+`python3 -c`. Ask rules cannot fix that: Claude Code's patterns cannot say "any option except these", and
+a runner accepts abbreviations (`make --ev`), bundles (`-kC..`), quoting (`'-o'`), tabs and options no list
+names. So the plugin pairs a narrow allow rule with the role guard, which sees the parsed argv. The guard
+backs up Claude Code's own per-subcommand permission check (each part of `a && b` must match a rule); it
+does not replace it.
+
+List the exact prefixes in `"targeted"` (`.dev-loop.json`). Each entry must start with an accepted runner
+form; `permissions.sh` writes `Bash(<prefix> *)` (or `Bash(<prefix>*)` when the prefix ends in `/`, so
+`"go test ./"` allows `go test ./pkg`) into `.claude/settings.json`, and refuses any other entry with the
+reason: a path as the program (`./make test`, `/usr/bin/go test`), an interpreter (`python`, `node`, ...),
+a shell (`bash -c`), `npx` and its kin, git (the template's exact git rules and the git guard stay in
+charge), a bare `make` or `npm run` (name the target or script), an argument off the safe list
+(`"go test -toolexec=x"`, `"make test CC=x"`), shell metacharacters, quotes or a wildcard. Without
+python3 no entry is written, since the guard runs on python3. `doctor.sh` notes each refused entry.
+
+The role guard then reads every Bash call of the project. For each simple command whose argv starts with
+the runner form of an accepted entry (the program by its name, so `/usr/bin/go test` counts; after the
+wrappers `time`, `nohup`, `nice`, `timeout`, `stdbuf`), every following argument must be a plain path,
+package or test pattern, or a flag on that runner's safe list, with its value where it takes one. The safe
+lists, one table in `hooks/guard-role.py`:
+
+| Runner form | Safe flags |
+|-------------|------------|
+| `go test` | `-run`, `-skip`, `-count`, `-v`, `-race`, `-short`, `-timeout`, `-failfast`, `-cover`, `-covermode`, `-parallel`, `-cpu`, `-bench`, `-benchtime`, `-benchmem`, `-json`, `-shuffle`, `-tags` |
+| `go vet` | `-json`, `-tags` |
+| `gofmt` | `-l`, `-d`, `-s`, `-e`, `-w` |
+| `pytest`, `python -m pytest`, `python3 -m pytest`, `uv run pytest` | `-k`, `-m`, `-x`, `-q`, `-v`, `-s`, `-l`, `-r`, `-n`, `--lf`, `--ff`, `--last-failed`, `--failed-first`, `--exitfirst`, `--quiet`, `--verbose`, `--maxfail`, `--tb`, `--durations`, `--no-header`, `--showlocals` |
+| `npm test`, `pnpm test`, `yarn test`, `npm run <script>`, `pnpm run <script>`, `yarn run <script>` | `--silent` |
+| `cargo test` | `-q`, `--quiet`, `-v`, `--verbose`, `--release`, `--lib`, `--bins`, `--tests`, `--doc`, `--no-fail-fast`, `-p`, `--package`, `--test`, `--features`, `-F`, `--all-features`, `--no-default-features`, `--workspace`, `-j`, `--jobs`, `--locked`, `--offline` |
+| `cargo fmt` | `--check`, `--all`, `-p`, `--package`, `-q`, `--quiet`, `-v`, `--verbose` |
+| `make <target>` | `-j` (with an attached or a separate number), `--jobs`, `-k`, `--keep-going`, `-s`, `--silent` |
+| `ruff check`, `uv run ruff check` | `--fix`, `--diff`, `-q`, `--quiet`, `--statistics`, `--no-cache` |
+| `ruff format`, `uv run ruff format` | `--check`, `--diff`, `-q`, `--quiet`, `--no-cache` |
+
+Go flags take one or two dashes and `-flag=value`; the others take bundled short letters (`-xvs`,
+`-kEXPR`), `--long` and `--long=value`. A flag matches only as written in the table, so an abbreviation
+(`--ev`, `--basete`) or a flag the table leaves out (`-test.testlogfile=`, `-compiler`, `--basetemp`,
+`-p`, `--prefix`, `--target-dir`, `-Z`) is refused; so is `--`, which hands what follows to the runner or
+the test binary, except for the test harness: after `cargo test --` the harness options `--nocapture`,
+`--show-output`, `--test-threads=N` (N from 1 to 256), `--exact`, `--ignored`, `--include-ignored`, `-q`/`--quiet` and plain
+filter words pass, and after `go test -args` only `-test.v`, `-test.run=X` and `-test.count=N`. A flag that
+takes a value needs one; a value in its own word may not start with `-` or `+` (pytest reads `-p <plugin>`
+anywhere in its arguments before its own parser, and cargo may read the word as an option of its own, so
+`pytest -k -p evil` and `cargo test -p --config x` are refused), while an attached one may (`-k=-slow`,
+`-run=-x`, `-kEXPR`). A `go test` or `go vet` package must be a relative path (`.`, `./pkg`, `./...`): an
+import path (`std`, `all`, `fmt`, `golang.org/x/tools/...`) is refused, since it runs the test code of the
+standard library or a dependency outside the worktree. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
+arguments, so a file the agent writes could carry any option; a flag value may not start with `@` either),
+hold `=` (`make` and `npm` read `VAR=value` as a setting), a blank or a control character, or be an
+unquoted glob (the shell expands it, maybe to a file named like an option). `make` takes one target: a
+second one (`make test deploy`) is refused, since `Bash(make test *)` would run a target nobody listed. In
+an entry the word after `make` or `npm run` must be a plain name (`"make -s"` is refused). A path, absolute or relative, must stay inside the worktree the
+command runs in (`..` and symlinks resolved; `~` is the home directory, so `~/x` is outside). The guard
+follows `cd`, `pushd` and `popd` like the git guard, and refuses a targeted command that may run outside
+the worktree (`cd ../other && make test`), an output redirection to a file outside it (`> /tmp/out`;
+`/dev/null` and `2>&1` pass), a variable set before the runner (`GOFLAGS=...`, `MAKEFLAGS=...`, through
+`env` too) or anywhere in the same line (`export`, `declare`, `typeset`, `readonly`, `local`, `read`,
+`mapfile`/`readarray`, `getopts`, `let`, `hash`, `printf -v`, `set -a`, `set -o allexport`, a bare
+`MAKEFLAGS=...;`), any program in the line that runs a command or changes the shell in a way the guard
+cannot follow, whatever its arguments (`builtin`, `command`, `eval`, `exec`, also with only redirections,
+`source`, `.`, `xargs`, `sudo`, ...: so `builtin cd /tmp; make test` and `source ./env.sh; make test` are
+refused), a runner started through a shell (`bash -c`), and a command line naming a targeted runner that is not plain (a `$` or backtick
+expansion, braces, a subshell). A refusal names the argument and the runner forms and says to ask the
+owner. The project's exact `fast_check` and `checks` commands pass with their own arguments (they have their own
+exact rules), but the directory and redirection checks apply to them too (`cd /tmp && make lint` is
+refused). The check is on whenever `targeted` lists an accepted entry, also with `"guard": false`; a
+`.dev-loop.json` that holds `"targeted"` but does not parse checks every runner form (fail closed); a
+runner form no accepted entry names is not checked (it has no allow rule, so it asks as before). A project
+without the key starts no git process for this check.
+
+The limit, plainly: **a targeted test still runs the project's own test code.** `go test` runs the
+package's tests, `make test` runs the recipe in the Makefile, `npm test` runs the package's script, and
+pytest loads `conftest.py`. The guard keeps the runner from running other programs or touching paths
+outside the project through its options; it does not judge what the project's code does, and an agent can
+still change that code before it runs it. The same holds for the runners' own config files, which the
+agent can write and the runner reads: pytest's `addopts` (`pytest.ini`, `pyproject.toml`, `setup.cfg`,
+`tox.ini`), `.npmrc` (`script-shell`, `node-options`), `.yarnrc.yml` (`yarnPath`), `.cargo/config.toml`
+(`target.<triple>.runner`, `build.rustc-wrapper`), and the machine-wide `go env -w GOFLAGS=...` set
+earlier. Only the same line is checked because Claude Code starts each Bash call in a fresh shell: the
+working directory carries over (the guard reads it from the event's `cwd`), exported variables and
+functions do not. That shell starts from a snapshot of the user's profile, so variables set there
+(`GOFLAGS`, `MAKEFLAGS`, `PYTEST_ADDOPTS`, ...) reach the runners: a limit like the config files. The path check reads the file system at the time of the check, so a symlink made earlier in the
+same line (`ln -s /etc tests/l2 && pytest tests/l2`) is not caught. Like the git guard it is a tripwire,
+not the boundary.
+
+`doctor.sh` notes each allow rule in the project's two settings files (never the user's own) that wildcards
+a runner, an interpreter or a git subcommand with destructive options, with the reason: `make *`, `go *`,
+`go test *`, `go env *`, `npm *`, `npm run *`, `npm test *`, `npx *`, `pnpm *`, `yarn *`, `cargo *`,
+`python *`, `python3 *`, `node *`, `uv run *`, `pytest *`, `bash *`, `sh *`,
+`git branch|checkout|restore|switch|stash|reset|clean *`, anything broader such as `Bash`, and any other
+wildcard after a runner's name (`Bash(make test *)` without `targeted`). A rule `permissions.sh` wrote for
+an accepted entry is not noted. The notes are read only: the owner removes the rule.
+
 ## Safety notes
 
 - Agents never read `.env` or credential files, and never write secrets or personal identifiers (real user
@@ -1217,6 +1320,9 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 - Merges happen only through `merge-train.sh` after a green gate, and never with `--admin`.
 - The role guard refuses git commands that hit a stop condition, however their options are spelled
   (see Permission modes: the git guard); `"guard": false` turns that check off.
+- With `targeted`, the role guard refuses a targeted runner's arguments that are off its safe list or
+  leave the project (see Permission modes: targeted commands). A targeted test still runs the project's
+  own test code.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
   directory, and, in identity mode, `~/.config/dev-loop/`. `status.sh` only reads them.
 - The scripts never push to the base branch directly, and nothing in the loop force-pushes. The merge

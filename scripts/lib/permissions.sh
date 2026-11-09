@@ -170,6 +170,48 @@ dl_perm_project_rules() {
   done < <(dl_perm_project_commands)
 }
 
+# dl_perm_targeted_entries: the project's "targeted" entries, one per line, blanks squeezed; an entry with a
+# line break prints as one line holding a literal "\n" (refused as a metacharacter).
+dl_perm_targeted_entries() {
+  local i entry
+  for ((i = 0; i < $(cfg_len targeted); i++)); do
+    entry=$(cfg "targeted.$i" "")
+    case $entry in *$'\n'*) entry=${entry//$'\n'/\\n} ;; esac
+    entry=$(printf '%s\n' "$entry" | awk '{ $1 = $1; print }')
+    [ -n "$entry" ] && printf '%s\n' "$entry"
+  done
+  return 0
+}
+
+# dl_perm_targeted_checked ROOT: "<entry><TAB><reason>" for each "targeted" entry, the reason empty when the
+# entry is an accepted runner form (the guard of the plugin at ROOT decides, from its one table of runner forms
+# and safe flags). Without python3 every entry is refused: the guard that checks the arguments needs it.
+dl_perm_targeted_checked() {
+  local entries entry list=()
+  entries=$(dl_perm_targeted_entries)
+  [ -n "$entries" ] || return 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$entries" | awk '{ print $0 "\tthe guard that checks its arguments needs python3" }'
+    return 0
+  fi
+  while IFS= read -r entry; do list+=("$entry"); done <<<"$entries"
+  python3 -I "$1/hooks/guard-role.py" --targeted-check "${list[@]}"
+}
+
+# dl_perm_targeted_refused ROOT: "<entry><TAB><reason>" lines for the "targeted" entries that are not written.
+dl_perm_targeted_refused() {
+  dl_perm_targeted_checked "$1" | awk -F'\t' '$2 != ""'
+}
+
+# dl_perm_targeted_rules ROOT: "allow<TAB><rule>" lines for the accepted "targeted" entries: Bash(<prefix> *),
+# or Bash(<prefix>*) when the prefix ends in "/" (so "go test ./" allows "go test ./pkg"). The guard checks the
+# arguments after the prefix; nothing without the key.
+dl_perm_targeted_rules() {
+  dl_perm_targeted_checked "$1" | awk -F'\t' '$2 == "" {
+    if ($1 ~ /\/$/) printf "allow\tBash(%s*)\n", $1; else printf "allow\tBash(%s *)\n", $1
+  }'
+}
+
 # dl_perm_template_rules TEMPLATE: "<list><TAB><rule>" lines of the template's allow, ask and deny rules.
 dl_perm_template_rules() {
   local list rule
@@ -201,6 +243,7 @@ dl_perm_wanted() {
     shared)
       dl_perm_template_rules "$1/templates/settings.json"
       dl_perm_project_rules
+      dl_perm_targeted_rules "$1"
       ;;
     local)
       dl_perm_plugin_rules "$1"

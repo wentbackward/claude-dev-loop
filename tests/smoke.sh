@@ -7081,4 +7081,287 @@ awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#95' && pass "uni
   fail "union: no #95 entry under ## Unreleased"
 grep -qF '(#95)' "$plugin/docs/DECISIONS.md" && pass "union: the decisions log has #95" || fail "union: no #95 decision"
 cd "$work/project" || exit 1
+
+# 33. Targeted commands (#72): "targeted" lists the command prefixes implementers run while working. Each must
+# start with an accepted runner form (go test, pytest, make <target>, npm run <script>, ...); permissions.sh
+# writes Bash(<prefix> *) for each and refuses the rest with the reason. The guard checks the parsed arguments
+# of every command of those runners: plain paths, packages and patterns inside the project, or flags on the
+# runner's safe list; anything else is refused. doctor notes wildcard allow rules for runners and
+# interpreters. Without the key nothing changes.
+twork="$work/targeted"
+git init -q --bare "$twork/origin.git"
+git clone -q "$twork/origin.git" "$twork/proj" 2>/dev/null
+cd "$twork/proj" || exit 1
+printf '# Project\n' >CLAUDE.md
+mkdir -p tests pkg && printf 'x\n' >tests/test_x.py
+cat >"$twork/proj/.dev-loop.json" <<'JSON'
+{"base_branch": "main", "fast_check": "make lint", "checks": ["go test -coverprofile=c.out ./..."],
+ "targeted": ["go test ./", "go vet ./", "gofmt -l", "gofmt -w", "pytest tests/", "python -m pytest tests/",
+              "uv run pytest", "npm test", "npm run lint", "pnpm test", "yarn test", "cargo test", "cargo fmt --check",
+              "make test", "ruff check", "ruff format"]}
+JSON
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+git worktree add -q -b feat/1-x "$twork/proj-1" 2>/dev/null
+mkdir -p "$twork/other"
+tproj="$twork/proj-1"
+printf '{"base_branch": "main", "fast_check": "make lint", "checks": ["make check"]}\n' >"$twork/plain.json"
+python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])); c["guard"] = False; json.dump(c, open(sys.argv[2], "w"))' \
+  "$twork/proj/.dev-loop.json" "$twork/off.json"
+# tguard COMMAND [CONFIG] [CWD]: the guard's exit status on a Bash call of the implementer (CWD: the worktree).
+tguard() {
+  local event
+  event=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+    "agent_type": "dev-loop:implementer", "tool_input": {"command": sys.argv[2]}}))' "${3:-$tproj}" "$1")
+  # shellcheck disable=SC2069  # the refusal (stderr) is kept, stdout dropped
+  (cd "${3:-$tproj}" && printf '%s\n' "$event" |
+    CLAUDE_PROJECT_DIR="$twork/proj" DEV_LOOP_CONFIG="${2:-}" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
+  echo "status=$?"
+}
+trefused() { # trefused COMMAND...: each COMMAND is refused, and the refusal says to ask the owner
+  local cmd out
+  for cmd in "$@"; do
+    out=$(tguard "$cmd")
+    case $out in *"ask the owner"*"status=2") pass "targeted guard: refuses \"$cmd\"" ;;
+      *) fail "targeted guard: does not refuse \"$cmd\" ($out)" ;; esac
+  done
+}
+tpassed() { # tpassed COMMAND...: each COMMAND passes
+  local cmd
+  for cmd in "$@"; do expect "targeted guard: lets \"$cmd\" pass" "status=0" "$(tguard "$cmd" | tail -n 1)"; done
+}
+# go: options that run another program, write outside the project or are not on the safe list, in every spelling.
+trefused "go test ./pkg -toolexec=x" "go test ./pkg -toolexec x" "go test ./pkg --toolexec=x" "go test ./pkg -exec /tmp/x" \
+  "go test ./pkg -vettool=x" "go test ./pkg -ldflags=-extld=x" "go test ./pkg -gcflags=x" "go test ./pkg -asmflags=x" \
+  "go test ./pkg -o /tmp/bin" "go test ./pkg -coverprofile=/tmp/c" "go test ./pkg -trace=t" "go test ./pkg -outputdir=/tmp" \
+  "go test ./pkg -pkgdir=/tmp" "go test ./pkg -overlay=o.json" "go test ./pkg -test.testlogfile=/tmp/x" \
+  "go test ./pkg -compiler=x" "go test ./pkg -args -x" "go test ./pkg '-o' /tmp/x" "go test ./pkg -toolexe''c=x" \
+  "go test ./pkg -tool\\exec=x" "go test ./pkg -C ../other" "go	test ./pkg	-toolexec=x" "time go test ./pkg -toolexec=x" \
+  "nice -n 5 go test ./pkg -exec=x" "GOFLAGS=-toolexec=x go test ./pkg" "env GOFLAGS=-toolexec=x go test ./pkg" \
+  "go test ./pkg -v=true" "go test ./pkg -- -x" "go vet -vettool=x ./" "gofmt -l -r 'a -> b' x.go" "/usr/bin/go test ./pkg -exec x"
+# make: abbreviations, bundles, directories, other makefiles and variable overrides.
+trefused "make test --eval=x" "make --ev=x test" "make test --dir ../other" "make test -E x" "make -C ../other test" \
+  "make -f ../other/Makefile test" "make test CC=evil" "make -kC.. test" "make test --directory=../other" "make -e test" \
+  "make test '--eval=x'" "MAKEFLAGS=--eval=x make test"
+# pytest, npm, cargo, ruff: options outside the safe lists.
+trefused "pytest tests/ --basetemp=/tmp/x" "pytest tests/ -p evil" "pytest tests/ -pevil" "pytest tests/ -vp evil" \
+  "pytest tests/ -c /tmp/x.ini" "pytest tests/ --rootdir=/" "pytest tests/ -o addopts=x" "python -m pytest tests/ -p x" \
+  "uv run pytest --basete=/tmp/x" "pytest tests/ --confcutdir=/" "npm test --prefix=../other" "npm test --script-shell=x" \
+  "npm test -- --x" "npm run lint --script-shell x" "pnpm test --dir ../x" "yarn test --cwd ../x" \
+  "cargo test --target-dir /tmp/x" "cargo test -Z x" "cargo test --config x" "cargo test --manifest-path ../other/Cargo.toml" \
+  "cargo test -- --logfile /tmp/x" "ruff check --config /tmp/x.toml" "ruff format --config=x"
+# Paths that leave the project, directories outside it, writes outside it, globs and lines that are not plain.
+trefused "pytest /etc/passwd" "pytest ../other/tests" "pytest tests/../../other" "pytest ~/x" "gofmt -w $twork/other/x.go" \
+  "cd ../other && make test" "cd /tmp; go test ./..." "go test ./... > /tmp/out" "make test >>../other/log" \
+  "go test ./pkg/*" "go test ./pkg -run \$(echo x)" "go test ./pkg \`x\`" "make test \${X}" "xargs go test" \
+  "command go test ./pkg -exec x" "bash -c 'go test ./pkg -exec x'" "sh -c 'make --eval=x test'"
+out=$(tguard "go test ./pkg -run X -toolexec=evil")
+case $out in *"-toolexec=evil"*"go test"*"ask the owner"*) pass "targeted guard: the refusal names the argument and the runner" ;;
+  *) fail "targeted guard: the refusal does not name the argument: $out" ;; esac
+# The safe forms pass: test selection, verbosity, parallelism, plain paths inside the project, pipes, redirects inside.
+tpassed "go test ./pkg -run TestX -count=1 -v" "go test -race -short ./..." "go test ./... -run 'TestA|TestB'" \
+  "go test ./pkg --run TestX" "go vet ./..." "gofmt -l main.go" "gofmt -w ./pkg/x.go" \
+  "pytest tests/test_x.py -k 'a and not b' -x -q" "pytest -xvs tests/" "pytest tests/test_x.py::test_a -k y" \
+  "python -m pytest tests/ -k y" "uv run pytest tests/ -q" "npm test" "npm run lint" "pnpm test" "yarn test" \
+  "cargo test parser --release" "cargo fmt --check" "make test" "make -j4 test" "make -k -j 8 test" "ruff check src/" \
+  "ruff format --check src" "go test ./pkg > out.txt 2>&1" "go test ./... | tail -5" "cd pkg && go test ./..." \
+  "pytest $tproj/tests/test_x.py" "go test -coverprofile=c.out ./..." "make lint" "echo \$HOME" "ls -la"
+expect "targeted guard: without the key a runner's options are not checked" "status=0" \
+  "$(tguard "make --eval=x test" "$twork/plain.json" | tail -n 1)"
+expect "targeted guard: \"guard\": false keeps the targeted check" "status=2" "$(tguard "make --eval=x test" "$twork/off.json" | tail -n 1)"
+expect "targeted guard: a runner outside the targeted forms is not checked" "status=0" "$(tguard "cargo build --config x" | tail -n 1)"
+# Review round 2: a second make target, response files, variables exported earlier in the line, the exact
+# configured commands outside the project, an unreadable config, a crash.
+trefused "make test deploy" "make test release" "make -j4 test deploy" "pytest @args.txt" "pytest tests/ -k @args.txt" \
+  "pytest tests/ -k@args.txt" "pytest tests/ --tb=@x" "go test ./pkg @args" "cargo test @args" "ruff check @args" "npm test @args" \
+  "export MAKEFLAGS=--eval=x; make test" "export GOFLAGS=-toolexec=x && go test ./..." "declare -x MAKEFLAGS=x; make test" \
+  "set -a; MAKEFLAGS=x; make test" "set -o allexport; MAKEFLAGS=x; make test" "MAKEFLAGS=x; make test" \
+  "typeset -x MAKEFLAGS=x; make test" "readonly MAKEFLAGS=x; make test" "cd /tmp && make lint" "make lint > /tmp/x"
+tpassed "set -e; make test" "set -euo pipefail; go test ./..." "npm run lint src"
+# Review round 3: wrapped or indirect cd, export and source, other builtins that set variables, exec with
+# redirections; the test harness options after cargo test -- and go test -args.
+trefused "builtin cd /tmp; make test" "command cd /tmp; make test" "eval cd /tmp; make test" "eval 'cd /tmp'; make test" \
+  "builtin pushd /tmp; make test" "builtin export MAKEFLAGS=x; make test" "command export MAKEFLAGS=x; make test" \
+  "builtin declare -x MAKEFLAGS=x; make test" "source ./env.sh; make test" ". ./env.sh; make test" \
+  "read PATH <<< ./bin; make test" "printf -v PATH %s ./bin; make test" "readarray -t PATH < f; make test" \
+  "mapfile -t PATH < f; make test" "let x=1; make test" "getopts ab PATH; make test" "exec > /tmp/x; make test" \
+  "exec 2>/dev/null; make test" "make test; builtin cd /tmp" "cargo test -- --logfile /tmp/x" "cargo test -- --format json" \
+  "cargo test -- -Z unstable-options" "cargo test -- --test-threads" "go test ./pkg -args -test.testlogfile=/tmp/x" \
+  "go test ./pkg -args -test.run" "go test ./pkg -args ./other"
+tpassed "printf '%s' x; make test" "echo x && make test" "cargo test -- --nocapture" \
+  "cargo test parser -- --test-threads=1 --exact" "cargo test -- --ignored" "cargo test -- --include-ignored --show-output" \
+  "cargo test -- parser" "go test ./pkg -args -test.v" "go test ./pkg -args -test.run=X -test.count=1"
+# Review round 4: a value given as a separate word may not start with - or + (pytest reads -p anywhere before
+# its own parser, cargo may read the word as its own option); go packages are relative paths, not import paths
+# (std, a dependency); --test-threads takes 1 to 256.
+trefused "python -m pytest tests/ -k -p evil" "python -m pytest tests/ -k -pevil" "pytest tests/ --tb -pevil" \
+  "pytest tests/ -m -p evil" "pytest tests/ -r -p" "pytest tests/ --maxfail -p evil" "pytest tests/ --durations -pevil" \
+  "python -m pytest tests/ -n -p evil" "pytest tests/ -k +x" "cargo test --test -Zx" "cargo test -p --config x" \
+  "cargo test -F --config=x" "cargo test --features -Zx" "go test ./pkg -run -toolexec=x" \
+  "cargo test -- --test-threads -x" "go test ./pkg -args -test.run -x" \
+  "go test std" "go test golang.org/x/tools/..." "go test all" "go test pkg" "go vet fmt" "go test ./pkg cmd/go" \
+  "cargo test -- --test-threads=0" "cargo test -- --test-threads=257" "cargo test -- --test-threads=x" \
+  "cargo test -- --test-threads 1x" "cargo test -- --test-threads=+4"
+tpassed "pytest tests/ -k foo" "pytest tests/ -k=-slow" "pytest tests/ -kslow" "go test ./pkg -run=-x" \
+  "go test ." "go test ./pkg/..." "go vet ./pkg" "go test ./pkg ./..." "cargo test -- --test-threads 4" \
+  "cargo test -- --test-threads=256" "cargo test -p mycrate" "make -j 4 test"
+printf '{"targeted": ["make test"], broken\n' >"$twork/broken.json"
+out=$(tguard "make test --eval=x" "$twork/broken.json")
+case $out in *"ask the owner"*"status=2") pass "targeted guard: an unreadable config with targeted fails closed" ;;
+  *) fail "targeted guard: an unreadable config with targeted lets it pass ($out)" ;; esac
+tcrash=$(printf '{"tool_name": "Bash", "cwd": 123, "tool_input": {"command": "make test --eval=x"}}' |
+  (cd "$tproj" && CLAUDE_PROJECT_DIR="$twork/proj" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null); echo "status=$?")
+case $tcrash in *"cannot check"*"ask the owner"*"status=2") pass "targeted guard: a crash while checking refuses the call" ;;
+  *) fail "targeted guard: a crash while checking does not refuse ($tcrash)" ;; esac
+
+# permissions.sh: an allow rule per accepted entry, no ask rules for runner options; refused entries with the reason.
+cat >"$twork/entries.json" <<'JSON'
+{"base_branch": "main", "fast_check": "make lint", "checks": ["make check"],
+ "targeted": ["go test ./", "pytest tests/", "gofmt  -l", "make test", "npm run lint", "cargo fmt --check",
+              "make", "go", "npm run", "./make test", "/usr/bin/go test", "python -c x", "python script.py", "node x.js",
+              "bash -c x", "sh x.sh", "git stash", "npx prettier", "find . -name x", "go run ./x", "go test -toolexec=x",
+              "make test CC=x", "pytest; rm -rf x", "go test $(x)", "go test ./*", "make -s", "make -j", "npm run --silent",
+              "pytest @args", ""]}
+JSON
+tclaude="$twork/proj/.claude"
+tenv() { local c=$1; shift; (cd "$twork/proj" && DEV_LOOP_HOME="$twork/home" DEV_LOOP_CONFIG="$c" "$@" 2>&1); }
+tperm() { local c=$1; shift; tenv "$c" "$plugin/scripts/permissions.sh" "$@"; }
+tdoctor() { tenv "$1" "$plugin/scripts/doctor.sh" | grep -v TMPDIR; }
+trules() { # trules FILE LIST: the rules of permissions.LIST in FILE, one per line
+  bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" && dl_perm_rules "$2" "$3"' _ "$plugin" "$1" "$2"
+}
+tperm "$twork/plain.json" --apply >/dev/null
+cp "$tclaude/settings.json" "$twork/plain-settings.json"
+expect "targeted: without the key no runner rule is written" "" \
+  "$(trules "$tclaude/settings.json" allow | grep -E '^Bash\((go|pytest|gofmt|npm|cargo) ')"
+out=$(tperm "$twork/entries.json")
+cmp -s "$tclaude/settings.json" "$twork/plain-settings.json" && pass "targeted: the dry run changes nothing" ||
+  fail "targeted: the dry run changed the shared settings"
+for line in "+ allow Bash(go test ./*)" "+ allow Bash(pytest tests/*)" "+ allow Bash(gofmt -l *)" "+ allow Bash(make test *)" \
+  "+ allow Bash(npm run lint *)" "+ allow Bash(cargo fmt --check *)"; do
+  printf '%s\n' "$out" | grep -qF ".claude/settings.json: $line" && pass "targeted: the dry run lists $line" ||
+    fail "targeted: the dry run does not list $line ($out)"
+done
+expect "targeted: no ask rule is written for runner options" "" "$(printf '%s\n' "$out" | grep -E '\+ ask Bash\((go|make|npm|pytest|cargo)')"
+for pair in "make|target" "go|accepted runner form" "npm run|script" "./make test|path" "/usr/bin/go test|path" \
+  "python -c x|interpreter" "python script.py|interpreter" "node x.js|interpreter" "bash -c x|shell" "sh x.sh|shell" \
+  "git stash|git" "npx prettier|npx" "find . -name x|accepted runner form" "go run ./x|accepted runner form" \
+  "go test -toolexec=x|-toolexec=x" "make test CC=x|CC=x" "pytest; rm -rf x|metacharacters" 'go test $(x)|metacharacters' \
+  "go test ./*|metacharacters" "make -s|plain name" "make -j|plain name" "npm run --silent|plain name" "pytest @args|@"; do
+  entry=${pair%|*}
+  printf '%s\n' "$out" | grep -F "targeted \"$entry\" not written: " | grep -qF -- "${pair#*|}" &&
+    pass "targeted: the entry \"$entry\" is refused with the reason (${pair#*|})" ||
+    fail "targeted: no refusal with the reason for \"$entry\" ($out)"
+done
+for rule in "Bash(make -s *)" "Bash(make -j *)" "Bash(npm run --silent *)" "Bash(make *)" "Bash(go *)" "Bash(npm run *)" "Bash(./make test *)" "Bash(python -c x *)" "Bash(bash -c x *)" \
+  "Bash(git stash *)" "Bash(npx prettier *)" "Bash(go run ./x *)" "Bash( *)"; do
+  printf '%s\n' "$out" | grep -qF -- "+ allow $rule" && fail "targeted: the refused rule $rule is listed" ||
+    pass "targeted: the refused rule $rule is not listed"
+done
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  cp "$twork/plain-settings.json" "$tclaude/settings.json"
+  DEV_LOOP_NO_JQ=$nojq tperm "$twork/entries.json" --apply >/dev/null
+  expect "targeted: --apply writes the six accepted rules$label" 6 \
+    "$(trules "$tclaude/settings.json" allow | grep -cE '^Bash\((go test|pytest|gofmt|make test|npm run lint|cargo fmt)')"
+  expect "targeted: a second run adds nothing$label" "permissions: complete" \
+    "$(DEV_LOOP_NO_JQ=$nojq tperm "$twork/entries.json" --apply | tail -n 1)"
+  expect "targeted: no rule is written twice$label" "" "$(trules "$tclaude/settings.json" allow | sort | uniq -d)"
+  expect "targeted: the targeted rules are not in the local settings$label" "" \
+    "$(trules "$tclaude/settings.local.json" allow | grep -F 'go test')"
+done
+# Without python3 no entry is written: the guard that checks their arguments runs on python3. The PATH holds
+# links to every program of this PATH but python*.
+tnopy="$twork/nopy"
+mkdir -p "$tnopy"
+tifs=$IFS
+IFS=:
+for tdir in $PATH; do
+  for tprog in "$tdir"/*; do
+    case ${tprog##*/} in python*) continue ;; esac
+    [ -x "$tprog" ] && [ ! -e "$tnopy/${tprog##*/}" ] && ln -s "$tprog" "$tnopy/${tprog##*/}"
+  done
+done
+IFS=$tifs
+cp "$twork/plain-settings.json" "$tclaude/settings.json"
+out=$(PATH="$tnopy" tperm "$twork/entries.json")
+printf '%s\n' "$out" | grep -qF 'targeted "make test" not written: the guard that checks its arguments needs python3' &&
+  pass "targeted: without python3 an entry is refused with the reason" || fail "targeted: no python3 refusal ($out)"
+expect "targeted: without python3 no targeted rule is listed" "" "$(printf '%s\n' "$out" | grep -F '+ allow Bash(make test *)')"
+tperm "$twork/entries.json" --apply >/dev/null
+
+# doctor: quiet about the rules permissions.sh wrote; a note per wildcard allow rule for a runner, an interpreter
+# or a git subcommand with destructive options, in either project file, with the reason; refused entries noted.
+expect "targeted: doctor notes no wildcard for the rules permissions.sh wrote" "" "$(tdoctor "$twork/entries.json" | grep 'is a wildcard')"
+expect "targeted: doctor notes each refused targeted entry" 23 \
+  "$(tdoctor "$twork/entries.json" | grep -c '^note    permissions: targeted ".*" not written: ')"
+# tadd FILE RULE...: append the RULEs to permissions.allow of FILE.
+tadd() {
+  python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1])); d.setdefault("permissions", {}).setdefault("allow", []).extend(sys.argv[2:])
+json.dump(d, open(sys.argv[1], "w"))' "$@"
+}
+cp "$tclaude/settings.json" "$twork/entries-settings.json"
+cp "$tclaude/settings.local.json" "$twork/entries-local.json"
+out=$(tdoctor "$twork/plain.json")
+printf '%s\n' "$out" | grep -F 'allow rule Bash(make test *) in .claude/settings.json is a wildcard: ' | grep -qF '"targeted"' &&
+  pass "targeted: without the key doctor notes a runner rule the guard does not check" ||
+  fail "targeted: no note for Bash(make test *) without the key ($out)"
+tadd "$tclaude/settings.json" "Bash(make deploy *)"
+tdoctor "$twork/entries.json" | grep -F 'allow rule Bash(make deploy *) in .claude/settings.json is a wildcard: ' |
+  grep -qF 'no "targeted" entry lists' && pass "targeted: doctor says a runner wildcard runs what no entry lists" ||
+  fail "targeted: the note for Bash(make deploy *) does not say it runs what no entry lists"
+cp "$twork/plain-settings.json" "$tclaude/settings.json"
+twild_list=("Bash(make *)" "Bash(go *)" "Bash(go:*)" "Bash(go test *)" "Bash(go env *)" "Bash(npm *)" "Bash(npm run *)"
+  "Bash(npm test *)" "Bash(npx *)" "Bash(pnpm *)" "Bash(yarn *)" "Bash(cargo *)" "Bash(python *)" "Bash(python3 *)"
+  "Bash(node *)" "Bash(uv run *)" "Bash(pytest *)" "Bash(bash *)" "Bash(sh *)" "Bash(git branch *)" "Bash(git checkout *)"
+  "Bash(git restore *)" "Bash(git switch *)")
+tlocal_list=("Bash(git stash *)" "Bash(git reset *)" "Bash(git clean *)")
+tadd "$tclaude/settings.json" "${twild_list[@]}"
+tadd "$tclaude/settings.local.json" "${tlocal_list[@]}"
+out=$(tdoctor "$twork/plain.json")
+for rule in "${twild_list[@]}"; do
+  printf '%s\n' "$out" | grep -F "note    permissions: allow rule $rule in .claude/settings.json is a wildcard: " | grep -qE ': [a-z].{10,}' &&
+    pass "targeted: doctor notes the wildcard $rule with its reason" || fail "targeted: no note for the wildcard $rule"
+done
+for rule in "${tlocal_list[@]}"; do
+  printf '%s\n' "$out" | grep -qF "note    permissions: allow rule $rule in .claude/settings.local.json is a wildcard: " &&
+    pass "targeted: doctor notes the wildcard $rule in the local file" || fail "targeted: no note for the wildcard $rule"
+done
+expect "targeted: one note per wildcard rule" $((${#twild_list[@]} + ${#tlocal_list[@]})) "$(printf '%s\n' "$out" | grep -c 'is a wildcard: ')"
+printf '%s\n' "$out" | grep -F 'allow rule Bash(go env *)' | grep -q 'go env -w' &&
+  printf '%s\n' "$out" | grep -F 'allow rule Bash(git stash *)' | grep -q 'drop' &&
+  printf '%s\n' "$out" | grep -F 'allow rule Bash(python3 *)' | grep -q 'any code' &&
+  pass "targeted: the reason names the dangerous form" || fail "targeted: the reasons do not name the dangerous form ($out)"
+expect "targeted: a wildcard that is an accepted targeted rule is not noted" "" \
+  "$(tdoctor "$twork/proj/.dev-loop.json" | grep -F 'allow rule Bash(npm test *)')"
+tverdict=$(tdoctor "$twork/plain.json" | tail -n 1)
+cp "$twork/plain-settings.json" "$tclaude/settings.json"
+cp "$twork/entries-local.json" "$tclaude/settings.local.json"
+expect "targeted: the wildcard notes add no problem to the doctor's verdict" "$(tdoctor "$twork/plain.json" | tail -n 1)" "$tverdict"
+mkdir -p "$twork/home/.claude"
+printf '{"permissions": {"allow": ["Bash(make *)"]}}\n' >"$twork/home/.claude/settings.json"
+expect "targeted: the user's own settings are never read for wildcards" "" \
+  "$(HOME="$twork/home" tdoctor "$twork/plain.json" | grep 'is a wildcard')"
+
+# The docs: the README config table and its Targeted commands section, setup, the doctor skill, decisions, changelog.
+grep -qE '^\| `targeted` \|' "$plugin/README.md" && pass "targeted: the README config table has targeted" ||
+  fail "targeted: no targeted row in the README"
+tsection=$(awk '/^### Targeted commands/ {on = 1; next} /^##/ {on = 0} on' "$plugin/README.md")
+for word in "go test" "-run" "pytest" "-k" "make <target>" "-j" "npm run <script>" "cargo test" "ruff check" \
+  "still runs the project's own test code" "builtin" "source" "--nocapture" "-test.v" "per-subcommand" "fresh shell" "PYTEST_ADDOPTS" "import path" "1 to 256"; do
+  printf '%s\n' "$tsection" | grep -qF -- "$word" && pass "targeted: the README section names $word" ||
+    fail "targeted: the README Targeted commands section lacks $word"
+done
+for tool in go python node rust make; do
+  grep -qiE "^ *\| *$tool *\|" "$plugin/skills/setup/SKILL.md" && pass "targeted: the setup skill infers targeted for $tool" ||
+    fail "targeted: the setup skill has no targeted row for $tool"
+done
+grep -qF "still runs the project's own test code" "$plugin/skills/setup/SKILL.md" &&
+  pass "targeted: the setup skill states the limit" || fail "targeted: the setup skill does not state the limit"
+grep -qF 'is a wildcard' "$plugin/skills/doctor/SKILL.md" && grep -qF 'not written' "$plugin/skills/doctor/SKILL.md" &&
+  pass "targeted: the doctor skill has rows for the targeted notes" || fail "targeted: no doctor skill rows for targeted"
+grep -qF '(#72)' "$plugin/docs/DECISIONS.md" && pass "targeted: the decisions log has a #72 entry" || fail "targeted: no #72 decision"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#72' && pass "targeted: CHANGELOG has a #72 entry under Unreleased" ||
+  fail "targeted: no #72 entry under ## Unreleased"
+cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"

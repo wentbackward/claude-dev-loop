@@ -67,6 +67,26 @@ running system against holdout scenarios". Skip any question whose answer you al
      the implementer worktrees go to `<dir>/<n>` and the gate to `<dir>/gate`, one directory step 4 lists
      in `permissions.additionalDirectories`, so auto mode edits there without a prompt. For an existing
      project, offer it; its sibling worktrees (`../<repo>-<n>`) stay where they are and finish there.
+   - `targeted`: the command prefixes implementers run while working (targeted tests, one-file
+     formatting), inferred from the toolchain; show the list to the user with the dry run of step 4:
+
+     | Toolchain | `targeted` |
+     |-----------|------------|
+     | go | `"go test ./"`, `"go vet ./"`, `"gofmt -l"`, `"gofmt -w"` |
+     | python | `"uv run pytest"` (or `"pytest tests/"`, `"python -m pytest tests/"`), `"uv run ruff check"`, `"uv run ruff format"` |
+     | node | `"npm test"` (or `"pnpm test"`, `"yarn test"`), `"npm run lint"` for each script the loop runs |
+     | rust | `"cargo test"`, `"cargo fmt --check"` |
+     | make | the test and format targets the Makefile has, each its own entry: `"make test"`, `"make fmt"` |
+
+     Each must start with an accepted runner form (README: Targeted commands) and becomes one allow rule
+     `Bash(<prefix> *)`; the guard then checks every argument after the runner (plain paths, packages and
+     patterns inside the project, or a flag on that runner's safe list) and refuses the rest. Never list a
+     runner wildcard, an interpreter, a shell, `npx` or git: `make`, `go`, `npm run`, `python`, `npx` or
+     `bash -c` alone would run anything (`permissions.sh` refuses those entries with the reason). Tell the
+     user plainly: a targeted test still runs the project's own test code (a test, a Makefile recipe, an
+     npm script), so the guard keeps out other programs and paths, not what the project's code does. Leave
+     the key out when the user does not want it: nothing changes then. The template's `targeted` list is an
+     example, not a default: confirm the entries with the user before writing them.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
@@ -83,11 +103,14 @@ running system against holdout scenarios". Skip any question whose answer you al
    runs it in the session as the owner), and wait until the owner has run it. Never edit
    `.claude/settings.json` or `.claude/settings.local.json` yourself, and never run `--apply`.
    `permissions.sh` only adds rules: the allow, ask and deny rules of `templates/settings.json`, the loop's
-   one push (`git push -u <remote> HEAD`) and rebase (`git rebase <remote>/<base>`), one exact rule per `fast_check` and `checks` command into
-   `.claude/settings.json`; the plugin's scripts at this machine's plugin path into
+   one push (`git push -u <remote> HEAD`) and rebase (`git rebase <remote>/<base>`), one exact rule per `fast_check` and `checks` command,
+   and one `Bash(<prefix> *)` per accepted `targeted` entry into `.claude/settings.json`; the plugin's scripts at this machine's plugin path into
    `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes directory and
    `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again
-   whenever `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission
+   whenever `fast_check`, `checks` or `targeted` change (`doctor.sh` notes a stale list). When the
+   project's settings already hold runner or interpreter wildcards (`Bash(make *)`, `Bash(go *)`,
+   `Bash(python3 *)`, `Bash(git stash *)`, ...), `doctor.sh` notes each with the reason: propose
+   `targeted` entries instead and let the owner remove the wildcards (setup never removes a rule). The README section "Permission
    modes" says what each rule is for. The plugin's hooks come with the plugin; do not copy them into the
    project. A push to another public repository the project depends on (a fork, a shared library) is an
    owner step too: show the owner the command and wait; never push there yourself.

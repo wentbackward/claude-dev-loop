@@ -4,6 +4,7 @@
   "fast_check": "make fmt-check lint",
   "format": "uv run --quiet ruff format {file}",
   "format_extensions": [".py"],
+  "targeted": ["uv run pytest", "uv run ruff check", "uv run ruff format", "make test"],
   "checks": [
     { "name": "check", "command": "make check", "summary": "passed|failed|coverage" },
     { "name": "e2e", "command": "make e2e", "summary": "passed|failed" },
