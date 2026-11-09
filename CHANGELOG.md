@@ -56,8 +56,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   worktree still matches the archive, moves it aside and checks again, then removes it and deletes its
   branch at the merged tip. Always kept: the main checkout and the gate worktree (real paths), locked
   worktrees, ones with submodules, per-worktree refs (`refs/worktree/*`, `refs/bisect/*`), another
-  worktree inside, skip-worktree files, ignored files that are not build output or an unreadable folder,
-  and ones changed in the last 10 minutes (mtime or ctime; `DEV_LOOP_WORKTREE_SETTLE_MINUTES`).
+  worktree inside, a merge, rebase, cherry-pick or revert in progress, skip-worktree files, ignored files
+  that are not build output or an unreadable folder, and ones changed in the last 10 minutes (mtime or
+  ctime; `DEV_LOOP_WORKTREE_SETTLE_MINUTES`).
   merge-train's "kept local ... has changes" line and the dev-loop and merge skills name that command
   instead of `git worktree remove --force`.
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the

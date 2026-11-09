@@ -333,11 +333,15 @@ it back and keeps it), then removes it with `git worktree remove --force` and de
 merged tip (saved to the bundle when the base does not contain it). Always kept: the main checkout and
 the gate worktree (compared as real paths, so a symlinked `worktrees_dir` counts), a locked worktree, one
 with submodules (their git dirs belong to the worktree), per-worktree refs (`refs/worktree/*`,
-`refs/bisect/*`) or another worktree inside it, one with assume-unchanged or skip-worktree files,
-ignored files that are not build output (`merge.rebuildable`) or a folder it cannot read, and one with
-any file changed (mtime or ctime) in the last 10 minutes (an agent may still work there;
-`DEV_LOOP_WORKTREE_SETTLE_MINUTES` sets the window, 0 turns it off). Restore one as its manifest says:
-`git worktree add <path> <tip>` (when the base does not contain the tip, first fetch the branch from the
+`refs/bisect/*`) or another worktree inside it, one in a merge, rebase, cherry-pick or revert, one
+with assume-unchanged or skip-worktree files, ignored files that are not build output
+(`merge.rebuildable`) or a folder it cannot read, and one with any file changed (mtime or ctime) in the last 10 minutes (an agent may still work there;
+`DEV_LOOP_WORKTREE_SETTLE_MINUTES` sets the window, 0 turns it off; the folder's own ctime after the
+move does not count). A worktree kept after its archive was written gets that incomplete archive removed;
+a move aside that fails half-way is reported with both paths, and the next dry run notes the
+`.removing-*` folder. An independent repository (not a submodule) inside an ignored folder that counts
+as build output is deleted with the worktree, its commits included, as `merge-train.sh` already does.
+Restore one as its manifest says: `git worktree add <path> <tip>` (when the base does not contain the tip, first fetch the branch from the
 bundle that run printed), then `git apply --cached staged.patch`, `git apply --binary changes.patch` and
 `tar -xf untracked.tar` in it.
 

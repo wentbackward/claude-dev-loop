@@ -889,8 +889,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   the reason for a person: the main checkout and the gate worktree (real paths), a locked worktree, one
   with submodules (a gitlink in the index or a modules dir: their git dirs live in the worktree's git dir
   and go with it), per-worktree refs (`refs/worktree/*`, `refs/bisect/*`), another registered worktree
-  inside, assume-unchanged or skip-worktree entries (their changes are invisible to the diff),
-  unrebuildable ignored files, or a path `find` cannot read. The issue's "unless named explicitly" is not
+  inside, a merge, rebase, cherry-pick, revert or sequence in progress (its state files, or unmerged index
+  entries: the removal would drop the operation), assume-unchanged or skip-worktree entries (their changes are invisible to the diff),
+  unrebuildable ignored files, or a path `find` cannot read. An independent repository (not a submodule)
+  inside an ignored folder that counts as build output is deleted with the worktree, its commits included,
+  as `merge-train.sh` already does for a clean worktree. The issue's "unless named explicitly" is not
   built, and `--include worktrees` is never implied by `"factory": "dark"`.
 - **Archive:** `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/`, next to the branch bundles (the
   setup skill's archive dir), a new folder per worktree (`-2`, `-3` when two branch names map to one).
@@ -901,9 +904,16 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   goes through the existing bundle and conditional `update-ref` deletion.
 - **Removal:** the worktree is compared with the archive (both patches and the untracked list), moved
   aside to `<path>.removing-<pid>` with `git worktree move`, compared again, and only then removed; on a
-  difference it is moved back and kept. An agent that writes between the second comparison and the
-  removal writes into the moved folder, not its own path, so its tool calls fail visibly; that last
-  window is not closed.
+  difference it is moved back and kept. The settle check after the move leaves the worktree's own folder
+  out (`find -mindepth 1`): the rename sets its ctime to now. A new tool call by an agent fails on the
+  missing path, but a process whose cwd is inside the worktree keeps writing into the moved folder by
+  relative path, silently, and writes after the second comparison are removed with it; that window is
+  not closed. A move that fails with the moved folder in place is reported with both paths and nothing
+  is removed; the next dry run notes a registered worktree whose path is missing while its
+  `.removing-*` folder exists (`git worktree repair`). When a worktree is kept whole at its path after
+  its archive was written (it changed while archived or after the move and was moved back, or it could
+  not be moved), the run removes that incomplete archive, so no archive folder piles up per run; when it
+  is left off its path (a half-done move, a failed move back or a failed removal) the archive stays.
 - **Reason:** the deleting direction must be conditional on a classification that cannot match new work;
   the explicit override would reintroduce the forced removal the ask rules guard against.
 - **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after the

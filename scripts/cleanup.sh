@@ -41,7 +41,7 @@
 # checks that the worktree still matches it, moves it aside and checks again, then removes it and deletes
 # its branch at the merged tip (bundled like the others). Always kept: the main checkout and the gate
 # worktree (real paths), a locked one, one with submodules, per-worktree refs or another worktree inside,
-# assume-unchanged or skip-worktree files, ignored files that are not build output (merge.rebuildable) or
+# a merge, rebase, cherry-pick or revert in progress, assume-unchanged or skip-worktree files, ignored files that are not build output (merge.rebuildable) or
 # a folder it cannot read, and one with a file changed (mtime or ctime) in the last
 # DEV_LOOP_WORKTREE_SETTLE_MINUTES (default 10; an agent may still work there).
 #
