@@ -2052,15 +2052,39 @@ def main() -> None:
         for entry in sys.argv[2:]:
             print(f"{entry}\t{targeted_refusal(entry)}")
         return
-    raw = sys.stdin.buffer.read()
+    chunks: list[bytes] = []
     try:
-        event = read_event(raw)
+        read_stdin(chunks)
+        event = read_event(b"".join(chunks))
         if event is not None:
             check_event(event, sys.argv[1:2] == ["--git-only"])
-    except Exception as error:  # fail closed: a crash (exit 1) would let a git command run unchecked
-        if raw_may_name_git(raw) and in_loop_project():
-            refuse(f"cannot check this git command ({type(error).__name__}); ask the owner to run it")
+    except SystemExit:  # refuse() and the normal exits keep their code
         raise
+    except BaseException as error:  # fail closed: a crash or an interrupt would let the command run unchecked
+        fail_closed(chunks, type(error).__name__)
+        raise
+
+
+def read_stdin(chunks: list[bytes]) -> None:
+    """Append the event on stdin to chunks as it arrives, so an error while reading leaves what was read."""
+    while True:
+        chunk = os.read(sys.stdin.fileno(), 65536)
+        if not chunk:
+            return
+        chunks.append(chunk)
+
+
+def fail_closed(chunks: list[bytes], error: str) -> None:
+    """Refuse the call after an unexpected error when the project has .dev-loop.json and the event read so
+    far may name git or a targeted runner, or nothing was read; return otherwise, for the caller to re-raise.
+    A failure of the text test itself counts as naming them."""
+    try:
+        raw = b"".join(chunks)
+        named = not raw or raw_may_name_git(raw) or runner_named(raw.decode("utf-8", "replace"), TARGETED_FORMS)
+    except BaseException:  # fail closed
+        named = True
+    if named and in_loop_project():
+        refuse(f"cannot check this tool call ({error}); ask the owner to run it")
 
 
 def raw_may_name_git(raw: bytes) -> bool:

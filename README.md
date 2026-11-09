@@ -1165,7 +1165,8 @@ well under a second.
 
 The base branch is `base_branch` from `.dev-loop.json` (default `main`). The check is on in every project
 with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`. Projects
-without `.dev-loop.json` are not checked. A crash of the guard on a command naming git refuses it, and
+without `.dev-loop.json` are not checked. A crash of the guard, or an interrupt, on a command naming git
+or a targeted runner refuses it (so does one before any of the event was read), and
 so does a Bash event it cannot read (truncated, not UTF-8) whose text names git; a `tool_input` that is
 not an object is read as the command. A
 differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts through bash

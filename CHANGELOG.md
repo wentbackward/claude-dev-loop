@@ -4,6 +4,11 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Guard fails closed on any exception (#96): `hooks/guard-role.py` reads the hook event inside its error
+  handler, which now catches every exception but `SystemExit` (refusals and normal exits keep their
+  code). An interrupt (`KeyboardInterrupt`) or another error in a project with `.dev-loop.json` refuses
+  the call when the event read so far names git or a targeted runner, or when nothing was read yet;
+  without `.dev-loop.json` it ends as before.
 - Remote protection (#88): `doctor.sh` reads, read only, the base branch's protection and rules and the
   tag rulesets of a github.com remote (`gh api` GETs, lists at 100 a page, each call stopped by a watchdog
   after `DEV_LOOP_GH_TIMEOUT` seconds, default 10; after one timeout no further call): one `ok` line when

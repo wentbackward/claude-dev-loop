@@ -2670,6 +2670,43 @@ expect "git guard: a list tool_input naming git is refused" 2 \
 expect "git guard: an internal error on an event naming git (a cwd that is a list) is refused" 2 \
   "$(printf '{"tool_name": "Bash", "cwd": ["x"], "tool_input": {"command": "git push origin main"}}' |
     CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+# #96: a BaseException other than SystemExit (here a KeyboardInterrupt from SIGINT while the guard waits
+# for the rest of the event on a pipe held open) fails closed in a loop project when the text read so far
+# names git or a targeted runner, or nothing was read yet; elsewhere it ends as before (killed by SIGINT).
+ginterrupt() { # ginterrupt PROJECT_DIR TEXT -> exit status of guard-role.py interrupted while it reads TEXT
+  python3 -I - "$plugin/hooks/guard-role.py" "$1" "$2" <<'PY'
+import os, signal, subprocess, sys, time
+guard, project, text = sys.argv[1:4]
+signal.signal(signal.SIGINT, signal.SIG_DFL)  # a background shell ignores SIGINT; the child must not
+env = {key: value for key, value in os.environ.items() if key != "DEV_LOOP_CONFIG"}
+env["CLAUDE_PROJECT_DIR"] = project
+for wait in (0.5, 1, 2, 4):  # retry when the signal came before the guard reached main()
+    child = subprocess.Popen([sys.executable, "-I", guard], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                             cwd=project, env=env)
+    child.stdin.write(text.encode())
+    child.stdin.flush()
+    time.sleep(wait)
+    child.send_signal(signal.SIGINT)
+    err = child.stderr.read().decode(errors="replace")
+    code = child.wait(10)
+    child.stdin.close()
+    if code == 2 or ", in main" in err:
+        break
+print(code)
+PY
+}
+expect "git guard: an interrupt while reading an event naming git is refused in a loop project" 2 \
+  "$(ginterrupt "$gg/proj-1" '{"tool_name": "Bash", "cwd": "/nonexistent", "tool_input": {"command": "git push origin main')"
+expect "git guard: an interrupt before any of the event is read is refused in a loop project" 2 \
+  "$(ginterrupt "$gg/proj-1" '')"
+expect "git guard: an interrupt while reading an event naming a targeted runner is refused in a loop project" 2 \
+  "$(ginterrupt "$gg/proj-1" '{"tool_name": "Bash", "cwd": "/nonexistent", "tool_input": {"command": "pytest tests')"
+expect "git guard: an interrupt while reading an event without git ends as before in a loop project" -2 \
+  "$(ginterrupt "$gg/proj-1" '{"tool_name": "Bash", "cwd": "/nonexistent", "tool_input": {"command": "ls')"
+expect "git guard: an interrupt while reading an event naming git ends as before without .dev-loop.json" -2 \
+  "$(ginterrupt "$gg/plain" '{"tool_name": "Bash", "cwd": "/nonexistent", "tool_input": {"command": "git push origin main')"
+expect "git guard: an interrupt before any of the event is read ends as before without .dev-loop.json" -2 \
+  "$(ginterrupt "$gg/plain" '')"
 grefused "$gg/proj-1" "echo '$p5' | sort" "sort --compress-program='sh -c \"$p5\"' x" \
   "tar -xf a.tar --to-command='$p5'" "tar -cf a.tar --checkpoint-action=exec='$p5' x"
 gpassed "$gg/proj-1" "git log --oneline | sort" "sort x.txt && git status"
