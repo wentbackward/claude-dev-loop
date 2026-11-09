@@ -6377,8 +6377,9 @@ awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#84' && pass "ask
   fail "ask rules: no #84 entry under ## Unreleased"
 cd "$work/project" || exit 1
 # 31. Remote protection (#88): on a GitHub remote, doctor reads (read only) whether the base branch needs a
-# PR and blocks force pushes and deletion (branch protection or rulesets) and whether an active tag ruleset
-# covers release tags (v*): one ok line, else a note with the owner step; anything it cannot check is a note.
+# PR and blocks force pushes and deletion (branch protection or rulesets) and whether active tag rulesets
+# restrict creating, updating and deleting release tags (v*), with no exemption for the current gh login:
+# one ok line, else a note with the owner step; anything it cannot check is a note.
 rwork="$work/protection"
 git init -q --bare "$rwork/origin.git"
 git clone -q "$rwork/origin.git" "$rwork/project" 2>/dev/null
@@ -6386,10 +6387,14 @@ printf '# Project\n' >"$rwork/project/CLAUDE.md"
 printf '{"base_branch": "main", "checks": ["make check"]}\n' >"$rwork/config.json"
 git -C "$rwork/project" add . && git -C "$rwork/project" commit -q -m "chore: start" &&
   git -C "$rwork/project" push -q -u origin main
+rprot=repos/example/project/branches/main/protection
+rrules="repos/example/project/rules/branches/main?per_page=100"
+rlist="repos/example/project/rulesets?per_page=100"
+rset=repos/example/project/rulesets
 # rdoctor [NOJQ]: doctor's output in the section's project, without the live TMPDIR line.
 rdoctor() {
   (cd "$rwork/project" && FAKE_GH_DIR="$rwork/gh" HOME="$rwork/home" DEV_LOOP_HOME="$rwork/state" \
-    DEV_LOOP_CONFIG="$rwork/config.json" DEV_LOOP_NO_JQ=${1:-} "$plugin/scripts/doctor.sh" 2>&1) | grep -v 'TMPDIR'
+    DEV_LOOP_CONFIG="${rconfig:-$rwork/config.json}" DEV_LOOP_NO_JQ=${1:-} "$plugin/scripts/doctor.sh" 2>&1) | grep -v 'TMPDIR'
 }
 # rapi PATH BODY [FAILURE]: fake gh answers gh api PATH with BODY; with FAILURE (e.g. "Not Found (HTTP 404)")
 # it fails with that message, as gh does for an HTTP error.
@@ -6402,16 +6407,32 @@ rapi() {
 }
 # rreset: no canned answers, no calls logged, gh logged in.
 rreset() { rm -rf "$rwork/gh" && mkdir -p "$rwork/gh" && : >"$rwork/gh/logged-in"; }
-# rprotected: classic protection of main (PR, no force push, no deletion) and an active v* tag ruleset.
+# rtagset ID BYPASS INCLUDE RULES [ENFORCEMENT]: the tag ruleset ID (rule types as a JSON list of names).
+rtagset() {
+  local rules
+  rules=$(printf '%s' "$4" | sed 's/"\([a-z_]*\)"/{"type": "\1"}/g')
+  rapi "$rset/$1" "{\"id\": $1, \"name\": \"tags-$1\", \"target\": \"tag\", \"enforcement\": \"${5:-active}\",
+    \"current_user_can_bypass\": \"$2\", \"conditions\": {\"ref_name\": {\"include\": $3, \"exclude\": []}}, \"rules\": $rules}"
+}
+# rprotected: classic protection of main that includes admins (PR, no force push, no deletion) and an active
+# v* tag ruleset restricting creation, update and deletion that the current login cannot bypass.
 rprotected() {
-  rapi repos/example/project/branches/main/protection '{"required_pull_request_reviews": {"required_approving_review_count": 1},
+  rapi "$rprot" '{"required_pull_request_reviews": {"required_approving_review_count": 1}, "enforce_admins": {"enabled": true},
     "allow_force_pushes": {"enabled": false}, "allow_deletions": {"enabled": false}}'
-  rapi repos/example/project/rules/branches/main '[]'
-  rapi repos/example/project/rulesets '[{"id": 7, "name": "tags", "target": "tag", "enforcement": "active"}]'
-  rapi repos/example/project/rulesets/7 '{"id": 7, "target": "tag", "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}}, "rules": [{"type": "deletion"}, {"type": "update"}]}'
+  rapi "$rrules" '[]'
+  rapi "$rlist" '[{"id": 7, "name": "tags-7", "target": "tag", "enforcement": "active"}]'
+  rtagset 7 never '["refs/tags/v*"]' '["creation", "update", "deletion"]'
+}
+# rbaserules BYPASS: no classic protection; ruleset 5 on main (PR, no force push, no deletion) with BYPASS.
+rbaserules() {
+  rapi "$rprot" '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
+  rapi "$rrules" '[{"type": "pull_request", "ruleset_id": 5}, {"type": "non_fast_forward", "ruleset_id": 5},
+    {"type": "deletion", "ruleset_id": 5}]'
+  rapi "$rset/5" "{\"id\": 5, \"name\": \"base\", \"target\": \"branch\", \"enforcement\": \"active\", \"current_user_can_bypass\": \"$1\"}"
 }
 rnotes() { printf '%s\n' "$1" | grep -E '^(ok|note|MISSING) +remote protection'; }
+# rkinds OUTPUT: the kinds (ok, note, MISSING) of the protection lines, space separated.
+rkinds() { rnotes "$1" | cut -d' ' -f1 | paste -sd' ' -; }
 
 # A remote that is not on GitHub: one note that it was not checked, and no gh call.
 rreset
@@ -6428,30 +6449,39 @@ for nojq in "" 1; do
   rreset
   rprotected
   out=$(rdoctor "$nojq")
-  expect "protection: a protected base and a tag ruleset print one ok line$label" 1 "$(rnotes "$out" | grep -c '^ok ')"
-  expect "protection: a protected base and a tag ruleset print no note$label" 0 "$(rnotes "$out" | grep -vc '^ok ')"
+  expect "protection: a protected base and a tag ruleset print one ok line$label" "ok" "$(rkinds "$out")"
   expect "protection: the check leaves doctor's verdict unchanged$label" "$rbase" "$(printf '%s\n' "$out" | tail -n 1)"
-  # Rulesets only (no classic protection): the base branch's rules and a ~ALL tag ruleset.
+  # Classic protection that does not include administrators: admins push past it.
+  rapi "$rprot" '{"required_pull_request_reviews": {}, "enforce_admins": {"enabled": false},
+    "allow_force_pushes": {"enabled": false}, "allow_deletions": {"enabled": false}}'
+  rnotes "$(rdoctor "$nojq")" | grep -E '^note ' | grep -F 'main' | grep -qF 'admins can push past' &&
+    pass "protection: classic protection without enforce_admins is a note that admins push past it$label" ||
+    fail "protection: enforce_admins off counted as protected$label"
+  # A locked branch (classic lock_branch) blocks updates: no PR rule needed.
+  rapi "$rprot" '{"lock_branch": {"enabled": true}, "enforce_admins": {"enabled": true},
+    "allow_force_pushes": {"enabled": false}, "allow_deletions": {"enabled": false}}'
+  expect "protection: a locked base branch counts as blocking updates$label" "ok" "$(rkinds "$(rdoctor "$nojq")")"
+  # Rulesets only (no classic protection): the base branch's ruleset and a ~ALL tag ruleset; an org ruleset.
   rreset
   rprotected
-  rapi repos/example/project/branches/main/protection '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
-  rapi repos/example/project/rules/branches/main '[{"type": "pull_request"}, {"type": "non_fast_forward"}, {"type": "deletion"}]'
-  rapi repos/example/project/rulesets/7 '{"id": 7, "target": "tag", "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}}, "rules": [{"type": "creation"}]}'
+  rbaserules never
+  rapi "$rlist" '[{"id": 11, "name": "org-tags", "target": "tag", "enforcement": "active", "source_type": "Organization"}]'
+  rtagset 11 never '["~ALL"]' '["creation", "update", "deletion"]'
   out=$(rdoctor "$nojq")
-  expect "protection: rulesets alone (base rules, a ~ALL tag ruleset) print one ok line$label" "ok" \
-    "$(rnotes "$out" | cut -d' ' -f1 | paste -sd' ' -)"
+  expect "protection: rulesets alone (base rules, an org ~ALL tag ruleset) print one ok line$label" "ok" "$(rkinds "$out")"
   # Classic protection unreadable (403), but the rulesets cover everything: ok.
-  rapi repos/example/project/branches/main/protection '{"message": "Resource not accessible by integration"}' \
-    'Resource not accessible by integration (HTTP 403)'
-  out=$(rdoctor "$nojq")
-  expect "protection: unreadable classic protection with complete rulesets is ok$label" "ok" \
-    "$(rnotes "$out" | cut -d' ' -f1 | paste -sd' ' -)"
+  rapi "$rprot" '{"message": "Resource not accessible by integration"}' 'Resource not accessible by integration (HTTP 403)'
+  expect "protection: unreadable classic protection with complete rulesets is ok$label" "ok" "$(rkinds "$(rdoctor "$nojq")")"
+  # A base ruleset the current gh login can bypass does not count.
+  rbaserules always
+  line=$(rnotes "$(rdoctor "$nojq")" | grep -F 'main')
+  printf '%s\n' "$line" | grep -E '^note ' | grep -qF 'can bypass ruleset "base"' &&
+    pass "protection: a base ruleset the current login can bypass is a note$label" || fail "protection: bypassable base ruleset counted$label ($line)"
   # Unprotected: a note naming the three gaps and the owner step, and one for the tags.
   rreset
-  rapi repos/example/project/branches/main/protection '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
-  rapi repos/example/project/rules/branches/main '[]'
-  rapi repos/example/project/rulesets '[]'
+  rapi "$rprot" '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
+  rapi "$rrules" '[]'
+  rapi "$rlist" '[]'
   out=$(rdoctor "$nojq")
   line=$(rnotes "$out" | grep -F 'main')
   printf '%s\n' "$line" | grep -E '^note ' | grep -F 'pull request' | grep -F 'force push' | grep -qF 'deletion' &&
@@ -6459,41 +6489,73 @@ for nojq in "" 1; do
   printf '%s\n' "$line" | grep -F 'https://github.com/example/project/settings/rules' |
     grep -qF 'gh api -X POST repos/example/project/rulesets' &&
     pass "protection: the base note names the owner step$label" || fail "protection: the base note lacks the owner step$label ($line)"
-  rnotes "$out" | grep -E '^note ' | grep -F 'release tags (v*)' | grep -qF 'settings/rules' &&
-    pass "protection: no tag ruleset is a note with the owner step$label" || fail "protection: no tag note$label ($out)"
+  rnotes "$out" | grep -E '^note ' | grep -F 'release tags (v*)' | grep -F 'creation, update, deletion' | grep -qF 'settings/rules' &&
+    pass "protection: no tag ruleset is a note naming the tag rules and the owner step$label" || fail "protection: no tag note$label ($out)"
   expect "protection: an unprotected remote is never MISSING$label" 0 "$(rnotes "$out" | grep -c '^MISSING')"
   expect "protection: an unprotected remote leaves doctor's verdict unchanged$label" "$rbase" "$(printf '%s\n' "$out" | tail -n 1)"
   # A base that blocks force pushes only: the note names just the other two.
-  rapi repos/example/project/rules/branches/main '[{"type": "non_fast_forward"}]'
+  rapi "$rrules" '[{"type": "non_fast_forward"}]'
   line=$(rnotes "$(rdoctor "$nojq")" | grep -F 'main')
   printf '%s\n' "$line" | grep -F 'pull request' | grep -F 'deletion' | grep -qvF 'force push' &&
     pass "protection: the note names only what is missing$label" || fail "protection: wrong gaps$label ($line)"
-  # Protected base, tag rule missing: a branch ruleset, a tag ruleset for other tags, a disabled v* one.
+  # Protected base, tag rule missing: a branch ruleset, a tag ruleset for other tags, a disabled and an
+  # evaluate-only v* one, a pattern without refs/tags/.
   rreset
   rprotected
-  rapi repos/example/project/rulesets '[{"id": 7, "target": "tag", "enforcement": "active"},
-    {"id": 8, "target": "branch", "enforcement": "active"}, {"id": 9, "target": "tag", "enforcement": "disabled"}]'
-  rapi repos/example/project/rulesets/7 '{"id": 7, "target": "tag", "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["refs/tags/release-*"], "exclude": []}}, "rules": [{"type": "deletion"}]}'
-  rapi repos/example/project/rulesets/8 '{"id": 8, "target": "branch", "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}}, "rules": [{"type": "deletion"}]}'
-  rapi repos/example/project/rulesets/9 '{"id": 9, "target": "tag", "enforcement": "disabled",
-    "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}}, "rules": [{"type": "deletion"}]}'
+  rapi "$rlist" '[{"id": 7, "target": "tag", "enforcement": "active"}, {"id": 8, "target": "branch", "enforcement": "active"},
+    {"id": 9, "target": "tag", "enforcement": "disabled"}, {"id": 10, "target": "tag", "enforcement": "evaluate"},
+    {"id": 12, "target": "tag", "enforcement": "active"}]'
+  rtagset 7 never '["refs/tags/release-*"]' '["creation", "update", "deletion"]'
+  rapi "$rset/8" '{"id": 8, "target": "branch", "enforcement": "active", "current_user_can_bypass": "never",
+    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": []}}, "rules": [{"type": "creation"}]}'
+  rtagset 9 never '["refs/tags/v*"]' '["creation", "update", "deletion"]' disabled
+  rtagset 10 never '["refs/tags/v*"]' '["creation", "update", "deletion"]' evaluate
+  rtagset 12 never '["v*"]' '["creation", "update", "deletion"]'
   out=$(rdoctor "$nojq")
-  expect "protection: a missing tag rule is one note and no base note$label" "note" \
-    "$(rnotes "$out" | cut -d' ' -f1 | paste -sd' ' -)"
+  expect "protection: a missing tag rule is one note and no base note$label" "note" "$(rkinds "$out")"
   rnotes "$out" | grep -qF 'release tags (v*)' && pass "protection: the note names the release tags$label" ||
     fail "protection: the tag note lacks release tags$label ($out)"
   # A v* tag ruleset that excludes the release tags does not cover them.
-  rapi repos/example/project/rulesets/7 '{"id": 7, "target": "tag", "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": ["refs/tags/v*"]}}, "rules": [{"type": "deletion"}]}'
+  rapi "$rlist" '[{"id": 7, "target": "tag", "enforcement": "active"}]'
+  rapi "$rset/7" '{"id": 7, "target": "tag", "enforcement": "active", "current_user_can_bypass": "never",
+    "conditions": {"ref_name": {"include": ["~ALL"], "exclude": ["refs/tags/v*"]}}, "rules": [{"type": "creation"}]}'
   rnotes "$(rdoctor "$nojq")" | grep -qF 'release tags (v*)' &&
     pass "protection: a tag ruleset that excludes v* does not cover release tags$label" || fail "protection: excluded v* counted$label"
+  # Rules matter: deletion only, creation only; and a ruleset the current login can bypass.
+  rtagset 7 never '["refs/tags/v*"]' '["deletion"]'
+  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -F 'creation, update' | grep -qvF 'deletion' &&
+    pass "protection: a deletion-only tag ruleset is a note naming creation and update$label" || fail "protection: deletion-only counted$label"
+  rtagset 7 never '["refs/tags/v*"]' '["creation"]'
+  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -F 'update, deletion' | grep -qvF 'creation' &&
+    pass "protection: a creation-only tag ruleset is a note naming update and deletion$label" || fail "protection: creation-only counted$label"
+  rtagset 7 always '["refs/tags/v*"]' '["creation", "update", "deletion"]'
+  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -qF 'can bypass ruleset "tags-7"' &&
+    pass "protection: a tag ruleset the current login can bypass is a note$label" || fail "protection: bypassable tag ruleset counted$label"
+  # Pagination: the v* ruleset is the 35th of the list.
+  rtagset 7 never '["refs/tags/v*"]' '["creation", "update", "deletion"]'
+  rlong=$(for i in $(seq 100 133); do printf '{"id": %s, "target": "branch", "enforcement": "active"},' "$i"; done)
+  rapi "$rlist" "[$rlong {\"id\": 7, \"target\": \"tag\", \"enforcement\": \"active\"}]"
+  expect "protection: a v* ruleset past the first 30 of the list counts$label" "ok" "$(rkinds "$(rdoctor "$nojq")")"
+  # An answer that is not JSON, or not the expected shape, with exit 0: could not be checked, never unprotected.
+  rreset
+  rprotected
+  rapi "$rprot" '<html><body>502 Bad Gateway</body></html>'
+  rapi "$rlist" 'warning: something
+[]'
+  out=$(rdoctor "$nojq")
+  expect "protection: non-JSON answers are two could-not-check notes$label" "2" \
+    "$(rnotes "$out" | grep -E '^note ' | grep -cF 'could not be checked')"
+  expect "protection: a non-JSON answer is never reported as unprotected$label" "" \
+    "$(rnotes "$out" | grep -E 'does not |are not protected')"
+  rapi "$rprot" '"text"'
+  rapi "$rlist" '{"message": "ok"}'
+  expect "protection: answers of the wrong shape are two could-not-check notes$label" "2" \
+    "$(rnotes "$(rdoctor "$nojq")" | grep -E '^note ' | grep -cF 'could not be checked')"
   # The API refusing (403) or not finding the repository (404): a note that it could not be checked.
   for refusal in 'Resource not accessible by integration (HTTP 403)' 'Not Found (HTTP 404)'; do
     rreset
-    for path in branches/main/protection rules/branches/main rulesets; do
-      rapi "repos/example/project/$path" '{"message": "refused"}' "$refusal"
+    for path in "$rprot" "$rrules" "$rlist"; do
+      rapi "$path" '{"message": "refused"}' "$refusal"
     done
     out=$(rdoctor "$nojq")
     rnotes "$out" | grep -E '^note ' | grep -F 'could not be checked' | grep -qF "$refusal" &&
@@ -6502,6 +6564,40 @@ for nojq in "" 1; do
     expect "protection: $refusal leaves doctor's verdict unchanged$label" "$rbase" "$(printf '%s\n' "$out" | tail -n 1)"
   done
 done
+
+# A hung call: doctor stops at the first timeout (DEV_LOOP_GH_TIMEOUT), reports the rest as not checked.
+rreset
+rprotected
+printf '5\n' >"$rwork/gh/api/$(printf '%s' "$rprot" | tr '/' '_').sleep"
+rstart=$SECONDS
+out=$(DEV_LOOP_GH_TIMEOUT=1 rdoctor)
+relapsed=$((SECONDS - rstart))
+[ "$relapsed" -lt 5 ] && pass "protection: a hung gh call does not block doctor" || fail "protection: doctor waited ${relapsed}s for a hung call"
+rnotes "$out" | grep -F 'main' | grep -F 'could not be checked' | grep -qF 'no answer from GitHub within 1 seconds' &&
+  pass "protection: a hung call is a note that it could not be checked" || fail "protection: no timeout note ($out)"
+expect "protection: after a timeout no further call is made" 1 "$(grep -c 'gh api' "$rwork/gh/calls.log")"
+expect "protection: after a timeout the tags are noted as not checked" 1 \
+  "$(rnotes "$out" | grep -F 'tag rulesets' | grep -cF 'could not be checked')"
+
+# A fake gh value flag without a value ends (it used to loop forever).
+(FAKE_GH_DIR="$rwork/gh" "$plugin/tests/fake-gh" api -X >/dev/null 2>&1) &
+rpid=$!
+(sleep 5; kill "$rpid" 2>/dev/null) >/dev/null 2>&1 &
+rwatch=$!
+wait "$rpid"
+rrc=$?
+kill "$rwatch" 2>/dev/null
+expect "protection: fake gh ends on a value flag without a value" 0 "$rrc"
+
+# GitHub Enterprise (github.api_url set elsewhere): a note, no call, no github.com link.
+rreset
+rprotected
+printf '{"base_branch": "main", "checks": ["make check"], "github": {"api_url": "https://ghe.example.invalid/api/v3"}}\n' \
+  >"$rwork/ghe.json"
+out=$(rconfig="$rwork/ghe.json" rdoctor)
+rnotes "$out" | grep -E '^note ' | grep -F 'github.api_url' | grep -qvF 'github.com' &&
+  pass "protection: a GitHub Enterprise api_url is a note, without a github.com link" || fail "protection: no enterprise note ($out)"
+expect "protection: no gh api call for GitHub Enterprise" 0 "$(grep -c 'gh api' "$rwork/gh/calls.log")"
 
 # gh not logged in: a note, and no API call.
 rreset
@@ -6536,7 +6632,7 @@ rnotes "$out" | grep -E '^note ' | grep -F 'could not be checked' | grep -qF 'gh
 expect "protection: no gh on PATH adds no MISSING of its own" 0 "$(rnotes "$out" | grep -c '^MISSING')"
 rm -rf "$rnogh"
 
-# Read only: every API call doctor makes is a plain GET.
+# Read only: every API call doctor makes is a plain GET, and the lists ask for 100 entries a page.
 rreset
 rprotected
 rdoctor >/dev/null
@@ -6544,6 +6640,7 @@ expect "protection: doctor's API calls are reads" "" \
   "$(grep -F 'gh api' "$rwork/gh/calls.log" | grep -E -- ' -X | --method | -f | -F | --input| --field| --raw-field')"
 [ "$(grep -c 'gh api' "$rwork/gh/calls.log")" -ge 3 ] && pass "protection: doctor reads the protection, rules and rulesets" ||
   fail "protection: too few API calls ($(cat "$rwork/gh/calls.log"))"
+expect "protection: the rules and rulesets lists ask for 100 a page" 2 "$(grep -c 'gh api .*?per_page=100' "$rwork/gh/calls.log")"
 
 # The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
 grep -qF 'note remote protection' "$plugin/skills/doctor/SKILL.md" && pass "protection: the doctor skill has the protection row" ||
@@ -6552,6 +6649,10 @@ rreadme=$(awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugi
 printf '%s\n' "$rreadme" | grep -qF 'are tripwires' && printf '%s\n' "$rreadme" | grep -qF "boundary is the remote's branch and tag protection" &&
   pass "protection: the README permissions section calls the guard a tripwire and protection the boundary" ||
   fail "protection: the README lacks the tripwire and boundary paragraph"
+printf '%s\n' "$rreadme" | grep -qF 'Restrict creations' && pass "protection: the README names the tag rules to add" ||
+  fail "protection: the README does not name the tag rules"
+grep -F 'note remote protection' "$plugin/skills/doctor/SKILL.md" | grep -qF 'creation' &&
+  pass "protection: the doctor skill row names the tag rules" || fail "protection: the skill row lacks the tag rules"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#88' && pass "protection: CHANGELOG has a #88 entry under Unreleased" ||
   fail "protection: no #88 entry under ## Unreleased"
 cd "$work/project" || exit 1
