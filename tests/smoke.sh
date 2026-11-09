@@ -5798,7 +5798,8 @@ exec "$(type -P git)" "\$@"
 SHIM
 chmod +x "$kwork/shim3/git"
 out=$(PATH="$kwork/shim3:$PATH" kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
-kaside=$(ls -d "$kwork/wt51.removing-"* 2>/dev/null | head -n 1)
+kaside=""
+for d in "$kwork/wt51.removing-"*; do [ ! -d "$d" ] || kaside=$d; done
 echo "$out" | grep -F "kept worktree $kwork/wt51:" | grep -qF "$kaside" && [ -n "$kaside" ] &&
   [ -f "$kaside/scratch.txt" ] && [ -n "$(git -C "$kwork/project" branch --list feat/51-halfmove)" ] &&
   pass "kwt: a move aside that fails half-way names both paths and removes nothing" || fail "kwt: wt51: $out"
