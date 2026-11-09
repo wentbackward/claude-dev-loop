@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Merge the permission rules the loop needs into the project's Claude Code settings, only adding: the template's
-# and the project's rules into .claude/settings.json, the plugin-script rules (this machine's plugin path) into
-# .claude/settings.local.json, with the absolute notes directory, worktrees_dir and gate directory in its
+# and the project's rules (its commands, and one Bash(<prefix> *) per accepted "targeted" entry, whose arguments
+# the guard checks; a refused entry is a warning) into .claude/settings.json, the plugin-script rules (this
+# machine's plugin path) into .claude/settings.local.json, with the absolute notes directory, worktrees_dir and gate directory in its
 # permissions.additionalDirectories (so auto mode edits there without a prompt). A dry run by default, ending
 # with the owner's apply command when anything is missing; --apply writes.
 #
@@ -71,6 +72,9 @@ dl_load_config
 root=$(cd "$scripts_dir/.." && pwd)
 wdir=$(dl_worktrees_dir) && dl_perm_holds_root "$wdir" &&
   dl_warn "worktrees_dir $wdir holds the project: not added to additionalDirectories (it would open every sibling project; use a dedicated directory such as ../$DL_REPO-worktrees)"
+while IFS=$'\t' read -r entry reason; do
+  dl_warn "targeted \"$entry\" not written: $reason"
+done < <(dl_perm_targeted_refused "$root")
 total=0
 status=0
 for kind in shared local; do

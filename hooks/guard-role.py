@@ -883,10 +883,12 @@ class NotPlain(Exception):
 
 class Word:
     """One shell word: its literal text, whether any of it was quoted, whether it has an unquoted glob
-    character, and the offset of its first quoted character (-1 when none)."""
+    character, the offset of its first quoted character (-1 when none) and, for a redirection target, its
+    operator."""
 
-    def __init__(self) -> None:
-        self.text, self.quoted, self.glob, self.first_quote = "", False, False, -1
+    def __init__(self, text: str = "") -> None:
+        self.text, self.quoted, self.glob, self.first_quote = text, False, False, -1
+        self.op = ""  # for a redirection target: its operator (">", ">>", "<<", ...)
 
 
 class Simple:
@@ -964,6 +966,7 @@ class PlainLexer:
         if word.first_quote != 0 and (word.text == "~" or word.text.startswith("~/")):
             word.text = os.environ.get("HOME", "") + word.text[1:]
         if self.redirect:
+            word.op = self.redirect
             self.commands[-1].targets.append(word)
             self.redirect = ""
         else:
@@ -1027,6 +1030,7 @@ class PlainLexer:
         if not match:
             raise NotPlain("a here-document end word that is not one plain word")
         body = Word()
+        body.op = "<<"
         self.commands[-1].targets.append(body)
         delimiter = next(group for group in match.groups() if group)
         self.pending.append((strip_tabs, match.group(4) is None, delimiter, body))
@@ -1572,6 +1576,331 @@ def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
         check()
 
 
+# Targeted commands (#72): the runner forms a "targeted" entry may start with, and the flags that are safe
+# after each, as {flag: "none" | "value" | "optional"} (a value that is the next word or follows "="; an
+# optional one only attached, or a next word of digits). Style "go": one or two dashes, -flag=value, no
+# bundles; style "gnu": bundled short letters (-xvs, -kEXPR), --long and --long=value. A form ending in
+# "<word>" needs one more plain word in the entry (a make target, an npm script). Every other flag, "--",
+# and anything the runner would read as a setting is refused, so the lists stay small.
+NO, VAL, OPT = "none", "value", "optional"
+GO_TEST_FLAGS = {"-run": VAL, "-skip": VAL, "-count": VAL, "-v": NO, "-race": NO, "-short": NO, "-timeout": VAL,
+                 "-failfast": NO, "-cover": NO, "-covermode": VAL, "-parallel": VAL, "-cpu": VAL, "-bench": VAL,
+                 "-benchtime": VAL, "-benchmem": NO, "-json": NO, "-shuffle": VAL, "-tags": VAL}
+GO_VET_FLAGS = {"-json": NO, "-tags": VAL}
+GOFMT_FLAGS = {"-l": NO, "-d": NO, "-s": NO, "-e": NO, "-w": NO}
+PYTEST_FLAGS = {"-k": VAL, "-m": VAL, "-x": NO, "-q": NO, "-v": NO, "-s": NO, "-l": NO, "-r": VAL, "-n": VAL,
+                "--lf": NO, "--ff": NO, "--last-failed": NO, "--failed-first": NO, "--exitfirst": NO, "--quiet": NO,
+                "--verbose": NO, "--maxfail": VAL, "--tb": VAL, "--durations": VAL, "--no-header": NO,
+                "--showlocals": NO}
+NODE_FLAGS = {"--silent": NO}
+CARGO_TEST_FLAGS = {"-q": NO, "--quiet": NO, "-v": NO, "--verbose": NO, "--release": NO, "--lib": NO, "--bins": NO,
+                    "--tests": NO, "--doc": NO, "--no-fail-fast": NO, "-p": VAL, "--package": VAL, "--test": VAL,
+                    "--features": VAL, "-F": VAL, "--all-features": NO, "--no-default-features": NO,
+                    "--workspace": NO, "-j": VAL, "--jobs": VAL, "--locked": NO, "--offline": NO}
+CARGO_FMT_FLAGS = {"--check": NO, "--all": NO, "-p": VAL, "--package": VAL, "-q": NO, "--quiet": NO, "-v": NO,
+                   "--verbose": NO}
+MAKE_FLAGS = {"-j": OPT, "--jobs": OPT, "-k": NO, "--keep-going": NO, "-s": NO, "--silent": NO}
+RUFF_CHECK_FLAGS = {"--fix": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--statistics": NO, "--no-cache": NO}
+RUFF_FORMAT_FLAGS = {"--check": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--no-cache": NO}
+TARGETED_FORMS = [
+    (("go", "test"), "go", GO_TEST_FLAGS), (("go", "vet"), "go", GO_VET_FLAGS), (("gofmt",), "go", GOFMT_FLAGS),
+    (("pytest",), "gnu", PYTEST_FLAGS), (("python", "-m", "pytest"), "gnu", PYTEST_FLAGS),
+    (("python3", "-m", "pytest"), "gnu", PYTEST_FLAGS), (("uv", "run", "pytest"), "gnu", PYTEST_FLAGS),
+    (("npm", "test"), "gnu", NODE_FLAGS), (("pnpm", "test"), "gnu", NODE_FLAGS), (("yarn", "test"), "gnu", NODE_FLAGS),
+    (("npm", "run", "<word>"), "gnu", NODE_FLAGS), (("pnpm", "run", "<word>"), "gnu", NODE_FLAGS),
+    (("yarn", "run", "<word>"), "gnu", NODE_FLAGS),
+    (("cargo", "test"), "gnu", CARGO_TEST_FLAGS), (("cargo", "fmt"), "gnu", CARGO_FMT_FLAGS),
+    (("make", "<word>"), "gnu", MAKE_FLAGS),
+    (("ruff", "check"), "gnu", RUFF_CHECK_FLAGS), (("ruff", "format"), "gnu", RUFF_FORMAT_FLAGS),
+    (("uv", "run", "ruff", "check"), "gnu", RUFF_CHECK_FLAGS),
+    (("uv", "run", "ruff", "format"), "gnu", RUFF_FORMAT_FLAGS),
+]
+INTERPRETERS = {"python", "python3", "node", "bun", "deno", "ruby", "perl", "php", "uv", "uvx", "pipx", "npx", "pnpx",
+                "bunx", "java", "go"}
+TARGETED_ENTRY = re.compile(r"^[A-Za-z0-9_./:@%+,= -]+$")
+SAFE_DEVICES = {"/dev/null", "/dev/stdout", "/dev/stderr"}
+
+
+def form_words(form: tuple) -> tuple:
+    """The fixed words of a runner form (without a trailing <word>)."""
+    return form[:-1] if form[-1] == "<word>" else form
+
+
+def match_form(texts: list[str]) -> tuple | None:
+    """The longest runner form (words, style, flags) whose fixed words start texts (the program by its
+    basename), or None."""
+    best = None
+    for form, style, flags in TARGETED_FORMS:
+        fixed = form_words(form)
+        if len(texts) < len(fixed) or os.path.basename(texts[0]) != fixed[0]:
+            continue
+        if tuple(texts[1 : len(fixed)]) != fixed[1:]:
+            continue
+        if best is None or len(fixed) > len(form_words(best[0])):
+            best = (form, style, flags)
+    return best
+
+
+def within(path: str, root: str) -> bool:
+    """True when path, as written and with symlinks resolved, is root or below it."""
+    pairs = ((os.path.normpath(path), os.path.normpath(root)), (os.path.realpath(path), os.path.realpath(root)))
+    return all(candidate == top or candidate.startswith(top.rstrip("/") + "/") for candidate, top in pairs)
+
+
+def positional_problem(word: Word, dirs: set[str], root: str) -> str | None:
+    """Why a word that is not a flag is not a plain path, package or pattern inside the project, or None."""
+    text = word.text
+    if not text:
+        return "an empty argument"
+    if text.startswith(("-", "+")):
+        return f"{text} is not on the safe list"
+    if "=" in text:
+        return f"{text} is a setting (VAR=value), which the runner reads as configuration"
+    if re.search(r"[\s\x00-\x1f]", text):
+        return f"'{text}' holds blanks or control characters"
+    for directory in sorted(dirs):
+        if not within(os.path.join(directory, text), root):
+            return f"{text} is a path outside the project"
+    return None
+
+
+def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple[str | None, int]:
+    """(why the flag at index is refused or None, the index after it and its value)."""
+    text = args[index].text
+    index += 1
+    if text in {"--", "--end-of-options"}:
+        return f"{text} passes what follows to the runner unchecked", index
+    if style == "go" or text.startswith("--"):
+        key, eq, _ = text.partition("=")
+        if style == "go" and key.startswith("--"):
+            key = key[1:]
+        kind = flags.get(key)
+        if kind is None or (kind == NO and eq):
+            return f"{text} is not on the safe list", index
+        if not eq and kind == VAL:
+            index += 1
+        elif not eq and kind == OPT and index < len(args) and args[index].text.isdigit():
+            index += 1
+        return None, index
+    letters = text[1:]
+    while letters:
+        kind = flags.get("-" + letters[0])
+        if kind is None:
+            return f"{text} is not on the safe list (-{letters[0]})", index
+        rest, letters = letters[1:], letters[1:]
+        if kind == VAL:
+            index += 0 if rest else 1
+            break
+        if kind == OPT:
+            if not rest and index < len(args) and args[index].text.isdigit():
+                index += 1
+            break
+    return None, index
+
+
+def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str) -> str | None:
+    """Why the arguments after a runner form are refused (the first bad one), or None."""
+    index = 0
+    while index < len(args):
+        word = args[index]
+        if word.glob:
+            return f"{word.text} is a glob the shell expands"
+        if word.text.startswith("-") and word.text != "-":
+            problem, after = flag_problem(style, flags, args, index)
+            if problem:
+                return problem
+            if any(arg.glob for arg in args[index + 1 : after]):
+                return f"{args[after - 1].text} is a glob the shell expands"
+            index = after
+            continue
+        problem = positional_problem(word, dirs, root)
+        if problem:
+            return problem
+        index += 1
+    return None
+
+
+def redirect_problem(targets: list[Word], dirs: set[str], root: str) -> str | None:
+    """Why an output redirection of a targeted command is refused (a file outside the project), or None."""
+    for target in targets:
+        if ">" not in target.op or target.text in SAFE_DEVICES:
+            continue
+        if target.op in {">&", "<&"} and (target.text.isdigit() or target.text == "-"):
+            continue
+        if any(not within(os.path.join(directory, target.text), root) for directory in dirs):
+            return f"it writes {target.text}, outside the project"
+    return None
+
+
+def targeted_refusal(entry: str) -> str:
+    """Why a "targeted" entry cannot become an allow rule; empty when it can."""
+    if not entry.strip():
+        return "it is empty"
+    if not TARGETED_ENTRY.match(entry):
+        return "it holds shell metacharacters, quotes or a wildcard (list the plain command prefix)"
+    words = entry.split()
+    if "/" in words[0]:
+        return f"the program {words[0]} is a path (name the runner, such as \"make test\")"
+    if words[0] == "git":
+        return "git commands stay with the template's exact git rules and the git guard"
+    found = match_form(words)
+    if found is None:
+        if words[0] in ALL_SHELLS:
+            return f"{words[0]} is a shell, which runs any command string"
+        if words[0] in {"npx", "pnpx", "bunx", "uvx", "pipx"}:
+            return f"{words[0]} downloads and runs any package"
+        if words[0] in INTERPRETERS and words[0] != "go":
+            return f"{words[0]} is an interpreter, which runs any code (list a runner form, e.g. \"python -m pytest\")"
+        return "not an accepted runner form (" + ", ".join(" ".join(form) for form, _, _ in TARGETED_FORMS) + ")"
+    form, style, flags = found
+    rest = [Word(text) for text in words[len(form_words(form)) :]]
+    if form[-1] == "<word>" and not rest:
+        what = "target" if form[0] == "make" else "script"
+        return f"a bare runner: name the {what} (\"{entry} <{what}>\")"
+    problem = arguments_problem(style, flags, rest, {"/project"}, "/project")
+    return problem or ""
+
+
+def targeted_forms(config: dict) -> list[tuple]:
+    """The runner forms of the project's accepted "targeted" entries."""
+    entries = config.get("targeted")
+    if not isinstance(entries, list):
+        return []
+    forms = []
+    for entry in entries:
+        if isinstance(entry, str) and not targeted_refusal(" ".join(entry.split())):
+            found = match_form(entry.split())
+            if found and found not in forms:
+                forms.append(found)
+    return forms
+
+
+def runner_named(text: str, forms: list[tuple]) -> bool:
+    """True when text, quotes and backslashes removed, names the program of one of the runner forms as a
+    word."""
+    plain = re.sub(r"[\\'\"]", "", text)
+    names = sorted({re.escape(form[0][0]) for form in forms})
+    return bool(re.search(r"(?<![\w.-])(?:" + "|".join(names) + r")(?![\w.-])", plain))
+
+
+def configured_argvs(config: dict) -> list[list[str]]:
+    """The simple commands of fast_check and checks as argv lists: they have exact allow rules."""
+    commands = [config.get("fast_check")]
+    for check in config.get("checks") or []:
+        commands.append(check.get("command") if isinstance(check, dict) else check)
+    argvs = []
+    for command in commands:
+        if not isinstance(command, str):
+            continue
+        for part in re.split(r"\|\||&&|\|&|;|\||&", command):
+            try:
+                argv = shlex.split(part)
+            except ValueError:
+                continue
+            if argv:
+                argvs.append(argv)
+    return argvs
+
+
+def toplevel(directory: str) -> str:
+    """The root of the worktree that holds directory, or empty."""
+    try:
+        return subprocess.run(["git", "-C", directory, "rev-parse", "--show-toplevel"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def project_root(cwd: str, project: str) -> str:
+    """The tree targeted commands must stay in: the worktree of cwd when it belongs to the project's
+    repository, else the project directory."""
+    main = main_root(project)
+    if main and main_root(cwd) == main:
+        return toplevel(cwd) or cwd
+    return toplevel(project) or project
+
+
+def command_problem(command: Simple, dirs: set[str], forms: list[tuple], configured: list[list[str]],
+                    root: str) -> str | None:
+    """Why one simple command that runs a targeted runner is refused, or None (also for other commands)."""
+    texts = [word.text for word in command.words]
+    if texts in configured:
+        return None
+    index, dirs = unwrap(command.words, dirs)
+    words = command.words[index:]
+    rest = texts[index:]
+    if not rest:
+        return None
+    program = os.path.basename(rest[0])
+    if program in RUNNERS | ALL_SHELLS and runner_named(" ".join(rest[1:]), forms):
+        return f"{program} runs a targeted runner the guard cannot check"
+    found = match_form(rest)
+    if found is None or found not in forms:
+        return None
+    if any(is_assignment(word) or os.path.basename(word.text) == "env" for word in command.words[:index]):
+        return "variables set before it can change what the runner runs"
+    if rest in configured:
+        return None
+    for directory in sorted(dirs):
+        if not within(directory, root):
+            return f"it runs in {directory}, outside the project"
+    form, style, flags = found
+    return (arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root)
+            or redirect_problem(command.targets, dirs, root))
+
+
+def targeted_refuse(command: str, problem: str, forms: list[tuple]) -> None:
+    """Refuse a targeted command, naming what is wrong and the runner forms."""
+    shown = command if len(command) <= 200 else command[:200] + " ..."
+    runners = ", ".join(sorted({" ".join(form_words(form[0])) for form in forms}))
+    refuse(
+        f"'{shown}' is refused: {problem}. A targeted command ({runners}) takes plain paths, packages and test"
+        " patterns inside the project and the flags on its runner's safe list (README: Targeted commands);"
+        " ask the owner to run it"
+    )
+
+
+def check_targeted(event: dict, cwd: str) -> None:
+    """Refuse a Bash call that runs a runner of the project's "targeted" forms with an argument that is not
+    a plain path, package or pattern inside the project, or a flag on that runner's safe list. A command
+    line naming such a runner that is not plain is refused too. Only with "targeted" in .dev-loop.json."""
+    if event.get("tool_name") != "Bash":
+        return
+    command = str((event.get("tool_input") or {}).get("command", ""))
+    if not runner_named(command, TARGETED_FORMS):
+        return
+    try:
+        project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd
+        config = load_config(project)
+        forms = targeted_forms(config)
+        if not forms or not runner_named(command, forms):
+            return
+        root = project_root(cwd, project)
+        commands = PlainLexer(command).run()
+        where, previous = Directories(cwd), ""
+        configured = configured_argvs(config)
+        for simple in commands:
+            index, _ = unwrap(simple.words, where.dirs)
+            texts = [word.text for word in simple.words[index:]]
+            program = os.path.basename(texts[0]) if texts else ""
+            if program in DIR_PROGRAMS:
+                if "|" in {previous, simple.op}:
+                    raise NotPlain(f"a {program} in a pipeline")
+                where.change(program, simple.words[index + 1 :], previous)
+            else:
+                problem = command_problem(simple, where.dirs, forms, configured, root)
+                if problem:
+                    targeted_refuse(command, problem, forms)
+            previous = simple.op
+            where.after(simple.op)
+    except NotPlain as error:
+        targeted_refuse(command, f"it is not a plain command line ({error})", forms)
+    except Exception as error:  # fail closed: a crash (exit 1) would let the command run unchecked
+        if in_loop_project():
+            refuse(f"cannot check this command against the targeted runners ({type(error).__name__}); ask the"
+                   " owner to run it")
+
+
 def read_event(raw: bytes) -> dict | None:
     """The PreToolUse event, or None when it is not a JSON object. An unreadable event (truncated, not
     UTF-8) is refused when its text names git and the project has .dev-loop.json: a hook that lets it pass
@@ -1597,6 +1926,10 @@ def main() -> None:
     if sys.argv[1:2] == ["--scenarios-dir"]:
         cwd = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
         print(scenarios_dir(load_config(cwd), cwd))
+        return
+    if sys.argv[1:2] == ["--targeted-check"]:
+        for entry in sys.argv[2:]:
+            print(f"{entry}\t{targeted_refusal(entry)}")
         return
     raw = sys.stdin.buffer.read()
     try:
@@ -1629,6 +1962,7 @@ def in_loop_project() -> bool:
 def check_event(event: dict, git_only: bool) -> None:
     """Refuse what the scenario store, the git stop conditions and identity mode do not allow."""
     cwd = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    check_targeted(event, cwd)
     if git_only and not names_git(event):
         return
     config = load_config(cwd)

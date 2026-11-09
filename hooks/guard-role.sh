@@ -3,8 +3,9 @@
 # "guard": false); the implementer, test-engineer and code-reviewer may not touch the holdout scenario
 # store; in identity mode, GitHub writes only through as-role.sh with the agent's own role, no merges or
 # repository admin by agents, no reads of role credentials (logic in guard-role.py).
+# With "targeted", the arguments of the targeted runners (go test, pytest, make <target>, ...) are checked.
 # A no-op without python3 or without .dev-loop.json; without "scenarios", "factory" or "identities" only
-# Bash calls that may run git reach guard-role.py.
+# Bash calls that may run git, or every Bash call with "targeted", reach guard-role.py.
 command -v python3 >/dev/null 2>&1 || exit 0
 guard="$(dirname "${BASH_SOURCE[0]}")/guard-role.py"
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -z "${DEV_LOOP_CONFIG:-}" ]; then
@@ -17,7 +18,9 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -z "${DEV_LOOP_CONFIG:-}" ]; then
     # continuations, quotes, backslashes, braces and commas are removed, a \u escape (which only the
     # decoded command shows), an ANSI-C string ($'...', which may spell git with escapes) or a glob
     # character (gi? may match git).
-    if ! printf '%s' "$event" | grep -qF -e '\u' -e "\$'" -e '*' -e '?' -e '[' &&
+    # With "targeted", every Bash call goes to it: the runners' arguments are checked too.
+    if ! grep -qsF '"targeted"' "$config" &&
+      ! printf '%s' "$event" | grep -qF -e '\u' -e "\$'" -e '*' -e '?' -e '[' &&
       ! printf '%s' "$event" | sed 's/\\\\\\n//g' | tr -d "\\\\\"'{}," | grep -qi git; then
       exit 0
     fi
