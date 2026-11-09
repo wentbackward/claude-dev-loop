@@ -4942,8 +4942,8 @@ cp "$wwork/local-before.json" "$wclaude/settings.local.json"
 expect "wtd: without worktrees_dir and without sibling worktrees doctor prints nothing about worktrees" "" \
   "$(wdoctor plain | grep -i 'worktrees')"
 out=$(wdoctor wtd)
-printf '%s\n' "$out" | grep -qF "MISSING worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories" &&
-  printf '%s\n' "$out" | grep -qF "permissions.sh --apply" && pass "wtd: doctor reports an uncovered worktrees dir as MISSING with the fix" ||
+printf '%s\n' "$out" | grep -F "MISSING worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories" |
+  grep -qF "(the owner runs: ! $plugin/scripts/permissions.sh --apply)" && pass "wtd: doctor reports an uncovered worktrees dir as MISSING with the fix" ||
   fail "wtd: no MISSING for an uncovered worktrees dir ($out)"
 wperm wtd --apply >/dev/null
 out=$(wdoctor wtd)
@@ -4971,8 +4971,8 @@ git -C "$wwork/project" worktree remove "$wparent/project-31" && git -C "$wwork/
 # without worktrees_dir; doctor reports it MISSING while uncovered; a notes_dir inside the project needs nothing.
 rm -f "$wclaude/settings.json" "$wclaude/settings.local.json"
 out=$(wdoctor plain)
-printf '%s\n' "$out" | grep -qF "MISSING notes: $wnotes is outside the working directory and not in additionalDirectories" &&
-  printf '%s\n' "$out" | grep -qF 'permissions.sh --apply' && pass "wtd: doctor reports an uncovered notes dir as MISSING with the fix" ||
+printf '%s\n' "$out" | grep -F "MISSING notes: $wnotes is outside the working directory and not in additionalDirectories" |
+  grep -qF "(the owner runs: ! $plugin/scripts/permissions.sh --apply)" && pass "wtd: doctor reports an uncovered notes dir as MISSING with the fix" ||
   fail "wtd: no MISSING for an uncovered notes dir ($out)"
 wperm plain --apply >/dev/null
 expect "wtd: --apply lists the notes dir without worktrees_dir" "$wnotes" "$(wdirs "$wclaude/settings.local.json")"
@@ -5011,7 +5011,7 @@ grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the
   fail "wtd: no doctor skill row for worktrees"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
-# 27. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
+# 28. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
 # agent never edits its own permission settings); doctor reports a deny rule in the project's settings that
 # blocks a tag, a release or a tag push as MISSING, with the fix: move it to ask. Quiet with the template.
 owork="$work/owner"
@@ -5090,6 +5090,18 @@ for nojq in "" 1; do
     fail "owner: a deny on tag pushes left the verdict unchanged$label"
   cp "$owork/local-full.json" "$oclaude/settings.local.json"
 done
+# Only the local file, no shared settings: a broad deny that blocks loop commands is reported exactly once.
+rm -f "$oclaude/settings.json"
+printf '{"permissions": {"deny": ["Bash(git push:*)"]}}\n' >"$oclaude/settings.local.json"
+expect "owner: a broad deny in the local file alone is reported exactly once" "1" \
+  "$(odoctor | grep -c 'MISSING permissions: deny rule Bash(git push:\*) in .claude/settings.local.json')"
+# A remote other than origin: a deny on pushes of tags to the literal origin is still reported.
+printf '{"base_branch": "main", "remote": "origin2", "fast_check": "make lint", "checks": ["make check"]}\n' >"$owork/config2.json"
+printf '{"permissions": {"deny": ["Bash(git push origin v*)"]}}\n' >"$oclaude/settings.local.json"
+(cd "$owork/project" && HOME="$owork/home" DEV_LOOP_HOME="$owork/state" DEV_LOOP_CONFIG="$owork/config2.json" \
+  "$plugin/scripts/doctor.sh" 2>&1) | grep -qF 'MISSING permissions: deny rule Bash(git push origin v*) in .claude/settings.local.json' &&
+  pass "owner: a deny on tag pushes to origin is reported when the remote is origin2" ||
+  fail "owner: no MISSING for a deny on tag pushes to origin with the remote origin2"
 # Only the local file, no shared settings: the deny is still found.
 rm -f "$oclaude/settings.json"
 printf '{"permissions": {"deny": ["Bash(git tag:*)"]}}\n' >"$oclaude/settings.local.json"
