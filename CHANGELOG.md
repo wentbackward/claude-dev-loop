@@ -39,6 +39,22 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   changed, and a merge driver the repository or the user set for a listed file wins. A conflict in any
   other file stops the train as before, and a conflict now names its files (`TRAIN conflict in: ...`,
   `MERGE conflict in: ...`). Entries with spaces, wildcards or a backslash are skipped with a warning.
+- Targeted commands (#72): a new `.dev-loop.json` key `targeted` lists the command prefixes implementers
+  run while working (`"go test ./"`, `"pytest tests/"`, `"make test"`, `"npm run lint"`), so targeted tests
+  no longer prompt in auto mode. Each entry must start with an accepted runner form (`go test`, `go vet`,
+  `gofmt`, `pytest`, `python -m pytest`, `uv run pytest`, `npm test`, `npm run <script>`, `pnpm`/`yarn`
+  `test` and `run <script>`, `cargo test`, `cargo fmt`, `make <target>`, `ruff check`, `ruff format`);
+  `permissions.sh` writes one `Bash(<prefix> *)` allow rule per accepted entry and refuses the rest with the
+  reason (a path as the program, an interpreter, a shell, `npx`, git, a bare `make` or `npm run`, an
+  argument off the safe list, shell metacharacters). The role guard then checks the parsed arguments of
+  every command of those runners: each must be a plain path, package or pattern inside the project, or a
+  flag on that runner's safe list (with its value); anything else (`make --ev=...`, `go test -toolexec`,
+  `pytest -p`, `npm test --script-shell`, `cargo test --config`, `VAR=value`, a path or `cd` outside the
+  project, a write outside it, a line that is not plain) is refused with the argument named and "ask the
+  owner". `doctor.sh` notes each wildcard allow rule for a runner, an interpreter or a git subcommand with
+  destructive options (`make *`, `go *`, `npm run *`, `npx *`, `python3 *`, `node *`, `uv run *`,
+  `pytest *`, `bash *`, `git stash *`, ...) and each refused entry. The setup skill infers `targeted` per
+  toolchain. A targeted test still runs the project's own test code. Without the key nothing changes.
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,

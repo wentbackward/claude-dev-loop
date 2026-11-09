@@ -7109,9 +7109,12 @@ python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])); c["guard"] = 
   "$twork/proj/.dev-loop.json" "$twork/off.json"
 # tguard COMMAND [CONFIG] [CWD]: the guard's exit status on a Bash call of the implementer (CWD: the worktree).
 tguard() {
-  python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
-    "agent_type": "dev-loop:implementer", "tool_input": {"command": sys.argv[2]}}))' "${3:-$tproj}" "$1" |
-    (cd "${3:-$tproj}" && CLAUDE_PROJECT_DIR="$twork/proj" DEV_LOOP_CONFIG="${2:-}" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
+  local event
+  event=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+    "agent_type": "dev-loop:implementer", "tool_input": {"command": sys.argv[2]}}))' "${3:-$tproj}" "$1")
+  # shellcheck disable=SC2069  # the refusal (stderr) is kept, stdout dropped
+  (cd "${3:-$tproj}" && printf '%s\n' "$event" |
+    CLAUDE_PROJECT_DIR="$twork/proj" DEV_LOOP_CONFIG="${2:-}" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
   echo "status=$?"
 }
 trefused() { # trefused COMMAND...: each COMMAND is refused, and the refusal says to ask the owner
@@ -7124,7 +7127,7 @@ trefused() { # trefused COMMAND...: each COMMAND is refused, and the refusal say
 }
 tpassed() { # tpassed COMMAND...: each COMMAND passes
   local cmd
-  for cmd in "$@"; do expect "targeted guard: lets \"$cmd\" pass" "status=0" "$(tguard "$cmd")"; done
+  for cmd in "$@"; do expect "targeted guard: lets \"$cmd\" pass" "status=0" "$(tguard "$cmd" | tail -n 1)"; done
 }
 # go: options that run another program, write outside the project or are not on the safe list, in every spelling.
 trefused "go test ./pkg -toolexec=x" "go test ./pkg -toolexec x" "go test ./pkg --toolexec=x" "go test ./pkg -exec /tmp/x" \
@@ -7163,9 +7166,9 @@ tpassed "go test ./pkg -run TestX -count=1 -v" "go test -race -short ./..." "go 
   "ruff format --check src" "go test ./pkg > out.txt 2>&1" "go test ./... | tail -5" "cd pkg && go test ./..." \
   "pytest $tproj/tests/test_x.py" "go test -coverprofile=c.out ./..." "make lint" "echo \$HOME" "ls -la"
 expect "targeted guard: without the key a runner's options are not checked" "status=0" \
-  "$(tguard "make --eval=x test" "$twork/plain.json")"
-expect "targeted guard: \"guard\": false keeps the targeted check" "status=2" "$(tguard "make --eval=x test" "$twork/off.json")"
-expect "targeted guard: a runner outside the targeted forms is not checked" "status=0" "$(tguard "cargo build --config x")"
+  "$(tguard "make --eval=x test" "$twork/plain.json" | tail -n 1)"
+expect "targeted guard: \"guard\": false keeps the targeted check" "status=2" "$(tguard "make --eval=x test" "$twork/off.json" | tail -n 1)"
+expect "targeted guard: a runner outside the targeted forms is not checked" "status=0" "$(tguard "cargo build --config x" | tail -n 1)"
 
 # permissions.sh: an allow rule per accepted entry, no ask rules for runner options; refused entries with the reason.
 cat >"$twork/entries.json" <<'JSON'

@@ -1098,3 +1098,34 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `merge=union` plus a line-count check afterwards (stops on most decisions entries, which share lines, and
   on same-change merges git does cleanly);
   writing `.git/info/attributes` or a driver into the git config (changes the repository's state).
+
+## 2026-11-09 — Targeted commands: allowlisted runner forms, argv checked by the guard (#72)
+
+- **Decision:** `targeted` entries must start with an accepted runner form from one table in
+  `hooks/guard-role.py` (`go test`, `go vet`, `gofmt`, `pytest`, `python -m pytest`, `python3 -m pytest`,
+  `uv run pytest`, `npm`/`pnpm`/`yarn` `test` and `run <script>`, `cargo test`, `cargo fmt`, `make <target>`,
+  `ruff check`/`format`, `uv run ruff check`/`format`), each with a small safe-flag list (the README lists
+  them). `permissions.sh` asks the guard (`guard-role.py --targeted-check`) which entries are accepted, so
+  the table has one home, and writes `Bash(<prefix> *)` (`Bash(<prefix>*)` after a trailing `/`); no ask
+  rules for runner options. Without python3 no entry is written, since the guard is what makes the
+  wildcard safe. The guard checks every simple command whose argv starts with the form of an accepted
+  entry, not only those that start with the configured prefix: the allow rule matches text, the guard
+  sees argv, and the superset covers whatever Claude Code's matcher does with quotes. Flags match only
+  exactly as listed (abbreviations and bundles of unlisted letters are refused); `--` is refused; plain
+  arguments may not start with `-`/`+`, hold `=`, blanks or control characters, or be unquoted globs, and
+  paths must stay inside the worktree the command runs in. A variable before the runner, `env`, a
+  runner under `xargs`/`command`/a shell, a `cd` outside the worktree, an output redirection outside it
+  and a line naming a runner that is not plain are refused. The project's exact `fast_check` and `checks`
+  commands pass as written (they have exact rules). The check runs with `"guard": false` too, and a crash
+  while checking refuses the call in a loop project. Doctor notes wildcard allow rules for runners,
+  interpreters and destructive git subcommands from sample commands (so `Bash`, `go:*` and `go *` are all
+  found) and any other wildcard after a runner's name, except the rules written for accepted entries.
+- **Reason:** review round 1 showed that ask rules over the command text cannot protect a runner
+  wildcard: abbreviations, quoting, tabs and options no list names get through, as in #71. An allowlist
+  checked on the parsed argv closes the class; small explicit lists keep it reviewable. Checking the whole
+  runner form refuses some commands the allow rule would not have matched (they would have asked); that
+  is the safe direction, and the refusal says to ask the owner.
+- **Alternatives:** the round-1 design (allow rule plus ask rules for known dangerous options; leaks);
+  checking only commands that start with the configured prefix (depends on how Claude Code matches quoted
+  text); a separate data file for the table read by bash and Python (two parsers of one format); honouring
+  `"guard": false` for this check (it would leave the written wildcards unguarded).
