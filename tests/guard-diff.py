@@ -1,7 +1,8 @@
 """Differential test of the git guard's shell parsing against bash (run by tests/smoke.sh, python3 -I).
 
-Each case is a shell text followed by `git push origin main`, after a newline and after a space. Bash runs
-it with a stub `git` first on an otherwise empty PATH (so nothing but builtins and the stub can run);
+Each case is a shell text followed by `git push origin main` (after a newline and after a space) and by
+`git push origin $(echo main)` after a newline. Bash runs it with a stub `git` first on an otherwise empty
+PATH (so nothing but builtins and the stub can run);
 whenever bash runs the stub with `push origin main`, the guard must refuse the text. A fixed corpus plus a
 seeded random generator, so the run is deterministic. Prints one line per miss and a summary; exits 1 on any miss.
 
@@ -16,14 +17,14 @@ import signal
 import subprocess
 import sys
 
-TAILS = ["\ngit push origin main", " git push origin main"]
+TAILS = ["\ngit push origin main", " git push origin main", "\ngit push origin $(echo main)"]
 # Fragments of shell syntax the guard must read as bash does (files are written only in the work dir; no cd,
 # no names of real programs: with PATH set to the stub directory only, any other word is "command not found";
-# no bare "(", so no case can define a function that calls itself).
+# the only "(" is in "f() { ", and no fragment calls f, so no case can define a function that calls itself).
 FRAGMENTS = [
     "echo ", "a", "x", " ", "'", '"', "\\", "\\\\", "$'", "\\'", "$(", ")", "`", "<<E", "<<'E'", "<<-E",
     "\nE", "\n", "#", ";", "&&", "|", "\\\n", "$((1<<2))", "{ ", " }", "\t", "E", ">x", "2>&1", ">&2", "<<<a",
-    "&>x", "< x",
+    "&>x", "< x", "${x:-", "${x//", "$[", "}", "{a,b}", "f() { ", "alias g=", "\"$@\"",
 ]
 CORPUS = [
     "echo a", "echo 'a'", 'echo "a"', "echo a\\", "echo a\\\\", "echo a \\\\", "echo a\\\\\\", "echo $'a\\'b'",

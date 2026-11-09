@@ -2489,12 +2489,11 @@ grefused "$gg/proj-1" "timeout 5 git fetch --upl=x origin" "nice git fetch --upl
 EOF" "cat <<'X'
 never ends
 git push origin main"
-gpassed "$gg/proj-1" "git commit -m \"\$(cat <<'EOF'
+gpassed "$gg/proj-1" "git commit -F - <<'EOF'
 fix: x
 
 git push origin main is refused
-EOF
-)\"" "timeout 60 git fetch -q origin" "echo 'use \`git push origin main\`'" "nice -n 5 git log --oneline -1"
+EOF" "timeout 60 git fetch -q origin" "echo 'use \`git push origin main\`'" "nice -n 5 git log --oneline -1"
 grefused "$gg/proj" "git rebase origin/main @" "git rebase origin/main HEAD"
 # Review round 2: a here-document starts only at an unquoted << outside comments and arithmetic; line
 # continuations and \u escapes do not hide git from the fast path; env -S strings are parsed.
@@ -2532,16 +2531,24 @@ git push origin main" "echo \$'\\'' <<E
 x
 E
 git push origin main" "env -S \"echo 'x\" git push origin main" "bash -c \"echo 'x; git push origin main\""
-gpassed "$gg/proj-1" "echo \$'it\\'s' && git status" "git commit -m \$'fix: a\\'b\\n\\nbody'" "echo \"\$'\" && git status" \
-  "git status # it's fine" "gh pr create --title x --body \"\$(cat <<'EOF'
+gpassed "$gg/proj-1" "git status # it's fine" "gh pr create --title x --body-file - <<'EOF'
 it's done; never git push origin main
+EOF"
+# Round 5 (fail closed): a command naming git with any $ expansion is refused, ANSI-C strings and command
+# substitutions included; the agent writes it plainly.
+grefused "$gg/proj-1" "echo \$'it\\'s' && git status" "git commit -m \$'fix: a\\'b\\n\\nbody'" "echo \"\$'\" && git status" \
+  "gh pr create --title x --body \"\$(cat <<'EOF'
+it's done; never git push origin main
+EOF
+)\"" "git commit -m \"\$(cat <<'EOF'
+fix: x
 EOF
 )\""
 expect "git guard: a non-git command that cannot be parsed is not refused" 0 "$(gguard "$gg/proj-1" "echo 'unterminated")"
 out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
   "tool_input": {"command": "echo '"'"'x\ngit status"}}))' "$gg/proj-1" |
   CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
-case $out in *"cannot be parsed"*"ask the owner"*) pass "git guard: an unparsable git command is refused as such" ;;
+case $out in *"not a plain command line"*"unbalanced quote"*"ask the owner"*) pass "git guard: an unparsable git command is refused as such" ;;
   *) fail "git guard: the unparsable refusal does not explain itself: $out" ;; esac
 printf '{"scenarios": {"dir": "~/.dev-loop/<repo>/holdout"}, "guard": false}\n' >"$gg/scen-off.json"
 expect "isolation: a blind agent's unparsable git command is refused (git check off)" 2 \
@@ -2566,7 +2573,8 @@ git push origin main" ">x git push origin main" "2>&1 git push origin main" \
 x
 E"
 gpassed "$gg/proj-1" "echo a \\
-b" "echo \$'\\x41' && git status" "\$'git' status"
+b"
+grefused "$gg/proj-1" "echo \$'\\x41' && git status" "\$'git' status"
 # Every unquoted word git starts a git command (bash may run it after a substitution, arithmetic or an
 # unknown wrapper), except after a program that never runs its arguments; quoted text never does.
 grefused "$gg/proj-1" "foo git push origin main" "watch git push origin main" "\`\` git push origin main" \
@@ -2575,13 +2583,85 @@ for at in "$gg/proj" "$gg/proj-1"; do
   gpassed "$at" "grep -n git README.md" "echo git push origin main" "echo \"run git push -u origin HEAD\"" \
     "gh pr create --title x --body \"never git push origin main\"" "gh issue comment 3 --body \"run git push origin main by hand\"" \
     "git commit -m \"docs: git push origin main is refused\"" "printf '%s\n' x | git commit -F -" \
-    "git -C $gg/proj-1 status --short" "git log --oneline -3" "git diff origin/main...HEAD --stat" "command -v git" \
+    "git -C $gg/proj-1 status --short" "git log --oneline -3" "git diff origin/main...HEAD --stat" \
     "which git && git status" "$plugin/scripts/gate-train.sh feat/1-x feat/2-y" "git fetch -q origin" "cat <<EOF | git commit -F -
 fix: x
 
 git push origin main is refused
 EOF"
 done
+# Review round 5: fail closed. A command that names git is checked only when it is a plain command line
+# (literal words joined by &&, ||, ;, | or newlines, plain redirections, here-documents whose body expands
+# nothing); anything else that names git is refused, and so are runners given a command string.
+p5='git push origin main'
+for at in "$gg/proj" "$gg/proj-1"; do
+  grefused "$at" "bash -euo pipefail -c '$p5'" "bash --norc -c '$p5'" "bash -o errexit -c '$p5'" \
+    "bash -O extglob -c '$p5'" "bash +x -c '$p5'" "bash -c -- '$p5'" "echo '$p5' | bash" "bash <<'E'
+$p5
+E" "python3 -c \"import os; os.system('$p5')\"" "rg --pre git x push" "man -H'$p5 #' ls" "echo \${x//<<E/}
+$p5
+E/}" "echo \${x:-<<E}
+$p5
+E}" "echo \$[1<<E]
+$p5
+E]" "git push origin HEAD:ma{i,}n" "git push origin {main,x}" "git push origin \$(echo main)" \
+    "git push origin \"\$(echo main)\"" "git push origin \`echo main\`" "git push origin \${B:-main}" \
+    "b=main; git push origin \$b" "git push origin HEAD:\$(echo main)" "f() { git \"\$@\"; }; f push origin main" \
+    "echo() { git \"\$@\"; }; echo push origin main" "p() { git push origin \"\$1\"; }; p main" "alias g=git
+g push origin main" "alias echo=git
+echo push origin main" "alias g='git push'
+g origin main" "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='!$p5' git p" \
+    "git config alias.p '!$p5' && git p" "git config --local alias.p '!$p5'" "git config set alias.p '!$p5'" \
+    "git config user.name x" "GIT_DIR=../proj/.git git push origin HEAD" "export GIT_DIR=../proj/.git" \
+    "env GIT_DIR=../proj/.git git status" "git push origin tag v1" "git push origin tag v1.0" "trap '$p5' EXIT" \
+    "find . -exec bash -c '$p5' \\;" "watch '$p5'" "script -qc '$p5' /dev/null" "flock f -c '$p5'" "su -c '$p5'" \
+    "busybox sh -c '$p5'" "builtin eval '$p5'" "git submodule foreach '$p5'" "command git push origin main" \
+    "exec git push origin main" "if true; then $p5; fi" "(git push origin main)" "cat <<E
+\$HOME
+E
+$p5" "cat <<'E'
+never ends" "/usr/bin/gi? push origin main" "GIT push origin main" "git-push origin main" "git status & git push"
+done
+grefused "$gg/proj-1" "pushd ../proj && git push -u origin HEAD" "env -C ../proj git push -u origin HEAD" \
+  "env --chdir=../proj git push" "env --chd ../proj git push -u origin HEAD" "env -iC../proj git push -u origin HEAD" \
+  "git --git-dir=../proj/.git push origin HEAD" "git --work-tree=../proj push origin HEAD" "sudo -D ../proj git push" \
+  "cd ../proj; git push -u origin HEAD" "cd ../proj && cd ../proj-1; git push -u origin HEAD"
+grefused "$gg/proj" "cd ../proj-1 || git push -u origin HEAD" "true || cd ../proj-1 && git push -u origin HEAD" \
+  "cd ../proj-1 & git push -u origin HEAD" "cd ../proj-1 | git push -u origin HEAD" "cd ../proj-1
+git push -u origin HEAD" "pushd ../proj-1 && popd && git push -u origin HEAD"
+gpassed "$gg/proj" "cd ../proj-1 && git push -u origin HEAD" "pushd ../proj-1 && git push -u origin HEAD" \
+  "env -C ../proj-1 git push -u origin HEAD" "env --chdir=../proj-1 git push -u origin HEAD"
+for at in "$gg/proj" "$gg/proj-1"; do
+  gpassed "$at" "git config --get user.name" "git config --list" "git config get user.name" \
+    "git worktree add -b fix/1-x ../repo-1 origin/main" "$plugin/scripts/repush.sh fix/1-x" "git commit -F - <<'EOF'
+fix: x
+
+never git push origin main; \$HOME and \`id\` stay text
+EOF" "git status 2>&1 | head -5" "git log --oneline -3 >/dev/null" "echo git > x.txt" "cat .gitignore" \
+    "git status; git log --oneline -1" "TMPDIR=\$(mktemp -d) tests/smoke.sh" "echo \$HOME && ls"
+done
+gpassed "$gg/proj-1" "git rebase origin/main" "git push -u origin HEAD" \
+  "$plugin/scripts/as-role.sh implementer git push -u origin HEAD"
+out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
+  "tool_input": {"command": "git push origin $(echo main)"}}))' "$gg/proj-1" |
+  CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
+case $out in *"not a plain command line"*"write it plainly"*"ask the owner"*) pass "git guard: a refusal of a non-plain command says to write it plainly" ;;
+  *) fail "git guard: the non-plain refusal does not explain itself: $out" ;; esac
+# Many refspecs and long commands: the text checks come first, refspecs are capped and the hook ends quickly.
+specs=$(awk 'BEGIN { for (i = 0; i < 6000; i++) printf "feat/r%d ", i }')
+start=$(date +%s)
+expect "git guard: a push of 6000 refspecs ending in HEAD:main is refused" 2 "$(gguard "$gg/proj-1" "git push origin ${specs}HEAD:main")"
+took=$(($(date +%s) - start))
+[ "$took" -le 5 ] && pass "git guard: the 6000-refspec push is refused in ${took}s" || fail "git guard: the 6000-refspec push took ${took}s"
+expect "git guard: a push of more than 50 refspecs is refused" 2 \
+  "$(gguard "$gg/proj-1" "git push origin $(awk 'BEGIN { for (i = 0; i < 51; i++) printf "feat/r%d ", i }')")"
+long=$(awk 'BEGIN { for (i = 0; i < 5300; i++) print "git status --short" }')
+start=$(date +%s)
+expect "git guard: a 100 KB plain command passes" 0 "$(gguard "$gg/proj-1" "$long")"
+expect "git guard: a 100 KB command ending in a base push is refused" 2 "$(gguard "$gg/proj-1" "$long
+$p5")"
+took=$(($(date +%s) - start))
+[ "$took" -le 10 ] && pass "git guard: two 100 KB commands are checked in ${took}s" || fail "git guard: two 100 KB commands took ${took}s"
 diff_out=$(python3 -I "$plugin/tests/guard-diff.py" "$plugin/hooks/guard-role.py" "$(mkdir -p "$gg/diff" && echo "$gg/diff")" 300 2>&1)
 case $diff_out in *" 0 let through"*) pass "git guard: bash and the guard agree on every push bash runs (${diff_out##*: })" ;;
   *) fail "git guard: the guard lets through pushes bash runs: $diff_out" ;; esac
