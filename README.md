@@ -1120,7 +1120,7 @@ command, the stop condition and "ask the owner":
 - `rebase --exec`/`-x`, and a rebase whose rewritten branch is the base branch (the branch argument, else
   the branch checked out where it runs; `--continue`, `--abort`, `--skip` and `--quit` pass);
 - `diff`, `log` or `show` with `--output`;
-- `worktree remove --force`/`-f`. The owner runs it in their own shell with Claude Code's `!` prefix
+- `worktree remove --force`/`-f`. The owner runs it with Claude Code's `!` prefix (in the session, as the owner)
   (`! git worktree remove --force --force <path>`), as the setup skill's migration step says;
 - a push or rebase with `--git-dir` or `--work-tree` (another repository's branch, maybe the base);
 - a push that forces (`--force`, `--force-with-lease`, `--force-if-includes`, `-f`, `+<ref>`), deletes
