@@ -12,8 +12,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   to `ask`. The forms tested: `git tag v1.2.3`, `git tag -a|-s|-m`, `gh release create v1.2.3`,
   `git push <remote> v1.2.3|refs/tags/v1.2.3|tag v1.2.3|--tags|--follow-tags`, `git push --tags [<remote>]`
   and `git push --follow-tags` (`<remote>` the configured remote, and `origin` when it differs); a deny
-  that also blocks a loop command is reported once, as blocking the loop, in either settings file. The printed apply line shell-quotes the path, and doctor's permission notes name it. The setup
-  skill makes a push to another public repository the project depends on an owner step too.
+  that also blocks a loop command is reported once, as blocking the loop, in either settings file. The
+  printed apply line shell-quotes the path, and doctor's permission notes name it. The setup skill makes a push to another public repository the project depends on an owner step too.
 
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
