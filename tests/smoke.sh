@@ -166,6 +166,8 @@ fi
 . "$plugin/scripts/lib/workdirs.sh"
 dl_tmpdir_absolute
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
+# Without a work dir every path below would be under /: stop before any setup.
+case $work in /?*) ;; *) echo "cannot make a work dir" >&2 && exit 1 ;; esac
 # Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
 echo "started smoke (work dir $work)"
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2

@@ -21,6 +21,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 - Work dir removal (#86): `scripts/lib/workdirs.sh` refuses a work dir named by a relative path, and the
   suites make a relative `TMPDIR` absolute (symlinks resolved) before `mktemp`, so their green dir is
   still removed. With `TMPDIR=/` nothing is ever removed, on purpose (documented in the file's header).
+  Its `cd`s ignore an exported `CDPATH` and take a `TMPDIR` such as `-x` as a dir name, and a suite that
+  cannot make its work dir stops at once (`cannot make a work dir`) instead of running with paths under `/`.
 - Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` name their work dir on their first line
   (`started smoke (work dir PATH)`, a form the summary patterns `^(smoke|identity): ` do not match) and
   remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names
