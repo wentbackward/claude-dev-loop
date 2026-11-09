@@ -2280,9 +2280,11 @@ DEV_LOOP_CONFIG="$work/scen-inside.json" "$plugin/scripts/doctor.sh" 2>&1 | grep
   pass "doctor notes a scenario store inside the repository" || fail "no note for a store inside the repository"
 expect "doctor without scenarios prints no scenario lines" 0 \
   "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -ci "scenario")"
+# The TMPDIR line reports live free space and inodes, so it can differ between two runs: left out of both.
 expect "doctor's output without scenarios is unchanged by an empty store directory" \
-  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)" \
-  "$(mkdir -p "$DEV_LOOP_HOME/project/scenarios"; DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)"
+  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -v '^[a-zA-Z]* *TMPDIR ')" \
+  "$(mkdir -p "$DEV_LOOP_HOME/project/scenarios"; DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 |
+    grep -v '^[a-zA-Z]* *TMPDIR ')"
 rmdir "$DEV_LOOP_HOME/project/scenarios"
 example="$plugin/templates/scenario.md"
 mkdir -p "$work/scen-example" && cp "$example" "$work/scen-example/"
@@ -3591,9 +3593,10 @@ $(mmatch 'Bash(make lint)' 'make lint') $(mmatch 'Read(./.env)' 'cat .env')"
 # Doctor: complete rules print nothing new; the same output as without settings, less the one note.
 complete_out=$(mdoctor)
 expect "perm: doctor prints nothing about complete permissions" "" "$(printf '%s\n' "$complete_out" | grep 'permissions')"
+# The TMPDIR line reports live free space and inodes, so it can differ between two runs: left out of both.
 expect "perm: doctor output without settings is the complete output plus one note and the uncovered notes dir" \
-  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks\|^doctor: ')" \
-  "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: \|^MISSING notes: \|^doctor: ')"
+  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks\|^doctor: \|^[a-zA-Z]* *TMPDIR ')" \
+  "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: \|^MISSING notes: \|^doctor: \|^[a-zA-Z]* *TMPDIR ')"
 # A stale allow list: the fast check changed.
 mconfig "make fmt-check lint"
 printf '%s\n' "$(mdoctor)" | grep -qF 'note    permissions: the allow list lacks the project commands: Bash(make fmt-check lint)' &&
@@ -4942,8 +4945,8 @@ cp "$wwork/local-before.json" "$wclaude/settings.local.json"
 expect "wtd: without worktrees_dir and without sibling worktrees doctor prints nothing about worktrees" "" \
   "$(wdoctor plain | grep -i 'worktrees')"
 out=$(wdoctor wtd)
-printf '%s\n' "$out" | grep -qF "MISSING worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories" &&
-  printf '%s\n' "$out" | grep -qF "permissions.sh --apply" && pass "wtd: doctor reports an uncovered worktrees dir as MISSING with the fix" ||
+printf '%s\n' "$out" | grep -F "MISSING worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories" |
+  grep -qF "(the owner runs: ! $plugin/scripts/permissions.sh --apply)" && pass "wtd: doctor reports an uncovered worktrees dir as MISSING with the fix" ||
   fail "wtd: no MISSING for an uncovered worktrees dir ($out)"
 wperm wtd --apply >/dev/null
 out=$(wdoctor wtd)
@@ -4971,8 +4974,8 @@ git -C "$wwork/project" worktree remove "$wparent/project-31" && git -C "$wwork/
 # without worktrees_dir; doctor reports it MISSING while uncovered; a notes_dir inside the project needs nothing.
 rm -f "$wclaude/settings.json" "$wclaude/settings.local.json"
 out=$(wdoctor plain)
-printf '%s\n' "$out" | grep -qF "MISSING notes: $wnotes is outside the working directory and not in additionalDirectories" &&
-  printf '%s\n' "$out" | grep -qF 'permissions.sh --apply' && pass "wtd: doctor reports an uncovered notes dir as MISSING with the fix" ||
+printf '%s\n' "$out" | grep -F "MISSING notes: $wnotes is outside the working directory and not in additionalDirectories" |
+  grep -qF "(the owner runs: ! $plugin/scripts/permissions.sh --apply)" && pass "wtd: doctor reports an uncovered notes dir as MISSING with the fix" ||
   fail "wtd: no MISSING for an uncovered notes dir ($out)"
 wperm plain --apply >/dev/null
 expect "wtd: --apply lists the notes dir without worktrees_dir" "$wnotes" "$(wdirs "$wclaude/settings.local.json")"
@@ -5011,6 +5014,145 @@ grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the
   fail "wtd: no doctor skill row for worktrees"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
+# 26b. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
+# agent never edits its own permission settings); doctor reports a deny rule in the project's settings that
+# blocks a tag, a release or a tag push as MISSING, with the fix: move it to ask. Quiet with the template.
+owork="$work/owner"
+git init -q --bare "$owork/origin.git"
+git clone -q "$owork/origin.git" "$owork/project" 2>/dev/null
+cd "$owork/project" || exit 1
+printf '# Project\n' >"$owork/project/CLAUDE.md"
+printf '{"base_branch": "main", "fast_check": "make lint", "checks": ["make check"]}\n' >"$owork/config.json"
+git -C "$owork/project" add . && git -C "$owork/project" commit -q -m "chore: start" &&
+  git -C "$owork/project" push -q -u origin main
+# Every settings file this section writes or removes is under the throwaway project, by absolute path.
+oclaude="$owork/project/.claude"
+mkdir -p "$owork/home/.claude"
+# A user-level deny on tags: doctor must never read it.
+printf '{"permissions": {"deny": ["Bash(git tag:*)"]}}\n' >"$owork/home/.claude/settings.json"
+# oenv COMMAND...: run COMMAND in the project with the section's config, state and home.
+oenv() { (cd "$owork/project" && HOME="$owork/home" DEV_LOOP_HOME="$owork/state" DEV_LOOP_CONFIG="$owork/config.json" "$@" 2>&1); }
+oapply="! $plugin/scripts/permissions.sh --apply"
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  rm -f "$oclaude/settings.json" "$oclaude/settings.local.json"
+  out=$(DEV_LOOP_NO_JQ=$nojq oenv "$plugin/scripts/permissions.sh")
+  printf '%s\n' "$out" | tail -n 1 | grep -qF -- "$oapply" &&
+    pass "owner: the dry run ends with the owner's apply command$label" ||
+    fail "owner: the dry run does not end with \"$oapply\"$label ($(printf '%s\n' "$out" | tail -n 1))"
+  printf '%s\n' "$out" | tail -n 1 | grep -q '\-\-apply$' && pass "owner: the apply command is the end of the line$label" ||
+    fail "owner: the dry run's last line does not end with --apply$label"
+  [ ! -e "$oclaude/settings.json" ] && pass "owner: the dry run writes nothing$label" || fail "owner: the dry run wrote settings$label"
+  out=$(DEV_LOOP_NO_JQ=$nojq oenv "$plugin/scripts/permissions.sh" --apply)
+  printf '%s\n' "$out" | grep -qF -- "$oapply" && fail "owner: --apply prints the apply command$label" ||
+    pass "owner: --apply does not print the apply command$label"
+  out=$(DEV_LOOP_NO_JQ=$nojq oenv "$plugin/scripts/permissions.sh")
+  expect "owner: with nothing missing the dry run prints only complete$label" "permissions: complete" "$out"
+done
+
+# Doctor: quiet with the template's ask rules (and the user's own deny on tags is never read).
+odoctor() { DEV_LOOP_NO_JQ=${1:-} oenv "$plugin/scripts/doctor.sh"; }
+clean_verdict=$(odoctor | tail -n 1)
+expect "owner: doctor is quiet about releases with the template's rules" "" "$(odoctor | grep -i 'release')"
+cp "$oclaude/settings.json" "$owork/shared-full.json"
+cp "$oclaude/settings.local.json" "$owork/local-full.json"
+# oadd_deny FILE RULE: append RULE to permissions.deny of FILE.
+oadd_deny() {
+  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d.setdefault("permissions", {}).setdefault("deny", []).append(sys.argv[2]); json.dump(d, open(sys.argv[1], "w"))' \
+    "$1" "$2"
+}
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  for rule in "Bash(git tag:*)" "Bash(git tag *)" "Bash(*gh release *)" "Bash(*git*push*--tags*)" \
+    "Bash(git push --tags:*)" "Bash(git push --tags)" "Bash(git push --tags origin)" "Bash(git push --follow-tags:*)" \
+    "Bash(*--follow-tags*)" "Bash(git push origin refs/tags/*)" "Bash(git push origin tag *)" "Bash(git tag -s:*)" \
+    "Bash(git tag -m:*)"; do
+    cp "$owork/shared-full.json" "$oclaude/settings.json"
+    oadd_deny "$oclaude/settings.json" "$rule"
+    out=$(odoctor "$nojq")
+    printf '%s\n' "$out" | grep -F "MISSING permissions: deny rule $rule in .claude/settings.json blocks" | grep -qF 'move it to ask' &&
+      pass "owner: doctor reports deny $rule as MISSING with the fix$label" ||
+      fail "owner: no MISSING with the fix for deny $rule$label ($out)"
+  done
+  # A broad deny that also blocks a loop command is reported once, by the loop-command check.
+  cp "$owork/shared-full.json" "$oclaude/settings.json"
+  oadd_deny "$oclaude/settings.json" "Bash(git push:*)"
+  out=$(odoctor "$nojq")
+  expect "owner: a deny on all pushes is reported once$label" "1" \
+    "$(printf '%s\n' "$out" | grep -cF 'deny rule Bash(git push:*) in .claude/settings.json')"
+  printf '%s\n' "$out" | grep -F 'deny rule Bash(git push:*) in .claude/settings.json' | grep -qF 'a command the loop runs' &&
+    pass "owner: the one report of a deny on all pushes is the loop-command one$label" ||
+    fail "owner: a deny on all pushes is not reported as blocking a loop command$label ($out)"
+  cp "$owork/shared-full.json" "$oclaude/settings.json"
+  oadd_deny "$oclaude/settings.local.json" "Bash(git push origin v*)"
+  out=$(odoctor "$nojq")
+  printf '%s\n' "$out" | grep -F 'MISSING permissions: deny rule Bash(git push origin v*) in .claude/settings.local.json blocks' |
+    grep -qF 'move it to ask' && pass "owner: doctor reports deny git push origin v* in the local file$label" ||
+    fail "owner: no MISSING for deny git push origin v* in the local file$label ($out)"
+  [ "$(printf '%s\n' "$out" | tail -n 1)" != "$clean_verdict" ] && pass "owner: a deny on tag pushes adds a problem$label" ||
+    fail "owner: a deny on tag pushes left the verdict unchanged$label"
+  cp "$owork/local-full.json" "$oclaude/settings.local.json"
+done
+# Only the local file, no shared settings: a broad deny that blocks loop commands is reported exactly once.
+rm -f "$oclaude/settings.json"
+printf '{"permissions": {"deny": ["Bash(git push:*)"]}}\n' >"$oclaude/settings.local.json"
+expect "owner: a broad deny in the local file alone is reported exactly once" "1" \
+  "$(odoctor | grep -c 'MISSING permissions: deny rule Bash(git push:\*) in .claude/settings.local.json')"
+odoctor | grep -F 'MISSING permissions: deny rule Bash(git push:*) in .claude/settings.local.json' |
+  grep -qF 'a command the loop runs' && pass "owner: the one report of a broad deny in the local file is the loop-command one" ||
+  fail "owner: a broad deny in the local file alone is not reported as blocking a loop command"
+# A remote other than origin: a deny on pushes of tags to the literal origin is still reported.
+printf '{"base_branch": "main", "remote": "origin2", "fast_check": "make lint", "checks": ["make check"]}\n' >"$owork/config2.json"
+printf '{"permissions": {"deny": ["Bash(git push origin v*)"]}}\n' >"$oclaude/settings.local.json"
+(cd "$owork/project" && HOME="$owork/home" DEV_LOOP_HOME="$owork/state" DEV_LOOP_CONFIG="$owork/config2.json" \
+  "$plugin/scripts/doctor.sh" 2>&1) | grep -qF 'MISSING permissions: deny rule Bash(git push origin v*) in .claude/settings.local.json' &&
+  pass "owner: a deny on tag pushes to origin is reported when the remote is origin2" ||
+  fail "owner: no MISSING for a deny on tag pushes to origin with the remote origin2"
+# Only the local file, no shared settings: a tag deny there is still reported.
+rm -f "$oclaude/settings.json"
+printf '{"permissions": {"deny": ["Bash(git tag:*)"]}}\n' >"$oclaude/settings.local.json"
+odoctor | grep -qF 'MISSING permissions: deny rule Bash(git tag:*) in .claude/settings.local.json blocks' &&
+  pass "owner: a tag deny in the local file is reported without a shared settings file" ||
+  fail "owner: no MISSING for a tag deny in the local file alone"
+# An ask on tags (the template's) and an unrelated deny are not reported.
+printf '{"permissions": {"ask": ["Bash(git tag:*)"], "deny": ["Bash(curl *)"]}}\n' >"$oclaude/settings.local.json"
+expect "owner: an ask on tags and an unrelated deny are not reported" "" "$(odoctor | grep 'MISSING permissions')"
+rm -f "$oclaude/settings.local.json"
+
+# Doctor's notes on missing or empty permission settings name the owner's apply line, never a bare --apply.
+rm -f "$oclaude/settings.json" "$oclaude/settings.local.json"
+odoctor | grep -F 'permissions: no .claude/settings.json' | grep -qF -- "$oapply" &&
+  pass "owner: the no-settings note names the owner's apply line" || fail "owner: the no-settings note lacks \"$oapply\""
+printf '{}\n' >"$oclaude/settings.json"
+odoctor | grep -F 'permissions: no allow list' | grep -qF -- "$oapply" &&
+  pass "owner: the no-allow-list note names the owner's apply line" || fail "owner: the no-allow-list note lacks \"$oapply\""
+expect "owner: no doctor note says the setup skill runs --apply" "" "$(odoctor | grep -F 'permissions step')"
+rm -f "$oclaude/settings.json"
+# A plugin path with a space: the printed apply line quotes the path and still ends with --apply.
+mkdir -p "$owork/sp ace"
+cp -R "$plugin/scripts" "$plugin/templates" "$owork/sp ace/"
+out=$(oenv "$owork/sp ace/scripts/permissions.sh" | tail -n 1)
+ospace="! $(printf '%q' "$owork/sp ace/scripts/permissions.sh") --apply"
+printf '%s\n' "$out" | grep -qF -- "$ospace" && printf '%s\n' "$out" | grep -q '\-\-apply$' &&
+  pass "owner: the apply line quotes a plugin path with a space" || fail "owner: the apply line does not quote the path ($out)"
+
+# The docs: setup and doctor skills, README, CHANGELOG and decisions.
+osetup=$(awk '/^4\. \*\*Permissions\*\*/ { on = 1 } /^5\. / { on = 0 } on' "$plugin/skills/setup/SKILL.md")
+printf '%s\n' "$osetup" | grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' &&
+  pass "owner: the setup Permissions step shows the owner's ! apply line" || fail "owner: setup does not show the ! apply line"
+printf '%s\n' "$osetup" | grep -qiF 'never edit' && pass "owner: the setup step says the agent never edits the settings itself" ||
+  fail "owner: setup does not forbid editing the settings"
+grep -qiF 'another public repository' "$plugin/skills/setup/SKILL.md" &&
+  pass "owner: the setup skill makes pushes to another public repository an owner step" ||
+  fail "owner: setup does not name pushes to another public repository"
+grep -qF 'move it to `ask`' "$plugin/skills/doctor/SKILL.md" && grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' \
+  "$plugin/skills/doctor/SKILL.md" && pass "owner: the doctor skill has the tag-deny row and the owner's apply line" ||
+  fail "owner: the doctor skill lacks the tag-deny row or the apply line"
+awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' &&
+  pass "owner: the README permissions section shows the owner's apply line" || fail "owner: the README lacks the apply line"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#73' && pass "owner: CHANGELOG has a #73 entry under Unreleased" ||
+  fail "owner: no #73 entry under ## Unreleased"
+grep -qF '(#73)' "$plugin/docs/DECISIONS.md" && pass "owner: the decisions log has a #73 entry" || fail "owner: no #73 decision"
 cd "$work/project" || exit 1
 
 # 27. Forced failure (#80): red only when DEV_LOOP_SMOKE_FORCE_FAIL=1, so section 27b can run a red suite.

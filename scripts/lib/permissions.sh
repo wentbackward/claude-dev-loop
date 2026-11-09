@@ -232,6 +232,12 @@ dl_perm_dir_ok() {
   dl_path_under "$1" "$DL_ROOT" || dl_perm_holds_root "$1" || printf '%s\n' "$1"
 }
 
+# dl_perm_apply_line SCRIPTS_DIR: the line the owner runs in the session to apply the rules (the ! prefix runs it
+# as the owner); the path is shell-quoted and --apply stays the last token.
+dl_perm_apply_line() {
+  printf '! %q --apply\n' "$1/permissions.sh"
+}
+
 # dl_perm_loop_samples ROOT: commands the loop runs, one per line, to test deny rules against.
 dl_perm_loop_samples() {
   local name
