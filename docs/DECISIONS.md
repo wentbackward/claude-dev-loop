@@ -1003,7 +1003,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   built from pieces, scripts the agent writes and runs, the user's shell aliases, the repository's own
   config). `git branch -f <base>`, `git update-ref refs/heads/<base>` and `git reset --hard` on the base
   pass on purpose: they stay local, and a push of the base is refused. The identity and scenario checks
-  keep their own splitter (unchanged by this entry). This replaces the shell-grammar parts of the entry
+  keep their own splitter (unchanged by this entry). Round 6: a hook event that is not a JSON object
+  (truncated, not UTF-8) is refused when its text, decoded with replacement characters, names git and the
+  project has `.dev-loop.json`; `sort` is not a text program (`--compress-program` runs one), and the
+  text programs' comment says the file writers among them can still build a script run later. This replaces the shell-grammar parts of the entry
   above: here-document scanning, `$'...'` decoding, substitution expansion and `bash -c` unpacking no longer
   decide the git check.
 - **Reason:** a blocklist over shell syntax leaks wherever the guard and bash read a construct

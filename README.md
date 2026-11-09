@@ -1139,7 +1139,9 @@ with `.dev-loop.json` (not only with scenarios or identities) and off with `"gua
 without `.dev-loop.json` are not checked. A crash of the guard on a command naming git refuses it. A
 differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts through bash
 with a stub `git`, and fails when bash would push to the base branch and the guard lets it through. A Bash
-call that does not name git starts no git process. The ask and deny rules stay as a second layer.
+call that does not name git starts no git process. The ask and deny rules stay as a second layer. `gh`
+commands are outside the git guard: the permission rules (and, in identity mode, the role checks) cover
+gh writes such as `gh pr merge`, `gh api` and `gh release`.
 
 What the guard does not catch, by design or because it reads only the command text:
 
