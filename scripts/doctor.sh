@@ -272,14 +272,11 @@ doctor_scenarios() {
 . "$scripts_dir/lib/permissions.sh"
 
 # doctor_permissions: check the permissions of the project's .claude/settings.json and settings.local.json
-# (never the user's own files): a deny rule that blocks a loop command is MISSING; a missing or incomplete
-# allow list is a note; nothing is printed when the rules are complete. Without .claude/settings.json one note.
+# (never the user's own files): a deny rule that blocks a loop command is MISSING (in either file, also without
+# .claude/settings.json); a missing or incomplete allow list is a note; nothing is printed when the rules are
+# complete. Without .claude/settings.json one note about the allow list.
 doctor_permissions() {
   local root rel file rule cmd allow commands="" lacking=0 samples
-  if [ ! -f "$DL_ROOT/.claude/settings.json" ]; then
-    optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the owner applies the loop's rules: $(dl_perm_apply_line "$scripts_dir"))"
-    return
-  fi
   root=$(cd "$scripts_dir/.." && pwd)
   samples=$(dl_perm_loop_samples "$root")
   for rel in .claude/settings.json .claude/settings.local.json; do
@@ -293,6 +290,10 @@ doctor_permissions() {
       done <<<"$samples"
     done < <(dl_perm_rules "$file" deny)
   done
+  if [ ! -f "$DL_ROOT/.claude/settings.json" ]; then
+    optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the owner applies the loop's rules: $(dl_perm_apply_line "$scripts_dir"))"
+    return
+  fi
   allow=$(dl_perm_rules "$DL_ROOT/.claude/settings.json" allow; dl_perm_rules "$DL_ROOT/.claude/settings.local.json" allow)
   if [ -z "$allow" ]; then
     optional "permissions: no allow list: in the default permission mode every loop command asks (the owner applies the loop's rules: $(dl_perm_apply_line "$scripts_dir"))"
@@ -312,6 +313,12 @@ doctor_permissions() {
   return 0
 }
 
+# doctor_tag_push_samples REMOTE: the tag and release commands a release runs, with tag pushes to REMOTE.
+doctor_tag_push_samples() {
+  printf '%s\n' "git push $1 v1.2.3" "git push $1 refs/tags/v1.2.3" "git push $1 tag v1.2.3" \
+    "git push $1 --tags" "git push --tags $1" "git push $1 --follow-tags"
+}
+
 # doctor_release_denies: a deny rule in the project's .claude/settings.json or settings.local.json (never the
 # user's own files) that blocks a tag, a release or a tag push is MISSING: no release can be made while it
 # stands, even on the owner's go; the template asks for these instead. A rule that also blocks a loop command
@@ -319,9 +326,9 @@ doctor_permissions() {
 doctor_release_denies() {
   local rel rule cmd samples loop
   samples=$(printf '%s\n' "git tag v1.2.3" "git tag -a v1.2.3 -m v1.2.3" "git tag -s v1.2.3 -m v1.2.3" \
-    "git tag -m v1.2.3 v1.2.3" "gh release create v1.2.3" "git push $DL_REMOTE v1.2.3" \
-    "git push $DL_REMOTE refs/tags/v1.2.3" "git push $DL_REMOTE tag v1.2.3" "git push $DL_REMOTE --tags" \
-    "git push --tags" "git push --tags $DL_REMOTE" "git push --follow-tags" "git push $DL_REMOTE --follow-tags")
+    "git tag -m v1.2.3 v1.2.3" "gh release create v1.2.3" "git push --tags" "git push --follow-tags"
+    doctor_tag_push_samples "$DL_REMOTE"
+    [ "$DL_REMOTE" = origin ] || doctor_tag_push_samples origin)
   loop=$(dl_perm_loop_samples "$(cd "$scripts_dir/.." && pwd)")
   for rel in .claude/settings.json .claude/settings.local.json; do
     while IFS= read -r rule; do
@@ -357,7 +364,7 @@ doctor_worktrees() {
     if dl_perm_holds_root "$wdir"; then
       missing "worktrees_dir: $wdir holds the project: listing it in additionalDirectories would open every sibling project (use a dedicated directory such as ../$DL_REPO-worktrees)"
     elif ! dl_path_under "$wdir" "$DL_ROOT" && ! dl_perm_dir_covered "$wdir" "${files[@]}"; then
-      missing "worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories: in auto mode every edit there asks (permissions.sh --apply)"
+      missing "worktrees: $wdir is outside the working directory and not in permissions.additionalDirectories: in auto mode every edit there asks (the owner runs: $(dl_perm_apply_line "$scripts_dir"))"
     fi
   fi
   while IFS= read -r path; do
@@ -370,7 +377,7 @@ doctor_worktrees() {
   if [ -n "$wdir" ]; then
     optional "worktrees: $count loop worktrees of the old layout outside the working directory stay where they are; in auto mode edits there ask until they merge (new ones go to $wdir)"
   else
-    missing "worktrees: $count loop worktrees outside the working directory, not in permissions.additionalDirectories: in auto mode every edit there asks (set \"worktrees_dir\": \"../$DL_REPO-worktrees\" in .dev-loop.json, then permissions.sh --apply; existing worktrees stay where they are)"
+    missing "worktrees: $count loop worktrees outside the working directory, not in permissions.additionalDirectories: in auto mode every edit there asks (set \"worktrees_dir\": \"../$DL_REPO-worktrees\" in .dev-loop.json, then the owner runs: $(dl_perm_apply_line "$scripts_dir"); existing worktrees stay where they are)"
   fi
 }
 
@@ -381,7 +388,7 @@ doctor_notes_dir() {
   notes=$(dl_normalize "$(dl_notes_dir)")
   dl_path_under "$notes" "$DL_ROOT" && return 0
   dl_perm_dir_covered "$notes" "$DL_ROOT/.claude/settings.json" "$DL_ROOT/.claude/settings.local.json" && return 0
-  missing "notes: $notes is outside the working directory and not in additionalDirectories: in auto mode every notes file an implementer writes asks (permissions.sh --apply)"
+  missing "notes: $notes is outside the working directory and not in additionalDirectories: in auto mode every notes file an implementer writes asks (the owner runs: $(dl_perm_apply_line "$scripts_dir"))"
 }
 
 # doctor_loop_worktrees: the paths of the worktrees (not the main one) that have a loop branch checked out.
