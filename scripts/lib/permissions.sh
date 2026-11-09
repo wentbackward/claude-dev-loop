@@ -27,11 +27,12 @@ sys.exit(0 if isinstance(value, dict) and isinstance(value.get("permissions") or
 }
 
 # dl_perm_rules FILE LIST: the string rules of permissions.LIST (allow, ask, deny) in FILE, one per line;
-# nothing for a missing or invalid file.
+# nothing for a missing or invalid file or a LIST that is not an array (the same under jq and python3).
 dl_perm_rules() {
   [ -f "$1" ] || return 0
   if dl_have_jq; then
-    jq -r --arg l "$2" 'try (.permissions[$l][] | strings) catch empty' "$1" 2>/dev/null
+    jq -r --arg l "$2" 'try (.permissions[$l] | if type == "array" then .[] else empty end | strings) catch empty' \
+      "$1" 2>/dev/null
   else
     python3 -I -c '
 import json, sys
