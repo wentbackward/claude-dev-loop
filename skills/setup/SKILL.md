@@ -75,21 +75,22 @@ running system against holdout scenarios". Skip any question whose answer you al
    project's own rules.
 3. **`docs/DECISIONS.md`** from `templates/DECISIONS.md` if missing; add a first entry recording the setup
    choices you made without asking.
-4. **Permissions** (`.claude/settings.json` and `.claude/settings.local.json`), after `.dev-loop.json`:
-   run `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` (a dry run that lists the missing rules). Applying
-   them is the owner's step: the agent may not change its own permissions (auto mode refuses it), so show
-   the owner the list and the dry run's last line, the one command
-   `! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` (with the plugin's absolute path; the `!`
-   prefix runs it in the session as the owner), and wait until the owner has run it. Never edit
-   `.claude/settings.json` or `.claude/settings.local.json` yourself, and never run `--apply`. It only adds rules: the
-   allow, ask and deny rules of `templates/settings.json`, the loop's one push (`git push -u <remote> HEAD`), one exact rule per
-   `fast_check` and `checks` command into `.claude/settings.json`; the plugin's scripts at this machine's
-   plugin path into `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes
-   directory and `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again whenever
-   `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission modes"
-   says what each rule is for. The plugin's hooks come with the plugin; do not copy them into the project.
-   A push to another public repository the project depends on (a fork, a shared library) is an owner
-   step too: show the owner the command and wait; never push there yourself.
+4. **Permissions** (`.claude/settings.json` and `.claude/settings.local.json`), after `.dev-loop.json`: run
+   `${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh` (a dry run that lists the missing rules). Applying them is
+   the owner's step: the agent may not change its own permissions (auto mode refuses it), so show the owner
+   the list and the dry run's last line, the one command
+   `! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` (with the plugin's absolute path; the `!` prefix
+   runs it in the session as the owner), and wait until the owner has run it. Never edit
+   `.claude/settings.json` or `.claude/settings.local.json` yourself, and never run `--apply`.
+   `permissions.sh` only adds rules: the allow, ask and deny rules of `templates/settings.json`, the loop's
+   one push (`git push -u <remote> HEAD`), one exact rule per `fast_check` and `checks` command into
+   `.claude/settings.json`; the plugin's scripts at this machine's plugin path into
+   `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes directory and
+   `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again
+   whenever `fast_check` or `checks` change (`doctor.sh` notes a stale list). The README section "Permission
+   modes" says what each rule is for. The plugin's hooks come with the plugin; do not copy them into the
+   project. A push to another public repository the project depends on (a fork, a shared library) is an
+   owner step too: show the owner the command and wait; never push there yourself.
 5. **Makefile targets**, only the missing ones, as thin wrappers around the toolchain: `setup`, `fmt`,
    `fmt-check`, `lint`, `typecheck`, `test`, `cov`, `check`, `e2e`. For example (Python with uv):
    `fmt-check: ; uv run ruff format --check .`, `check: fmt-check lint typecheck cov`. Skip this step for
