@@ -1056,6 +1056,16 @@ run a command (`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` 
 them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.md` rule not to read
 `.env` files stays the guard.
 
+The guard hook and these rules are tripwires on the agent's command line; no text match is complete
+against full shell syntax. The boundary is the remote's branch and tag protection, so `doctor.sh` reads it
+(read only, through `gh api` on a GitHub remote): one `ok` line when the base branch requires a pull
+request (or blocks updates) and blocks force pushes and deletion, through branch protection or a ruleset,
+and an active tag ruleset covers `refs/tags/v*`; otherwise a note naming what is missing. The owner adds
+them in the repository's Settings > Rules > Rulesets (a branch ruleset for the base with "Require a pull
+request", "Block force pushes" and "Restrict deletions", a tag ruleset for `refs/tags/v*`), or with
+`gh api -X POST repos/<owner>/<repo>/rulesets --input <ruleset.json>`. Without `gh`, logged out, without
+the right to read it or on another host, the note says it could not be checked; it is never `MISSING`.
+
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
 commit message or PR body that quotes such a command. Write those messages without the literal flag, or
 pass the text in a file (`git commit -F <file>`, `gh pr create --body-file <file>`).

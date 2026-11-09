@@ -919,3 +919,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after the
   settle window); a `--worktree <path>` override (a forced removal by another name); archiving the
   ignored files or the submodules too (large, and a submodule's git dir is a repository of its own).
+
+## 2026-11-09 — Reading the remote's branch and tag protection (#88)
+
+- **Decision:** `doctor.sh` reads, with plain `gh api` GETs, `branches/<base>/protection` (classic
+  protection; the 404 "Branch not protected" counts as none), `rules/branches/<base>` (the rulesets that
+  apply) and `rulesets` plus each active tag ruleset. The base is protected when the two sources together
+  give a pull request (`pull_request`, or `update` blocked), no force push and no deletion; release tags are
+  covered when an active tag ruleset with rules includes and does not exclude `v1.0.0` (`~ALL` or a
+  `refs/tags/` glob). When a gap remains and a source could not be read, the note says it could not be
+  checked instead of naming gaps. Each call has a 10 second `timeout` where that command exists (it does
+  not on stock macOS; there the call runs without one). The repository is `github.repo`, else a
+  `github.com` remote URL; any other remote is not checked.
+- **Reason:** both protection mechanisms are in use, and the rules endpoint is readable with read access
+  while classic protection needs admin, so a non-admin still gets an answer from the rulesets; an
+  unreadable source must not produce a false "unprotected". A fixed tag is the simplest test of a glob.
+- **Alternatives:** only rulesets (misses classic protection); MISSING for an unprotected remote (the loop
+  works without it; it is the owner's choice); a portable bash watchdog instead of `timeout` (more code for
+  a read that normally answers in under a second).
