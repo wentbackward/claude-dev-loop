@@ -5376,6 +5376,43 @@ expect "work dirs: a relative TMPDIR names an absolute work dir" "started smoke 
 expect "work dirs: a relative TMPDIR's green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" \
   "$(printf '%s\n' "$kout" | tail -n 1)"
 expect "work dirs: a relative TMPDIR's green suite leaves no dir" "" "$(cd "$kwork/relrun/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
+# CDPATH exported, with a dir of the same name in it, and a TMPDIR that looks like an option (#86).
+mkdir -p "$kwork/cdp/a/rel" "$kwork/cdp/b/rel" "$kwork/cdp/a/-x"
+# kabs VAR=VALUE...: from $kwork/cdp/a with these variables exported, print [TMPDIR] after dl_tmpdir_absolute
+# and [dl_tmp_dir].
+kabs() {
+  (cd "$kwork/cdp/a" && env "$@" bash -c '. "$1" && dl_tmpdir_absolute && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
+    "$plugin/scripts/lib/workdirs.sh")
+}
+kcdp=$(cd -P "$kwork/cdp/a" && pwd -P)
+expect "work dirs: a relative TMPDIR ignores an exported CDPATH" "[$kcdp/rel] [$kcdp/rel]" "$(kabs TMPDIR=rel CDPATH="$kwork/cdp/b")"
+expect "work dirs: dl_tmp_dir ignores an exported CDPATH" "[rel] [$kcdp/rel]" \
+  "$(cd "$kwork/cdp/a" && TMPDIR=rel CDPATH="$kwork/cdp/b" bash -c '. "$1" && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
+    "$plugin/scripts/lib/workdirs.sh")"
+expect "work dirs: a TMPDIR like -x is a dir, not an option" "[$kcdp/-x] [$kcdp/-x]" "$(kabs TMPDIR=-x)"
+kout=$(cd "$kwork/cdp/a" && env TMPDIR=rel CDPATH="$kwork/cdp/b" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= \
+  "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
+expect "work dirs: a suite with CDPATH exported is green and removes its dir" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
+expect "work dirs: the CDPATH suite leaves nothing in either rel" "" "$(cd "$kwork/cdp" && for d in a/rel/* b/rel/*; do [ -e "$d" ] && echo "$d"; done)"
+# A work dir that cannot be made: both suites stop at once, before any setup.
+mkdir -p "$kwork/nowrite/run"
+for ksuite_name in smoke identity; do
+  kout=$(cd "$kwork/nowrite/run" && env TMPDIR="$kwork/nowrite/missing" "$plugin/tests/$ksuite_name.sh" --section 'Forced failure' 2>&1)
+  krc=$?
+  expect "work dirs: $ksuite_name.sh with a missing TMPDIR fails" 1 "$krc"
+  expect "work dirs: $ksuite_name.sh with a missing TMPDIR says so and runs nothing" "cannot make a work dir" \
+    "$(printf '%s\n' "$kout" | grep -v '^mktemp: ')"
+done
+mkdir "$kwork/nowrite/ro" && chmod 555 "$kwork/nowrite/ro"
+if [ -w "$kwork/nowrite/ro" ]; then
+  pass "work dirs: a read-only TMPDIR is writable here (root), not tested"
+else
+  kout=$(cd "$kwork/nowrite/run" && env TMPDIR="$kwork/nowrite/ro" "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1)
+  expect "work dirs: smoke.sh with a read-only TMPDIR fails at once" "1 cannot make a work dir" \
+    "$? $(printf '%s\n' "$kout" | grep -v '^mktemp: ')"
+fi
+chmod 755 "$kwork/nowrite/ro"
+expect "work dirs: nothing is written next to a failed suite" "" "$(cd "$kwork/nowrite" && for d in run/* ro/*; do [ -e "$d" ] && echo "$d"; done)"
 awk '/dl_tmpdir_absolute/ { a = NR } /mktemp -d/ { if (a && a < NR) ok = 1 } END { exit !ok }' "$plugin/tests/identity.sh" &&
   pass "work dirs: identity.sh makes TMPDIR absolute before mktemp" || fail "work dirs: identity.sh does not make TMPDIR absolute before mktemp"
 grep -q 'dl_suite_end identity "\$work" "\$passed" "\$failed"' "$plugin/tests/identity.sh" &&
