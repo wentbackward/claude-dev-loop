@@ -490,15 +490,16 @@ doctor_marketplace_older() {
 # covers release tags (v*); else a note per gap with the owner step. What cannot be checked (no gh, not
 # logged in, not GitHub, the API refusing) is a note too, never MISSING.
 doctor_protection() {
-  local repo tmp base tags step
+  local repo tmp base tags url api
   git -C "$DL_ROOT" remote get-url "$DL_REMOTE" >/dev/null 2>&1 || return 0
   if ! repo=$(doctor_github_repo); then
     optional "remote protection: $DL_REMOTE is not a GitHub remote, so its branch and tag protection is not checked"
     return 0
   fi
-  step="the owner adds it at https://github.com/$repo/settings/rules, or with gh api -X POST repos/$repo/rulesets --input <ruleset.json>"
+  url="https://github.com/$repo/settings/rules"
+  api="gh api -X POST repos/$repo/rulesets --input <ruleset.json>"
   if [ "$gh_login" != yes ]; then
-    optional "remote protection: could not be checked ($([ "$gh_login" = none ] && echo "gh is not installed" || echo "gh is not logged in")); the remote's branch and tag protection is the boundary the git guard and permission rules cannot be: https://github.com/$repo/settings/rules"
+    optional "remote protection: could not be checked ($([ "$gh_login" = none ] && echo "gh is not installed" || echo "gh is not logged in")); the remote's branch and tag protection is the boundary the git guard and permission rules cannot be: check it at $url"
     return 0
   fi
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-doctor.XXXXXX") || return 0
@@ -511,13 +512,13 @@ doctor_protection() {
   fi
   case $base in
     ok) ;;
-    unknown:*) optional "remote protection: $DL_BASE on $repo could not be checked (${base#unknown: }): $step" ;;
-    *) optional "remote protection: $DL_BASE on $repo does not ${base#gaps: } ($step)" ;;
+    unknown:*) optional "remote protection: $DL_BASE on $repo could not be checked (${base#unknown: }): check it at $url" ;;
+    *) optional "remote protection: $DL_BASE on $repo does not ${base#gaps: } (the owner adds a branch ruleset or branch protection at $url, or with $api)" ;;
   esac
   case $tags in
     ok) ;;
-    unknown:*) optional "remote protection: the tag rulesets of $repo could not be checked (${tags#unknown: }): $step" ;;
-    *) optional "remote protection: no active tag ruleset on $repo covers release tags (v*) ($step, for refs/tags/v*)" ;;
+    unknown:*) optional "remote protection: the tag rulesets of $repo could not be checked (${tags#unknown: }): check them at $url" ;;
+    *) optional "remote protection: no active tag ruleset on $repo covers release tags (v*) (the owner adds a tag ruleset for refs/tags/v* at $url, or with $api)" ;;
   esac
 }
 
