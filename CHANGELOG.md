@@ -114,7 +114,7 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `--git-dir`/`--work-tree`, or whose source or destination is the base branch
   (`git push -u <remote> HEAD` from a checkout of the base included), with the reason and "ask the
   owner". Text checks run before any git process, and git is asked once per directory. A crash of the
-  guard on a command naming git refuses it, and so does a hook event it cannot read (truncated, not
+  guard on a command naming git refuses it, and so does a Bash hook event it cannot read (truncated, not
   UTF-8) whose text names git. A differential test (`tests/guard-diff.py`, in `make check`)
   holds the guard to bash's reading of a fixed corpus and seeded random shell texts. The identity and
   scenario checks split commands on newlines too, and refuse a command naming git that they cannot parse.
