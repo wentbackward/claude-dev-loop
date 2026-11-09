@@ -11,13 +11,16 @@
 #                     of the section's comment lines (the first match wins). Repeatable.
 #   --list            print each section's id, the sections it needs, and its title
 #
-# A section starts at a line "# <n>. " or "# <n><letter>. " whose number is not below the previous
-# section's (so a numbered list inside a section is not one) and ends where the next starts; the summary
-# from the line 'dl_suite_end smoke' on is shared. A section that uses the state or helpers of earlier ones
-# names them in smoke_needs.
+# A section starts at a line "# <n>. " or "# <n><letter>. " at column 0 (smoke_header) and ends where the
+# next starts; the summary from the line 'dl_suite_end smoke' (smoke_foot) on is shared. A header whose
+# number is below the previous one's is an error: every mode prints it and exits 2 before running anything
+# (a numbered list inside a section is indented, "#   1. ", so it is not a header). A section that uses the
+# state or helpers of earlier ones names them in smoke_needs.
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 smoke_file="$plugin/tests/${BASH_SOURCE[0]##*/}"
+smoke_header='^# [0-9]+[a-z]?[.] ' # a section header (ERE); its id is the text between "# " and ". "
+smoke_foot='^dl_suite_end smoke ' # the line where the shared summary starts (ERE and BRE)
 
 # smoke_usage: the Usage block of this header.
 smoke_usage() {
@@ -44,16 +47,25 @@ smoke_needs() {
 
 # smoke_sections: one line per section, "<id> TAB <first line> TAB <last line> TAB <title>", in file order.
 smoke_sections() {
-  awk 'BEGIN { OFS = "\t"; last = -1 }
-    /^dl_suite_end smoke / { foot = NR; exit }
-    match($0, /^# [0-9]+[a-z]?\. /) {
-      id = substr($0, 3, RLENGTH - 4)
-      if (id + 0 >= last) {
-        if (cur != "") print cur, start, NR - 1, title
-        last = id + 0; cur = id; start = NR; title = substr($0, RLENGTH + 1)
-      }
+  awk -v hdr="$smoke_header" -v foot_re="$smoke_foot" 'BEGIN { OFS = "\t" }
+    $0 ~ foot_re { foot = NR; exit }
+    match($0, hdr) {
+      if (cur != "") print cur, start, NR - 1, title
+      cur = substr($0, 3, RLENGTH - 4); start = NR; title = substr($0, RLENGTH + 1)
     }
     END { if (cur != "") print cur, start, foot - 1, title }' "$smoke_file"
+}
+
+# smoke_order_error: the first section header numbered below the previous one, with its line; empty when
+# the sections are in order.
+smoke_order_error() {
+  awk -v hdr="$smoke_header" -v foot_re="$smoke_foot" 'BEGIN { last = -1 }
+    $0 ~ foot_re { exit }
+    match($0, hdr) {
+      n = substr($0, 3, RLENGTH - 4) + 0
+      if (n < last) { print "line " NR ": " $0; exit }
+      last = n
+    }' "$smoke_file"
 }
 
 # smoke_find ID_OR_NAME: the id of the section with that id, else of the one holding the first comment line
@@ -62,8 +74,8 @@ smoke_find() {
   local lineno
   smoke_sections | awk -F'\t' -v id="$1" '$1 == id { print id; found = 1; exit } END { exit !found }' && return 0
   [ -n "$1" ] || return 1
-  lineno=$(awk -v name="$1" -v from="$(smoke_sections | head -n 1 | cut -f2)" \
-    'NR >= from && /^dl_suite_end smoke / { exit } NR >= from && index($0, "# ") == 1 && index($0, name) { print NR; exit }' \
+  lineno=$(awk -v name="$1" -v from="$(smoke_sections | head -n 1 | cut -f2)" -v foot_re="$smoke_foot" \
+    'NR >= from && $0 ~ foot_re { exit } NR >= from && index($0, "# ") == 1 && index($0, name) { print NR; exit }' \
     "$smoke_file")
   [ -n "$lineno" ] || return 1
   smoke_sections | awk -F'\t' -v n="$lineno" '$2 <= n && n <= $3 { print $1; exit }'
@@ -98,7 +110,16 @@ smoke_code() {
       *) ran=no ;;
     esac
   done < <(smoke_sections)
-  sed -n '/^dl_suite_end smoke /,$p' "$smoke_file"
+  sed -n "/$smoke_foot/,\$p" "$smoke_file"
+}
+
+# smoke_check_order: exit 2 naming the first section header numbered below the previous one.
+smoke_check_order() {
+  local disorder
+  disorder=$(smoke_order_error)
+  [ -z "$disorder" ] && return 0
+  echo "smoke: a section header is numbered below the previous section's (renumber it): $disorder" >&2
+  exit 2
 }
 
 smoke_select=""
@@ -116,6 +137,7 @@ while [ $# -gt 0 ]; do
         smoke_usage >&2
         exit 2
       fi
+      smoke_check_order
       smoke_id=$(smoke_find "$2") || {
         echo "smoke: no section matches '$2' (tests/smoke.sh --list)" >&2
         exit 2
@@ -131,6 +153,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+smoke_check_order
 if [ -n "$smoke_list" ]; then
   while IFS="$(printf '\t')" read -r smoke_id _ _ smoke_title; do
     printf '%s\tneeds: %s\t%s\n' "$smoke_id" "$(smoke_needs "$smoke_id")" "$smoke_title"
@@ -4234,7 +4257,7 @@ vlog() {
 # vreset: an empty event log, ledger and gate file.
 vreset() { rm -f "$vstate/events.jsonl" "$vstate/merged.jsonl" "$vstate/train-running.txt"; }
 
-# 1. A stale gate wait: the gate ran green and merge-train.sh merged that branch after the wait.
+#   1. A stale gate wait: the gate ran green and merge-train.sh merged that branch after the wait.
 vreset
 vlog orchestrator waiting 960 detail "gate chore/release-0.8.1"
 vlog gate train-started 950 pid 999999 branches chore/release-0.8.1
@@ -4302,7 +4325,7 @@ vverdict | grep -qE '^verdict: waiting on gate \(feat/31-x\), see' &&
 printf '{"branch":"feat/31-x","merged_at":"%s"}\n' "$(ago 200)" >>"$vstate/merged.jsonl"
 expect "status: a branch in parentheses in a wait's detail is matched" "verdict: idle" "$(vverdict)"
 
-# 2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
+#   2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
 vreset
 vevent merged detail="chore/release-0.8.1, nothing in flight"
 out=$(vstat)
@@ -4336,7 +4359,7 @@ vlog orchestrator agent-started 7200 ticket 53
 vverdict | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: an agent that never reports is possibly stalled" || fail "status: a silent agent is not stalled"
 
-# 3. The orchestrator's idle event is honoured: agents in flight end, an older worktree does not count.
+#   3. The orchestrator's idle event is honoured: agents in flight end, an older worktree does not count.
 vevent idle detail="nothing in flight"
 out=$(vstat)
 echo "$out"
@@ -4851,6 +4874,52 @@ expect "smoke: a section chosen by name passes" 0 $?
 printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
   ! printf '%s\n' "$hout" | grep -qF 'stop gate passes on a clean tree' &&
   pass "smoke: a name selects the section whose comments contain it" || fail "smoke: --section by name output: $hout"
+# A section numbered below the previous one is an error (#85), not part of the one before it.
+expect "smoke: --list names every section header of the file" \
+  "$(awk -v hdr="$smoke_header" -v foot_re="$smoke_foot" '$0 ~ foot_re { exit } match($0, hdr) { print substr($0, 3, RLENGTH - 4) }' "$hsmoke" | paste -sd' ' -)" \
+  "$("$hsmoke" --list | cut -f1 | paste -sd' ' -)"
+"$hsmoke" --list | cut -f1 | awk 'p == "22" { print; exit } { p = $1 }' | grep -qx 23 &&
+  pass "smoke: section 22's inner list is not taken for sections" || fail "smoke: section 22 is not followed by 23 in --list"
+horder="$work/order"
+mkdir -p "$horder/tests" "$horder/tmp"
+cp "$plugin/Makefile" "$horder/Makefile"
+{
+  sed -n '1,/^# 1\. /p' "$hsmoke" | sed '$d'
+  printf '%s\n' '# 26. Twenty-six' 'true' '# 28. Twenty-eight' 'true' '# 27. Twenty-seven' 'true'
+  sed -n "/$smoke_foot/,\$p" "$hsmoke"
+} >"$horder/tests/smoke.sh"
+chmod +x "$horder/tests/smoke.sh"
+grep -qE "$smoke_foot" "$horder/tests/smoke.sh" && pass "smoke: the out-of-order copy has the shared summary" ||
+  fail "smoke: the out-of-order copy has no summary (the summary marker moved?)"
+hout=$("$horder/tests/smoke.sh" --list 2>&1)
+expect "smoke: --list on sections 26, 28, 27 exits 2" 2 $?
+printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && ! printf '%s\n' "$hout" | grep -q '^26' &&
+  pass "smoke: --list names the out-of-order header 27 and lists nothing" || fail "smoke: out-of-order --list output: $hout"
+hout=$(TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" --section 26 2>&1)
+expect "smoke: --section on an out-of-order file exits 2" 2 $?
+printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && pass "smoke: --section names the out-of-order header" ||
+  fail "smoke: out-of-order --section output: $hout"
+hout=$(TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" --section nope 2>&1)
+expect "smoke: --section with an unknown name on an out-of-order file exits 2" 2 $?
+printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && pass "smoke: --section with an unknown name names the out-of-order header" ||
+  fail "smoke: out-of-order --section nope output: $hout"
+TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" >/dev/null 2>&1
+expect "smoke: a full run of an out-of-order file exits 2" 2 $?
+expect "smoke: an out-of-order file runs nothing (no work dir)" "" "$(ls -A "$horder/tmp")"
+hout=$(make -C "$horder" lint 2>&1) && hrc=0 || hrc=$?
+[ "$hrc" -ne 0 ] && printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' &&
+  pass "smoke: make lint fails on an out-of-order smoke.sh" || fail "smoke: make lint on an out-of-order file: $hout"
+mkdir -p "$horder/sorted/tests"
+{
+  sed -n '1,/^# 1\. /p' "$hsmoke" | sed '$d'
+  printf '%s\n' '# 26. Twenty-six' 'true' '# 27. Twenty-seven' 'true'
+  sed -n "/$smoke_foot/,\$p" "$hsmoke"
+  printf '%s\n' '# 1. After the summary'
+} >"$horder/sorted/tests/smoke.sh"
+chmod +x "$horder/sorted/tests/smoke.sh"
+expect "smoke: the order check stops at the summary (a header after it is not a section)" "26 27" \
+  "$("$horder/sorted/tests/smoke.sh" --list 2>&1 | cut -f1 | paste -sd' ' -)"
+grep -qF "#85" "$plugin/CHANGELOG.md" && pass "smoke: CHANGELOG has an entry for #85" || fail "smoke: no CHANGELOG #85 entry"
 
 # 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
 # <dir>/gate, one directory permissions.sh lists in permissions.additionalDirectories (auto mode edits
