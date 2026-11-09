@@ -48,6 +48,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the section before it: `--list`, `--section` and a full run print the header and its line and exit 2
   before running anything. `make lint` runs `tests/smoke.sh --list`, so the Stop hook and the gate catch
   it. The numbered list inside section 22 is indented (`#   1. `) so it is not a header.
+- Kept worktrees (#83): `cleanup.sh` lists the worktrees of merged branches (ledger or merged PR) that
+  `merge-train.sh` kept for their changes, with their modified and untracked files, each `remove` or
+  `keep` with the reason. `--apply --include worktrees` archives each `remove` one first
+  (`changes.patch` from `git diff --binary HEAD`, `untracked.tar` and `manifest.txt` under
+  `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/`, checked before anything goes), then removes
+  it and deletes its branch at the merged tip. The main checkout, the gate worktree, locked worktrees,
+  ones with ignored files that are not build output and ones changed in the last 10 minutes are always
+  kept. merge-train's "kept local ... has changes" line and the dev-loop and merge skills name that
+  command instead of `git worktree remove --force`.
 - Stop gate (#74): an untracked file blocks the stop only when its mtime is not older than the session's start (the
   first timestamp in the session's transcript, else the hook's first run in the session, kept as a marker
   in the git directory's `dev-loop-sessions/`); older untracked files (an owner's notes, another session's

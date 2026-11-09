@@ -35,7 +35,10 @@ absolute paths into their prompts.
 6. `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run): when it reports merged or helper branches, run
    it with `--apply`. Show the user the "closed" and "stale" lists and delete those (`--apply --include
    closed`, `--include stale`) only on their OK, unless `factory` is `dark`. It never touches kept
-   branches.
+   branches. It also lists the worktrees of merged branches that merge-train kept for their changes,
+   each marked `remove` or `keep` with the reason: run `--apply --include worktrees` to archive the
+   `remove` ones (patch and untracked files, to `~/.dev-loop/<repo>/archive/`) and remove them. Never
+   type `git worktree remove --force` for them; resolve a `keep` one by hand (finish or save the work).
 
 ## 1. Tickets
 
@@ -299,7 +302,9 @@ code-reviewer confirm it brings in only the base (`git diff <base> <head>` is th
 approve again, then re-run merge-train with the remaining branches (it merges the pushed head, no second push).
 
 After merging: merge-train removed the merged branches and their clean worktrees; resolve any "kept local"
-line it printed, comment on the issues, start the next tickets. With `docs`, run `doctor.sh`: when it
+line it printed (a worktree kept for its changes: `cleanup.sh`, then `cleanup.sh --apply --include
+worktrees`, as the line says, never `git worktree remove --force`), comment on the issues, start the
+next tickets. With `docs`, run `doctor.sh`: when it
 notes `doc audit due`, run the doc audit and then the docs maintenance (section 7a); when the planned
 list runs low, slice (section 1a).
 With `architecture`, when `doctor.sh` notes `architect due` (every `architecture.cadence` merges, or a

@@ -19,7 +19,9 @@ confirms the PR is MERGED and deletes the branch. Then it records the merge in t
 local branch (removing its worktree first when that is clean), moves the notes file to `notes/merged/`, and
 once the whole train merged it deletes the train's `train-<branch>` refs. A "kept local ..." line names a
 branch it left, and why: a worktree with changes, a locked worktree, or local commits that were not
-merged. Deal with those (finish or save the work), then let `cleanup.sh` remove them. The notes files live
+merged. Deal with those (finish or save the work), then let `cleanup.sh` remove them. A worktree kept
+for its changes goes with `cleanup.sh --apply --include worktrees` (after a dry run), which archives its
+patch and untracked files first; never `git worktree remove --force`. The notes files live
 in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 
 ## Exit codes

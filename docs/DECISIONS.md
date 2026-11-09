@@ -878,3 +878,21 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   of awk, and a byte-compare test then states exactly what changes.
 - **Alternatives:** normalising the notes to LF (rewrites every line of a CRLF file); adding a final
   newline (changes a byte the author wrote, harmless but not "unchanged").
+
+## 2026-11-09 — Removing merged worktrees kept for their changes (#83)
+
+- **Decision:** `cleanup.sh --apply --include worktrees` removes a worktree only when its branch is
+  "merged" by the merge ledger or a merged PR at its tip; a loop branch merely contained in the base (a
+  fresh branch with no commits yet, where an agent may be starting) is not listed. The issue's "unless
+  named explicitly" is not built: there is no option that removes a locked worktree, the main checkout,
+  the gate worktree, one with unrebuildable ignored files or one changed in the last 10 minutes (any file
+  with `find -mmin -10`, `.git` pruned); those stay for a person, listed with the reason. `--include
+  worktrees` is never implied by `"factory": "dark"`. The archive goes to
+  `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/` next to the branch bundles (the setup skill's
+  archive dir); ignored build output is not archived (it is rebuildable by definition). The branch is then
+  reclassified as merged and goes through the existing bundle and conditional `update-ref` deletion.
+- **Reason:** the deleting direction must be conditional on a classification that cannot match new work;
+  the explicit override would reintroduce the forced removal the ask rules guard against.
+- **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after 10
+  idle minutes); a `--worktree <path>` override (a forced removal by another name); archiving the ignored
+  files too (large, and the rule already keeps worktrees whose ignored files are not build output).

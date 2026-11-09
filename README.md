@@ -317,6 +317,20 @@ restores one (a remote-only branch: `refs/remotes/<remote>/<branch>`). Old gate 
 go after `cleanup.keep_days`; other files in the logs directory are never touched. `doctor.sh` notes
 leftovers it can count without GitHub.
 
+**Worktrees kept for changes.** `merge-train.sh` removes only a clean worktree; one with modified or
+untracked files keeps its branch, and the "kept local ... has changes" line names `cleanup.sh --apply
+--include worktrees`. `cleanup.sh` lists the worktrees of merged branches (the ledger or a merged PR at
+the tip; a branch the base merely contains is new work and is not listed) with their modified and
+untracked file counts, each `remove` or `keep` with the reason. With `--apply --include worktrees` it
+writes each `remove` one to `~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/` (`changes.patch`
+from `git diff --binary HEAD`, `untracked.tar`, `manifest.txt` with the branch, tip and file lists),
+checks the patch reverse-applies and the tar lists every untracked file, then removes the worktree with
+`git worktree remove --force` and deletes the branch at the merged tip (saved to the bundle like any
+other). Always kept: the main checkout, the gate worktree, a locked worktree, one holding ignored files
+that are not build output (`merge.rebuildable`), and one with any file changed in the last 10 minutes
+(an agent may still work there). Restore one with `git worktree add <path> <branch>` (from the bundle),
+then `git apply --binary changes.patch` and `tar -xf untracked.tar` in it.
+
 ## Current-state docs (optional)
 
 The spec is written once and every ticket after it is a change to it, so nothing says what the system does
