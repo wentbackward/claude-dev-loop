@@ -5347,54 +5347,6 @@ expect "work dirs: everything else in TMPDIR stays" \
 [ -f "$ktmp/other-dir/file" ] && [ -d "$ktmp/sub/dev-loop-smoke.abc123" ] && pass "work dirs: other files keep their content" ||
   fail "work dirs: other files lost content"
 
-# A whole suite run (section 27, by name) in its own TMPDIR: green removes its dir, red and DEV_LOOP_KEEP_WORK=1 keep it.
-# ksuite NAME [VAR=VALUE...]: run tests/smoke.sh --section 'Forced failure' with TMPDIR=$kwork/NAME; sets kout and
-# kleft (the dev-loop-smoke.* dirs left in it).
-ksuite() {
-  local dir="$kwork/$1"
-  shift
-  mkdir -p "$dir"
-  kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
-  kleft=$(cd "$dir" && for d in dev-loop-smoke.*; do [ -d "$d" ] && echo "$d"; done)
-}
-# kexisting FILE: the dirs listed in FILE (one per line) that still exist.
-kexisting() { while IFS= read -r d; do [ -d "$d" ] && echo "$d"; done <"$1"; }
-ksuite green
-expect "work dirs: a green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
-expect "work dirs: a green suite leaves no dev-loop-smoke.* dir" "" "$kleft"
-ksuite red DEV_LOOP_SMOKE_FORCE_FAIL=1
-[ -n "$kleft" ] && [ -d "$kwork/red/$kleft" ] && pass "work dirs: a red suite keeps its work dir" || fail "work dirs: a red suite removed its dir"
-expect "work dirs: a red suite names its work dir" "smoke: 0 passed, 1 failed (work dir $kwork/red/$kleft)" "$kout"
-ksuite keep DEV_LOOP_KEEP_WORK=1
-[ -n "$kleft" ] && pass "work dirs: DEV_LOOP_KEEP_WORK=1 keeps a green suite's dir" || fail "work dirs: DEV_LOOP_KEEP_WORK=1 did not keep it"
-expect "work dirs: DEV_LOOP_KEEP_WORK=1 names the dir" "smoke: 1 passed, 0 failed (work dir $kwork/keep/$kleft)" "$kout"
-# A relative TMPDIR (#86): the suite makes it absolute before mktemp, so a green run still removes its dir.
-mkdir -p "$kwork/relrun/rel"
-kout=$(cd "$kwork/relrun" && env TMPDIR=rel DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$plugin/tests/smoke.sh" \
-  --section 'Forced failure' 2>&1)
-expect "work dirs: a relative TMPDIR names an absolute work dir" "started smoke (work dir $(cd -P "$kwork/relrun/rel" && pwd -P)/dev-loop-smoke." \
-  "$(printf '%s\n' "$kout" | head -n 1 | sed 's/dev-loop-smoke\.[A-Za-z0-9]*)$/dev-loop-smoke./')"
-expect "work dirs: a relative TMPDIR's green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" \
-  "$(printf '%s\n' "$kout" | tail -n 1)"
-expect "work dirs: a relative TMPDIR's green suite leaves no dir" "" "$(cd "$kwork/relrun/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
-# CDPATH exported, with a dir of the same name in it, and a TMPDIR that looks like an option (#86).
-mkdir -p "$kwork/cdp/a/rel" "$kwork/cdp/b/rel" "$kwork/cdp/a/-x"
-# kabs VAR=VALUE...: from $kwork/cdp/a with these variables exported, print [TMPDIR] after dl_tmpdir_absolute
-# and [dl_tmp_dir].
-kabs() {
-  (cd "$kwork/cdp/a" && env "$@" bash -c '. "$1" && dl_tmpdir_absolute && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
-    "$plugin/scripts/lib/workdirs.sh")
-}
-kcdp=$(cd -P "$kwork/cdp/a" && pwd -P)
-expect "work dirs: a relative TMPDIR ignores an exported CDPATH" "[$kcdp/rel] [$kcdp/rel]" "$(kabs TMPDIR=rel CDPATH="$kwork/cdp/b")"
-expect "work dirs: dl_tmp_dir ignores an exported CDPATH" "[rel] [$kcdp/rel]" \
-  "$(cd "$kwork/cdp/a" && TMPDIR=rel CDPATH="$kwork/cdp/b" bash -c '. "$1" && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
-    "$plugin/scripts/lib/workdirs.sh")"
-expect "work dirs: a TMPDIR like -x is a dir, not an option" "[$kcdp/-x] [$kcdp/-x]" "$(kabs TMPDIR=-x)"
-kout=$(cd "$kwork/cdp/a" && env TMPDIR=rel CDPATH="$kwork/cdp/b" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= \
-  "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
-expect "work dirs: a suite with CDPATH exported is green and removes its dir" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
-expect "work dirs: the CDPATH suite leaves nothing in either rel" "" "$(cd "$kwork/cdp" && for d in a/rel/* b/rel/*; do [ -e "$d" ] && echo "$d"; done)"
 # dl_make_work_dir, called directly: no suite ever runs past its work dir guard here.
 mkdir -p "$kwork/mk/run" "$kwork/mk/a/rel" "$kwork/mk/b/rel"
 # kmake VAR=VALUE... -- PREFIX [SHELL CODE]: from $kwork/mk/a, with these variables, run SHELL CODE (e.g. a
@@ -5427,15 +5379,75 @@ case $kdir in "$kmk/rel/dev-loop-identity."??????) [ -d "$kdir" ] && [ "${kmade#
   pass "work dirs: a relative TMPDIR with CDPATH exported gets an absolute work dir in the local dir" ||
   fail "work dirs: dl_make_work_dir with a relative TMPDIR and CDPATH: $kmade"
 expect "work dirs: nothing is made in the CDPATH dir" "" "$(cd "$kwork/mk/b/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
+# kguard: 1 while both suites keep their work dir guard; the nested suite runs below need it.
+kguard=1
 for ksuite_name in smoke identity; do
-  awk -v p="dev-loop-$ksuite_name" '/^dl_tmpdir_absolute$/ { a = NR }
+  if awk -v p="dev-loop-$ksuite_name" '/^dl_tmpdir_absolute$/ { a = NR }
     index($0, "work=$(dl_make_work_dir " p ") || { echo \"cannot make a work dir\" >&2; exit 1; }") == 1 { if (a) ok = 1 }
-    /^work=[$][(]mktemp/ { bad = 1 } END { exit !(ok && !bad) }' "$plugin/tests/$ksuite_name.sh" &&
-    pass "work dirs: $ksuite_name.sh makes TMPDIR absolute, then its work dir through dl_make_work_dir, or stops" ||
+    /^work=[$][(]mktemp/ { bad = 1 } END { exit !(ok && !bad) }' "$plugin/tests/$ksuite_name.sh"; then
+    pass "work dirs: $ksuite_name.sh makes TMPDIR absolute, then its work dir through dl_make_work_dir, or stops"
+  else
     fail "work dirs: $ksuite_name.sh does not make its work dir through dl_make_work_dir with the guard"
+    kguard=0
+  fi
 done
 grep -q 'dl_suite_end identity "\$work" "\$passed" "\$failed"' "$plugin/tests/identity.sh" &&
   pass "work dirs: identity.sh ends through dl_suite_end" || fail "work dirs: identity.sh does not end through dl_suite_end"
+
+# kexisting FILE: the dirs listed in FILE (one per line) that still exist.
+kexisting() { while IFS= read -r d; do [ -d "$d" ] && echo "$d"; done <"$1"; }
+
+# The nested suite runs only run when the guard checks above are green: a suite without its guard is never run.
+if [ "$kguard" = 1 ]; then
+  # A whole suite run (section 27, by name) in its own TMPDIR: green removes its dir, red and DEV_LOOP_KEEP_WORK=1 keep it.
+  # ksuite NAME [VAR=VALUE...]: run tests/smoke.sh --section 'Forced failure' with TMPDIR=$kwork/NAME; sets kout and
+  # kleft (the dev-loop-smoke.* dirs left in it).
+  ksuite() {
+    local dir="$kwork/$1"
+    shift
+    mkdir -p "$dir"
+    kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
+    kleft=$(cd "$dir" && for d in dev-loop-smoke.*; do [ -d "$d" ] && echo "$d"; done)
+  }
+  ksuite green
+  expect "work dirs: a green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
+  expect "work dirs: a green suite leaves no dev-loop-smoke.* dir" "" "$kleft"
+  ksuite red DEV_LOOP_SMOKE_FORCE_FAIL=1
+  [ -n "$kleft" ] && [ -d "$kwork/red/$kleft" ] && pass "work dirs: a red suite keeps its work dir" || fail "work dirs: a red suite removed its dir"
+  expect "work dirs: a red suite names its work dir" "smoke: 0 passed, 1 failed (work dir $kwork/red/$kleft)" "$kout"
+  ksuite keep DEV_LOOP_KEEP_WORK=1
+  [ -n "$kleft" ] && pass "work dirs: DEV_LOOP_KEEP_WORK=1 keeps a green suite's dir" || fail "work dirs: DEV_LOOP_KEEP_WORK=1 did not keep it"
+  expect "work dirs: DEV_LOOP_KEEP_WORK=1 names the dir" "smoke: 1 passed, 0 failed (work dir $kwork/keep/$kleft)" "$kout"
+  # A relative TMPDIR (#86): the suite makes it absolute before mktemp, so a green run still removes its dir.
+  mkdir -p "$kwork/relrun/rel"
+  kout=$(cd "$kwork/relrun" && env TMPDIR=rel DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$plugin/tests/smoke.sh" \
+    --section 'Forced failure' 2>&1)
+  expect "work dirs: a relative TMPDIR names an absolute work dir" "started smoke (work dir $(cd -P "$kwork/relrun/rel" && pwd -P)/dev-loop-smoke." \
+    "$(printf '%s\n' "$kout" | head -n 1 | sed 's/dev-loop-smoke\.[A-Za-z0-9]*)$/dev-loop-smoke./')"
+  expect "work dirs: a relative TMPDIR's green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" \
+    "$(printf '%s\n' "$kout" | tail -n 1)"
+  expect "work dirs: a relative TMPDIR's green suite leaves no dir" "" "$(cd "$kwork/relrun/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
+  # CDPATH exported, with a dir of the same name in it, and a TMPDIR that looks like an option (#86).
+  mkdir -p "$kwork/cdp/a/rel" "$kwork/cdp/b/rel" "$kwork/cdp/a/-x"
+  # kabs VAR=VALUE...: from $kwork/cdp/a with these variables exported, print [TMPDIR] after dl_tmpdir_absolute
+  # and [dl_tmp_dir].
+  kabs() {
+    (cd "$kwork/cdp/a" && env "$@" bash -c '. "$1" && dl_tmpdir_absolute && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
+      "$plugin/scripts/lib/workdirs.sh")
+  }
+  kcdp=$(cd -P "$kwork/cdp/a" && pwd -P)
+  expect "work dirs: a relative TMPDIR ignores an exported CDPATH" "[$kcdp/rel] [$kcdp/rel]" "$(kabs TMPDIR=rel CDPATH="$kwork/cdp/b")"
+  expect "work dirs: dl_tmp_dir ignores an exported CDPATH" "[rel] [$kcdp/rel]" \
+    "$(cd "$kwork/cdp/a" && TMPDIR=rel CDPATH="$kwork/cdp/b" bash -c '. "$1" && printf "[%s] [%s]\n" "$TMPDIR" "$(dl_tmp_dir)"' _ \
+      "$plugin/scripts/lib/workdirs.sh")"
+  expect "work dirs: a TMPDIR like -x is a dir, not an option" "[$kcdp/-x] [$kcdp/-x]" "$(kabs TMPDIR=-x)"
+  kout=$(cd "$kwork/cdp/a" && env TMPDIR=rel CDPATH="$kwork/cdp/b" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= \
+    "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
+  expect "work dirs: a suite with CDPATH exported is green and removes its dir" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
+  expect "work dirs: the CDPATH suite leaves nothing in either rel" "" "$(cd "$kwork/cdp" && for d in a/rel/* b/rel/*; do [ -e "$d" ] && echo "$d"; done)"
+else
+  fail "work dirs: SKIP the nested suite runs: a suite does not make its work dir through dl_make_work_dir with the guard"
+fi
 
 # The gate: a red check that names its work dir, three times; then a green one.
 gtmp="$kwork/gtmp"
