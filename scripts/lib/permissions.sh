@@ -122,6 +122,25 @@ dl_perm_project_commands() {
   } | awk '!seen[$0]++'
 }
 
+# dl_perm_configured_commands: the simple commands of every command the project configures in .dev-loop.json
+# (fast_check, checks, affected, gate_setup, and format with {file} as src/example), one per line, once each.
+dl_perm_configured_commands() {
+  local command
+  {
+    dl_perm_project_commands
+    case $(cfg affected "") in
+      "{"*) command=$(cfg affected.command "") ;;
+      *) command=$(cfg affected "") ;;
+    esac
+    [ -n "$command" ] && dl_perm_split "$command"
+    command=$(cfg gate_setup "")
+    [ -n "$command" ] && dl_perm_split "$command"
+    command=$(cfg format "")
+    case $command in *"{file}"*) command=${command//\{file\}/src/example} ;; ?*) command="$command src/example" ;; esac
+    [ -n "$command" ] && dl_perm_split "$command"
+  } | awk '!seen[$0]++'
+}
+
 # dl_perm_feature_patterns: the loop's branch patterns (github.feature_patterns, default feat/* fix/* chore/*
 # docs/*), one per line.
 dl_perm_feature_patterns() {
