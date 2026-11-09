@@ -5818,7 +5818,7 @@ knl="$kwork/wt60$(printf '\nx')"
 kbranch feat/60-newline merged && kwt feat/60-newline "$knl"
 kbranch feat/61-cut merged && kwt feat/61-cut "$kwork/wt60"
 out=$(kenv "$plugin/scripts/cleanup.sh")
-[ -z "$(printf '%s\n' "$out" | grep -F "feat/60-newline")" ] && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
+! printf '%s\n' "$out" | grep -qF "feat/60-newline" && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
   pass "kwt: a worktree path with a newline is not listed under another worktree's path" || fail "kwt: wt60: $out"
 git -C "$kwork/project" worktree remove --force "$knl"
 
