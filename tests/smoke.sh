@@ -11,9 +11,10 @@
 #                     of the section's comment lines (the first match wins). Repeatable.
 #   --list            print each section's id, the sections it needs, and its title
 #
-# A section starts at a line "# <n>. " or "# <n><letter>. " whose number is not below the previous
-# section's (so a numbered list inside a section is not one) and ends where the next starts; the summary
-# from the line 'dl_suite_end smoke' on is shared. A section that uses the state or helpers of earlier ones
+# A section starts at a line "# <n>. " or "# <n><letter>. " at column 0 and ends where the next starts; the
+# summary from the line 'dl_suite_end smoke' on is shared. A header whose number is below the previous one's is
+# an error: every mode prints it and exits 2 before running anything (a numbered list inside a section is
+# indented, "#   1. ", so it is not a header). A section that uses the state or helpers of earlier ones
 # names them in smoke_needs.
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -44,16 +45,25 @@ smoke_needs() {
 
 # smoke_sections: one line per section, "<id> TAB <first line> TAB <last line> TAB <title>", in file order.
 smoke_sections() {
-  awk 'BEGIN { OFS = "\t"; last = -1 }
+  awk 'BEGIN { OFS = "	" }
     /^dl_suite_end smoke / { foot = NR; exit }
     match($0, /^# [0-9]+[a-z]?\. /) {
-      id = substr($0, 3, RLENGTH - 4)
-      if (id + 0 >= last) {
-        if (cur != "") print cur, start, NR - 1, title
-        last = id + 0; cur = id; start = NR; title = substr($0, RLENGTH + 1)
-      }
+      if (cur != "") print cur, start, NR - 1, title
+      cur = substr($0, 3, RLENGTH - 4); start = NR; title = substr($0, RLENGTH + 1)
     }
     END { if (cur != "") print cur, start, foot - 1, title }' "$smoke_file"
+}
+
+# smoke_order_error: the first section header numbered below the previous one, with its line; empty when
+# the sections are in order.
+smoke_order_error() {
+  awk 'BEGIN { last = -1 }
+    /^dl_suite_end smoke / { exit }
+    match($0, /^# [0-9]+[a-z]?\. /) {
+      n = substr($0, 3, RLENGTH - 4) + 0
+      if (n < last) { print "line " NR ": " $0; exit }
+      last = n
+    }' "$smoke_file"
 }
 
 # smoke_find ID_OR_NAME: the id of the section with that id, else of the one holding the first comment line
@@ -131,6 +141,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+smoke_disorder=$(smoke_order_error)
+if [ -n "$smoke_disorder" ]; then
+  echo "smoke: a section header is numbered below the previous section's (renumber it): $smoke_disorder" >&2
+  exit 2
+fi
 if [ -n "$smoke_list" ]; then
   while IFS="$(printf '\t')" read -r smoke_id _ _ smoke_title; do
     printf '%s\tneeds: %s\t%s\n' "$smoke_id" "$(smoke_needs "$smoke_id")" "$smoke_title"
@@ -4234,7 +4249,7 @@ vlog() {
 # vreset: an empty event log, ledger and gate file.
 vreset() { rm -f "$vstate/events.jsonl" "$vstate/merged.jsonl" "$vstate/train-running.txt"; }
 
-# 1. A stale gate wait: the gate ran green and merge-train.sh merged that branch after the wait.
+#   1. A stale gate wait: the gate ran green and merge-train.sh merged that branch after the wait.
 vreset
 vlog orchestrator waiting 960 detail "gate chore/release-0.8.1"
 vlog gate train-started 950 pid 999999 branches chore/release-0.8.1
@@ -4302,7 +4317,7 @@ vverdict | grep -qE '^verdict: waiting on gate \(feat/31-x\), see' &&
 printf '{"branch":"feat/31-x","merged_at":"%s"}\n' "$(ago 200)" >>"$vstate/merged.jsonl"
 expect "status: a branch in parentheses in a wait's detail is matched" "verdict: idle" "$(vverdict)"
 
-# 2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
+#   2. A fresh orchestrator event with nothing running and nothing in flight is idle, not working.
 vreset
 vevent merged detail="chore/release-0.8.1, nothing in flight"
 out=$(vstat)
@@ -4336,7 +4351,7 @@ vlog orchestrator agent-started 7200 ticket 53
 vverdict | grep -qE '^verdict: possibly stalled: no event or output for [0-9]+ min$' &&
   pass "status: an agent that never reports is possibly stalled" || fail "status: a silent agent is not stalled"
 
-# 3. The orchestrator's idle event is honoured: agents in flight end, an older worktree does not count.
+#   3. The orchestrator's idle event is honoured: agents in flight end, an older worktree does not count.
 vevent idle detail="nothing in flight"
 out=$(vstat)
 echo "$out"
@@ -4877,8 +4892,8 @@ printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && pass "smoke: --section 
 TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" >/dev/null 2>&1
 expect "smoke: a full run of an out-of-order file exits 2" 2 $?
 expect "smoke: an out-of-order file runs nothing (no work dir)" "" "$(ls -A "$horder/tmp")"
-hout=$(make -C "$horder" lint 2>&1)
-[ $? -ne 0 ] && printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' &&
+hout=$(make -C "$horder" lint 2>&1) && hrc=0 || hrc=$?
+[ "$hrc" -ne 0 ] && printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' &&
   pass "smoke: make lint fails on an out-of-order smoke.sh" || fail "smoke: make lint on an out-of-order file: $hout"
 grep -qF "#85" "$plugin/CHANGELOG.md" && pass "smoke: CHANGELOG has an entry for #85" || fail "smoke: no CHANGELOG #85 entry"
 
