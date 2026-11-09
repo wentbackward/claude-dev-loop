@@ -830,8 +830,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `MISSING` in `doctor.sh`, not a note. It is found by matching each project deny rule (`dl_perm_match`)
   against sample commands: `git tag` (plain, `-a`, `-s`, `-m`), `gh release create v1.2.3`, and the tag
   pushes `git push <remote> v1.2.3|refs/tags/v1.2.3|tag v1.2.3|--tags|--follow-tags`, `git push --tags
-  [<remote>]` and `git push --follow-tags` (the README lists them). A rule that also matches a loop command
-  is left to the loop-command check, so a broad deny such as `Bash(git push:*)` is reported once. `permissions.sh`'s dry run puts the owner's
+  [<remote>]` and `git push --follow-tags` (the README lists them), with `<remote>` the configured remote
+  and also `origin` when that differs. A rule that also matches a loop command
+  is left to the loop-command check, which reads both files even without `.claude/settings.json`, so a
+  broad deny such as `Bash(git push:*)` is reported exactly once. `permissions.sh`'s dry run puts the owner's
   apply command at the end of its last line (`... (dry run). The owner applies them in the session with:
   ! <plugin>/scripts/permissions.sh --apply`), with the plugin's absolute scripts path.
 - **Reason:** the stop condition is "release on the owner's go", an ask; a deny beats every ask, and the
