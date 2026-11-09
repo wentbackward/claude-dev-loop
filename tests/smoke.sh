@@ -2560,9 +2560,28 @@ grefused "$gg/proj-1" "echo a \\\\
 git push --force origin x" "echo a\\\\
 git fetch --upload-pack=evil origin" "git push \\
 --force origin x" "\$'\\x67it' push origin main" "\$'\\147it' push origin main" "\$'\\u0067it' push origin main" "echo \"a\\\\\"
-git push origin main"
+git push origin main" ">x git push origin main" "2>&1 git push origin main" \
+  "x=1 2>/dev/null git push origin main" ">| x git push origin main" ">x<< x git push origin main" \
+  "<<E git push origin main
+x
+E"
 gpassed "$gg/proj-1" "echo a \\
 b" "echo \$'\\x41' && git status" "\$'git' status"
+# Every unquoted word git starts a git command (bash may run it after a substitution, arithmetic or an
+# unknown wrapper), except after a program that never runs its arguments; quoted text never does.
+grefused "$gg/proj-1" "foo git push origin main" "watch git push origin main" "\`\` git push origin main" \
+  "\$(true) git push origin main" "x\$((1<<2))echo git push origin main"
+for at in "$gg/proj" "$gg/proj-1"; do
+  gpassed "$at" "grep -n git README.md" "echo git push origin main" "echo \"run git push -u origin HEAD\"" \
+    "gh pr create --title x --body \"never git push origin main\"" "gh issue comment 3 --body \"run git push origin main by hand\"" \
+    "git commit -m \"docs: git push origin main is refused\"" "printf '%s\n' x | git commit -F -" \
+    "git -C $gg/proj-1 status --short" "git log --oneline -3" "git diff origin/main...HEAD --stat" "command -v git" \
+    "which git && git status" "$plugin/scripts/gate-train.sh feat/1-x feat/2-y" "git fetch -q origin" "cat <<EOF | git commit -F -
+fix: x
+
+git push origin main is refused
+EOF"
+done
 diff_out=$(python3 -I "$plugin/tests/guard-diff.py" "$plugin/hooks/guard-role.py" "$(mkdir -p "$gg/diff" && echo "$gg/diff")" 300 2>&1)
 case $diff_out in *" 0 let through"*) pass "git guard: bash and the guard agree on every push bash runs (${diff_out##*: })" ;;
   *) fail "git guard: the guard lets through pushes bash runs: $diff_out" ;; esac
