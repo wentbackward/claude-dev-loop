@@ -6790,8 +6790,9 @@ awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#88' && pass "pro
 cd "$work/project" || exit 1
 
 # 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
-# the same spot gate together and merge in order with no rebase, both entries kept once each (base first,
-# then the branch), also in the merge replay; a conflict in any other file, a listed file the repository's
+# the same spot gate together and merge in order with no rebase, both entries kept whole (base first, then
+# the branch; also with shared lines and CRLF), also in the merge replay; what git merges cleanly merges as
+# git does (a same change once); a conflict in any other file, a listed file the repository's
 # .gitattributes gives another merge driver, and the option off still stop the train. The user's global
 # attributes still apply; the user's and the repository's git config are never changed.
 uwork="$work/union"
@@ -6799,7 +6800,7 @@ git init -q --bare "$uwork/origin.git"
 git clone -q "$uwork/origin.git" "$uwork/unionproj" 2>/dev/null
 cd "$uwork/unionproj" || exit 1
 printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]}\n' >.dev-loop.json
-printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}], "merge": {"union_files": ["CHANGELOG.md", "docs/DECISIONS.md"]}}\n' \
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}], "merge": {"union_files": ["CHANGELOG.md", "docs/DECISIONS.md", "docs/CRLF.md"]}}\n' \
   >"$uwork/union.json"
 mkdir -p docs "$uwork/tmp"
 printf '# Changelog\n\n## Unreleased\n\n- start\n' >CHANGELOG.md
@@ -6914,18 +6915,38 @@ expect "union: prepended CHANGELOG entries that share a line stay whole, base fi
 expect "union: appended decisions entries with a blank separator stay whole, base first" \
   "|## feat/910-j||- **Decision:** feat/910-j|- **Alternatives:** none.||## feat/911-k||- **Decision:** feat/911-k|- **Alternatives:** none." \
   "$(git show train-feat/911-k:docs/DECISIONS.md | tail -n 10 | paste -sd'|' -)"
-# The same entry added by both, in files that differ elsewhere: one copy would lose a line, so it stops and
-# names the file. (Two identical files need no merge: git keeps one, with or without the option.)
+# Changes git merges cleanly without the option merge as git merges them: both branches make the same change
+# to a line (and add the same decisions entry) next to their own entries; it is green, each once.
 for b in feat/912-l feat/913-m; do
-  git checkout -q -B "$b" origin/main && printf '## same entry\n' >>docs/DECISIONS.md && echo "$b" >"f-${b#feat/}.txt" &&
+  git checkout -q -B "$b" origin/main &&
+    awk -v e="- $b" '/^- start$/ { $0 = "- start, fixed" } { print } /^## Unreleased$/ { getline; print; print e }' \
+      CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md && printf '## same entry\n' >>docs/DECISIONS.md &&
     { [ "$b" = feat/912-l ] || { awk 'NR == 1 { print; print "<!-- m -->"; next } { print }' docs/DECISIONS.md >d.tmp &&
       mv d.tmp docs/DECISIONS.md; }; } &&
-    git add . && git commit -q -m "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
+    git commit -q -am "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
     printf 'feat: %s\n\nCloses #1\n' "$b" >"$("$plugin/scripts/paths.sh" notes "$b")"
 done
 out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/912-l feat/913-m)
-expect "union: an entry both branches added stops the train, naming the file" \
-  "3 TRAIN conflict in: docs/DECISIONS.md|TRAIN rebase conflict at feat/913-m" "$? $(echo "$out" | tail -n 2 | paste -sd'|' -)"
+expect "union: the same change on both sides next to their own entries gates green" "0 TRAIN GREEN" \
+  "$? $(echo "$out" | tail -n 1)"
+expect "union: the shared change is merged once, both entries kept" "- feat/912-l|- feat/913-m|1" \
+  "$(git show train-feat/913-m:CHANGELOG.md | grep -E '^- feat/91[23]' | paste -sd'|' -)|$(git show train-feat/913-m:CHANGELOG.md | grep -c '^- start, fixed$')"
+expect "union: the same decisions entry added by both is kept once, as git merges it without the option" "1" \
+  "$(git show train-feat/913-m:docs/DECISIONS.md | grep -c '^## same entry$')"
+# A CRLF log keeps its CRs and loses no conflict marker into the result.
+git checkout -q main && git merge -q --ff-only origin/main && printf 'h\r\n' >docs/CRLF.md && git add docs/CRLF.md &&
+  git commit -q -m "docs: crlf log" && git push -q origin main
+for b in feat/914-n feat/915-o; do
+  git checkout -q -B "$b" origin/main && printf '%s\r\nshared\r\n' "$b" >>docs/CRLF.md &&
+    git commit -q -am "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$b" >"$("$plugin/scripts/paths.sh" notes "$b")"
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/914-n feat/915-o)
+expect "union: CRLF entries gate green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+printf 'h\r\nfeat/914-n\r\nshared\r\nfeat/915-o\r\nshared\r\n' >"$uwork/crlf.expected"
+git show train-feat/915-o:docs/CRLF.md | cmp -s - "$uwork/crlf.expected" &&
+  pass "union: CRLF entries stay whole with their CRs and no marker line" ||
+  fail "union: CRLF result: $(git show train-feat/915-o:docs/CRLF.md | od -c | head -n 4)"
 out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
 expect "union: another conflict names its file" "TRAIN conflict in: src.txt" "$(echo "$out" | tail -n 2 | head -n 1)"
 # A wildcard entry is refused: entries are literal paths.
