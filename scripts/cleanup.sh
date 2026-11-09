@@ -299,29 +299,72 @@ superseded_notes() {
 }
 
 # --- Worktrees kept for changes ----------------------------------------------------------------------------
-settle_minutes=10
-main_dir=$(dl_normalize "$DL_ROOT")
-gate_dir=$(dl_normalize "$(dl_gate_dir)")
+# DEV_LOOP_WORKTREE_SETTLE_MINUTES (default 10): keep a worktree with a file changed (mtime or ctime) within
+# that many minutes; 0 turns the time check off (for tests, which cannot backdate a ctime).
+settle_minutes=${DEV_LOOP_WORKTREE_SETTLE_MINUTES:-10}
+[[ "$settle_minutes" =~ ^[0-9]+$ ]] || dl_die "DEV_LOOP_WORKTREE_SETTLE_MINUTES must be whole minutes"
+
+# real_path PATH: PATH with its symlinks resolved when it exists, else normalized.
+real_path() {
+  (cd -P -- "$1" 2>/dev/null && pwd -P) || dl_normalize "$1"
+}
+main_dir=$(real_path "$DL_ROOT")
+gate_dir=$(real_path "$(dl_gate_dir)")
+
+# nested_worktree PATH: the first other registered worktree inside the worktree at PATH.
+nested_worktree() {
+  local dir other
+  dir=$(real_path "$1")
+  git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r other; do
+    other=$(real_path "$other")
+    [ "$other" != "$dir" ] && dl_path_under "$other" "$dir" && { printf '%s\n' "$other"; break; }
+  done
+}
+
+# recent_or_unreadable PATH: "recent <file>" for a file changed within the settle window, "unreadable
+# <error>" when find cannot read everything; nothing when neither.
+recent_or_unreadable() {
+  local found
+  if [ "$settle_minutes" -gt 0 ]; then
+    found=$(find "$1" -name .git -prune -o \( -mmin -"$settle_minutes" -o -cmin -"$settle_minutes" \) -print \
+      2>"$work/find.err" | head -n 1)
+    [ -z "$found" ] || { printf 'recent %s\n' "$found"; return; }
+  else
+    find "$1" -name .git -prune -o -print >/dev/null 2>"$work/find.err"
+  fi
+  [ ! -s "$work/find.err" ] || printf 'unreadable %s\n' "$(head -n 1 "$work/find.err")"
+}
 
 # worktree_verdict PATH BRANCH: "remove", or "keep: <reason>", for the worktree of a merged BRANCH.
 worktree_verdict() {
   local dir found
-  dir=$(dl_normalize "$1")
+  dir=$(real_path "$1")
   [ "$dir" != "$main_dir" ] || { echo "keep: the main checkout"; return; }
   [ "$dir" != "$gate_dir" ] || { echo "keep: the gate worktree"; return; }
   [ "$(dl_worktree_of "$2" | sed -n 2p)" != locked ] || { echo "keep: locked"; return; }
+  found=$(nested_worktree "$1")
+  [ -z "$found" ] || { echo "keep: holds another worktree ($found)"; return; }
+  # Assume-unchanged (lowercase) and skip-worktree (S) entries hide local changes from the diff.
+  found=$(git -C "$1" ls-files -v 2>/dev/null | awk '/^([a-z]|S) / {print substr($0, 3); exit}')
+  [ -z "$found" ] || { echo "keep: has assume-unchanged or skip-worktree files ($found)"; return; }
   found=$(dl_unrebuildable_ignored "$1")
   [ -z "$found" ] || { echo "keep: holds ignored files that are not build output ($found)"; return; }
-  found=$(find "$1" -name .git -prune -o -mmin -"$settle_minutes" -print 2>/dev/null | head -n 1)
-  [ -z "$found" ] || { echo "keep: changed in the last $settle_minutes minutes (an agent may still work there)"; return; }
-  echo remove
+  found=$(recent_or_unreadable "$1")
+  case "$found" in
+    recent*) echo "keep: changed in the last $settle_minutes minutes (an agent may still work there)" ;;
+    unreadable*) echo "keep: a file or folder could not be read (${found#unreadable })" ;;
+    *) echo remove ;;
+  esac
 }
 
-# worktree_contents PATH: "<n> modified, <m> untracked".
+# worktree_contents PATH: "<n> modified, <m> untracked[: <the first five file names> ...]".
 worktree_contents() {
-  printf '%s modified, %s untracked\n' \
+  local names
+  names=$(git -C "$1" status --porcelain 2>/dev/null | cut -c4- | head -n 6 | paste -sd' ' -)
+  [ "$(printf '%s\n' "$names" | wc -w)" -le 5 ] || names="$(printf '%s\n' "$names" | cut -d' ' -f1-5) ..."
+  printf '%s modified, %s untracked%s\n' \
     "$(git -C "$1" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')" \
-    "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')"
+    "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')" "${names:+: $names}"
 }
 
 # merged_worktrees: "<branch>\t<tip>\t<path>\t<verdict>" for each worktree whose branch the ledger or a
@@ -359,45 +402,90 @@ fi
 # --- Apply ------------------------------------------------------------------------------------------------
 failed=0
 
-# archive_worktree PATH BRANCH TIP DIR: write the uncommitted changes of the worktree at PATH to DIR
-# (changes.patch, untracked.tar, manifest.txt) and check that they hold them; fails when anything is off.
+# worktree_diff PATH [--cached]: the worktree's (or the index's) changes against HEAD as a binary patch with
+# a/ and b/ prefixes, whatever the user's diff config (no external diff, textconv or color).
+worktree_diff() {
+  git -C "$1" diff-index -p --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ \
+    ${2:+"$2"} HEAD
+}
+
+# archive_slot BASE: create and print a new directory BASE (BASE-2, BASE-3, ... when it exists).
+archive_slot() {
+  local dir=$1 n=1
+  mkdir -p "$(dirname "$1")" || return 1
+  until mkdir "$dir" 2>/dev/null; do
+    n=$((n + 1))
+    [ "$n" -le 99 ] && [ -w "$(dirname "$1")" ] || return 1
+    dir=$1-$n
+  done
+  printf '%s\n' "$dir"
+}
+
+# archive_worktree PATH BRANCH TIP DIR: write the uncommitted changes of the worktree at PATH to the new
+# directory DIR (changes.patch, staged.patch, untracked.z and untracked.tar, manifest.txt) and check that
+# they hold them; fails when anything is off.
 archive_worktree() {
   local path=$1 dir=$4
-  mkdir -p "$dir" || return 1
-  git -C "$path" diff --binary HEAD >"$dir/changes.patch" || return 1
-  git -C "$path" ls-files -z --others --exclude-standard >"$work/untracked.z" || return 1
-  (cd "$path" && tar -cf "$dir/untracked.tar" --null -T "$work/untracked.z") || return 1
+  git -C "$path" update-index -q --refresh >/dev/null 2>&1
+  worktree_diff "$path" >"$dir/changes.patch" || return 1
+  worktree_diff "$path" --cached >"$dir/staged.patch" || return 1
+  git -C "$path" ls-files -z --others --exclude-standard >"$dir/untracked.z" || return 1
+  (cd "$path" && tar -cf "$dir/untracked.tar" --null -T "$dir/untracked.z") || return 1
   {
     printf 'worktree: %s\nbranch: %s\ntip: %s\narchived: %s\n' "$path" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'restore: git fetch <bundle> refs/heads/%s:refs/heads/%s, git worktree add <path> %s, then in it\n' "$2" "$2" "$2"
-    printf '  git apply --binary changes.patch and tar -xf untracked.tar\nmodified:\n'
+    printf '  git apply --cached staged.patch, git apply --binary changes.patch and tar -xf untracked.tar\nmodified:\n'
     git -C "$path" status --porcelain --untracked-files=no
     printf 'untracked:\n'
-    tr '\0' '\n' <"$work/untracked.z"
+    tr '\0' '\n' <"$dir/untracked.z"
   } >"$dir/manifest.txt" || return 1
-  # The patch must reverse-apply to the worktree as it is, and the tar must list every untracked file.
+  # The patches must reverse-apply to the worktree and the index as they are, the tar must list every
+  # untracked file (a name with a newline cannot be checked, so it fails).
   [ ! -s "$dir/changes.patch" ] || git -C "$path" apply --check -R --binary "$dir/changes.patch" 2>/dev/null || return 1
-  tr '\0' '\n' <"$work/untracked.z" | LC_ALL=C sort >"$work/untracked.want"
+  [ ! -s "$dir/staged.patch" ] || git -C "$path" apply --cached --check -R --binary "$dir/staged.patch" 2>/dev/null || return 1
+  tr '\0' '\n' <"$dir/untracked.z" | LC_ALL=C sort >"$work/untracked.want"
   tar -tf "$dir/untracked.tar" | LC_ALL=C sort >"$work/untracked.got" || return 1
-  cmp -s "$work/untracked.want" "$work/untracked.got"
+  [ "$(tr -cd '\0' <"$dir/untracked.z" | wc -c | tr -d ' ')" = "$(wc -l <"$work/untracked.got" | tr -d ' ')" ] &&
+    cmp -s "$work/untracked.want" "$work/untracked.got"
 }
 
-# The worktrees marked remove: each still at the classified tip and verdict, archived and checked first.
+# worktree_current PATH BRANCH TIP: the worktree at PATH is still removable, with BRANCH at TIP checked out.
+worktree_current() {
+  [ "$(worktree_verdict "$1" "$2")" = remove ] &&
+    [ "$(git rev-parse -q --verify "refs/heads/$2")" = "$3" ] &&
+    [ "$(git -C "$1" rev-parse -q --verify HEAD)" = "$3" ] &&
+    [ "$(dl_worktree_of "$2" | head -n 1)" = "$1" ]
+}
+
+# worktree_as_archived PATH BRANCH TIP DIR: worktree_current, and the worktree's changes, index and
+# untracked files are exactly those archived in DIR.
+worktree_as_archived() {
+  worktree_current "$1" "$2" "$3" || return 1
+  git -C "$1" update-index -q --refresh >/dev/null 2>&1
+  worktree_diff "$1" | cmp -s - "$4/changes.patch" &&
+    worktree_diff "$1" --cached | cmp -s - "$4/staged.patch" &&
+    git -C "$1" ls-files -z --others --exclude-standard | cmp -s - "$4/untracked.z"
+}
+
+# The worktrees marked remove: each checked again, archived and checked, checked once more, then removed.
 if [[ "$include" == *" worktrees "* ]] && grep -q $'\tremove$' "$work/kept-worktrees"; then
   archive_dir=$DL_STATE/archive/worktrees-$(date +%Y%m%d-%H%M%S)
   while IFS=$'\t' read -r name tip path verdict; do
     [ "$verdict" = remove ] || continue
-    if [ "$(git rev-parse -q --verify "refs/heads/$name")" != "$tip" ] ||
-      [ "$(dl_worktree_of "$name" | head -n 1)" != "$path" ] || [ "$(worktree_verdict "$path" "$name")" != remove ]; then
+    if ! worktree_current "$path" "$name" "$tip"; then
       echo "kept worktree $path: it changed since the classification"
       continue
     fi
-    if ! archive_worktree "$path" "$name" "$tip" "$archive_dir/${name//\//_}"; then
+    if ! slot=$(archive_slot "$archive_dir/${name//\//_}") || ! archive_worktree "$path" "$name" "$tip" "$slot"; then
       echo "kept worktree $path: its archive could not be written or checked"
       failed=$((failed + 1))
       continue
     fi
-    echo "archived worktree $path to $archive_dir/${name//\//_}"
+    echo "archived worktree $path to $slot"
+    if ! worktree_as_archived "$path" "$name" "$tip" "$slot"; then
+      echo "kept worktree $path: it changed while it was archived (the archive in $slot is not complete)"
+      continue
+    fi
     if ! git worktree remove --force "$path" >/dev/null 2>&1; then
       echo "not removed: worktree $path"
       failed=$((failed + 1))

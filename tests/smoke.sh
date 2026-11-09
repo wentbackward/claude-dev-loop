@@ -5635,7 +5635,7 @@ git -C "$kwork/project" fetch -q "$bundle" refs/heads/feat/1-untracked:refs/head
   git -C "$kwork/project" worktree add -q "$kwork/restored1" restored1 &&
   git -C "$kwork/restored1" apply --cached "$k1/staged.patch" &&
   git -C "$kwork/restored1" apply --binary "$k1/changes.patch" && tar -xf "$k1/untracked.tar" -C "$kwork/restored1" &&
-  expect "kwt: the archive restores the index, the changes and the files" "more unstaged scratch untracked" \
+  expect "kwt: the archive restores the index, the changes and the files" "more unstaged scratch 1-untracked" \
     "$(git -C "$kwork/restored1" show :src.txt | tail -n 1) $(tail -n 1 "$kwork/restored1/src.txt") $(cat "$kwork/restored1/scratch.txt")" ||
   fail "kwt: restore failed: $out"
 kd=$(dirname "$archive")
