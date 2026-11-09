@@ -491,10 +491,12 @@ doctor_marketplace_older() {
 # note per gap with the owner step. What cannot be checked (no gh, not logged in, not GitHub, GitHub
 # Enterprise, the API refusing or not answering) is a note too, never MISSING.
 doctor_protection() {
-  local repo tmp base tags url api kind detail exempt
+  local repo tmp base tags url api kind detail exempt api_url
   git -C "$DL_ROOT" remote get-url "$DL_REMOTE" >/dev/null 2>&1 || return 0
-  if [ "$(dl_api_url)" != https://api.github.com ]; then
-    optional "remote protection: github.api_url is $(dl_api_url), so branch and tag protection is not checked (check the base branch and tag rules in the repository's settings)"
+  api_url=$(dl_api_url)
+  api_url=${api_url%/}
+  if [ "$api_url" != https://api.github.com ]; then
+    optional "remote protection: github.api_url is $api_url, so branch and tag protection is not checked (check the base branch and tag rules in the repository's settings)"
     return 0
   fi
   if ! repo=$(doctor_github_repo); then
@@ -547,7 +549,14 @@ doctor_gh_get() {
   [ ! -f "$dir/hung" ] || { echo "not asked after an earlier call gave no answer"; return 1; }
   gh api "$1" >"$2.body" 2>"$2.err" </dev/null &
   pid=$!
-  (sleep "$limit" && : >"$2.timeout" && kill "$pid") >/dev/null 2>&1 </dev/null &
+  # The watchdog takes its sleep with it when it is stopped, so no sleep outlives the call.
+  (
+    nap=""
+    trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+    sleep "$limit" &
+    nap=$!
+    wait "$nap" && : >"$2.timeout" && kill "$pid"
+  ) >/dev/null 2>&1 </dev/null &
   watch=$!
   wait "$pid" 2>/dev/null
   rc=$?
@@ -581,10 +590,15 @@ doctor_ruleset() {
   doctor_gh_get "repos/$1/rulesets/$2" "$3/ruleset-$2" object && : >"$3/ruleset-$2.ok"
 }
 
-# doctor_can_bypass FILE: true when the current gh login may bypass the ruleset in FILE
-# (current_user_can_bypass "always" or "exempt"; "pull_requests_only" still goes through a PR).
-doctor_can_bypass() {
-  case $(json_get current_user_can_bypass <"$1") in always | exempt) return 0 ;; *) return 1 ;; esac
+# doctor_bypass FILE: whether the current gh login may bypass the ruleset in FILE: "yes" (current_user_can_bypass
+# "always" or "exempt"), "no" ("never", or "pull_requests_only", which still goes through a PR), else
+# "unknown" (the field is missing or has a value this check does not know).
+doctor_bypass() {
+  case $(json_get current_user_can_bypass <"$1") in
+    always | exempt) echo yes ;;
+    never | pull_requests_only) echo no ;;
+    *) echo unknown ;;
+  esac
 }
 
 # doctor_add_exempt LIST TEXT: LIST with TEXT appended once, "; " between entries.
@@ -616,15 +630,16 @@ doctor_base_protection() {
     for ((i = 0; i < n; i++)); do
       id=$(json_get "$i.ruleset_id" <"$2/rules.body")
       case $id in
-        "") ;;
-        *[!0-9]*) continue ;;
-        *)
-          reason=$(doctor_ruleset "$1" "$id" "$2") || { unknown=${unknown:-$reason}; continue; }
-          if doctor_can_bypass "$2/ruleset-$id.body"; then
-            exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$2/ruleset-$id.body")\"")
-            continue
-          fi
+        "" | *[!0-9]*)
+          unknown=${unknown:-"a rule on $DL_BASE names no ruleset, so its bypass could not be read"}
+          continue
           ;;
+      esac
+      reason=$(doctor_ruleset "$1" "$id" "$2") || { unknown=${unknown:-$reason}; continue; }
+      file="$2/ruleset-$id.body"
+      case $(doctor_bypass "$file") in
+        yes) exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$file")\""); continue ;;
+        unknown) unknown=${unknown:-"the bypass of ruleset \"$(json_get name <"$file")\" could not be read"}; continue ;;
       esac
       case $(json_get "$i.type" <"$2/rules.body") in
         pull_request | update) pr=yes ;;
@@ -658,10 +673,10 @@ doctor_tag_protection() {
     reason=$(doctor_ruleset "$1" "$id" "$2") || { unknown=$reason; continue; }
     file="$2/ruleset-$id.body"
     doctor_covers_release_tags "$file" || continue
-    if doctor_can_bypass "$file"; then
-      exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$file")\"")
-      continue
-    fi
+    case $(doctor_bypass "$file") in
+      yes) exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$file")\""); continue ;;
+      unknown) unknown=${unknown:-"the bypass of ruleset \"$(json_get name <"$file")\" could not be read"}; continue ;;
+    esac
     m=$(json_len rules <"$file")
     for ((j = 0; j < m; j++)); do
       case $(json_get "rules.$j.type" <"$file") in
