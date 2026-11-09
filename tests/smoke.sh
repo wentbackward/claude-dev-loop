@@ -2280,9 +2280,11 @@ DEV_LOOP_CONFIG="$work/scen-inside.json" "$plugin/scripts/doctor.sh" 2>&1 | grep
   pass "doctor notes a scenario store inside the repository" || fail "no note for a store inside the repository"
 expect "doctor without scenarios prints no scenario lines" 0 \
   "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -ci "scenario")"
+# The TMPDIR line reports live free space and inodes, so it can differ between two runs: left out of both.
 expect "doctor's output without scenarios is unchanged by an empty store directory" \
-  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)" \
-  "$(mkdir -p "$DEV_LOOP_HOME/project/scenarios"; DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1)"
+  "$(DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -v '^[a-zA-Z]* *TMPDIR ')" \
+  "$(mkdir -p "$DEV_LOOP_HOME/project/scenarios"; DEV_LOOP_CONFIG="$work/scen-none.json" "$plugin/scripts/doctor.sh" 2>&1 |
+    grep -v '^[a-zA-Z]* *TMPDIR ')"
 rmdir "$DEV_LOOP_HOME/project/scenarios"
 example="$plugin/templates/scenario.md"
 mkdir -p "$work/scen-example" && cp "$example" "$work/scen-example/"
@@ -3591,9 +3593,10 @@ $(mmatch 'Bash(make lint)' 'make lint') $(mmatch 'Read(./.env)' 'cat .env')"
 # Doctor: complete rules print nothing new; the same output as without settings, less the one note.
 complete_out=$(mdoctor)
 expect "perm: doctor prints nothing about complete permissions" "" "$(printf '%s\n' "$complete_out" | grep 'permissions')"
+# The TMPDIR line reports live free space and inodes, so it can differ between two runs: left out of both.
 expect "perm: doctor output without settings is the complete output plus one note and the uncovered notes dir" \
-  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks\|^doctor: ')" \
-  "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: \|^MISSING notes: \|^doctor: ')"
+  "$(printf '%s\n' "$complete_out" | grep -v 'project Stop hooks\|^doctor: \|^[a-zA-Z]* *TMPDIR ')" \
+  "$(printf '%s\n' "$no_settings" | grep -v '^note    permissions: \|^MISSING notes: \|^doctor: \|^[a-zA-Z]* *TMPDIR ')"
 # A stale allow list: the fast check changed.
 mconfig "make fmt-check lint"
 printf '%s\n' "$(mdoctor)" | grep -qF 'note    permissions: the allow list lacks the project commands: Bash(make fmt-check lint)' &&
