@@ -36,7 +36,7 @@ session as the owner) or the rule to move, and wait; never edit those files your
 | `note ... train/replay refs ..., ... merged branches still local` | `cleanup.sh` (dry run), then `--apply` |
 | `note <n> local branches` | `cleanup.sh` (dry run): it classifies them; delete closed/stale only on the user's OK |
 | `note permissions: no .claude/settings.json` or `note permissions: no allow list` | the `setup` skill's Permissions step: `permissions.sh` (dry run), then the owner runs `! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply` (the dry run's last line, with the absolute path) |
-| `note permissions: the allow list lacks the project commands: ...` or `lacks <n> of the loop's rules` | `fast_check` or `checks` changed, or the plugin moved: `permissions.sh --apply` |
+| `note permissions: the allow list lacks the project commands: ...` or `lacks <n> of the loop's rules` | `fast_check` or `checks` changed, or the plugin moved: the owner runs the `!` apply line the note names |
 | `MISSING worktrees: <dir> is outside the working directory and not in permissions.additionalDirectories` or `MISSING notes: <dir> ...` | `permissions.sh --apply` (it adds the directory to `.claude/settings.local.json`) |
 | `MISSING worktrees: <n> loop worktrees outside the working directory ...` | set `"worktrees_dir": "../<repo>-worktrees"` in `.dev-loop.json`, then `permissions.sh --apply`; existing worktrees stay where they are |
 | `MISSING worktrees_dir: <dir> holds the project` | use a dedicated directory such as `../<repo>-worktrees`, never the project's parent |

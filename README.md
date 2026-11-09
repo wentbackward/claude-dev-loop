@@ -1000,9 +1000,14 @@ Claude Code merges the rules of every settings file, and a deny anywhere wins. `
 project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`, never the user's
 own files): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
 lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
-nothing. A deny rule that blocks `git tag`, `gh release` or a tag push (`git push <remote> v*`, `--tags`)
-is `MISSING` too, since no release could be made even on the owner's go; the fix is to move it to `ask`,
-as the template does. Without `.claude/settings.json` it prints one note. A notes directory, a `worktrees_dir` or loop
+nothing. A deny rule that blocks a tag, a release or a tag push is `MISSING` too, since no release could
+be made even on the owner's go; the fix is to move it to `ask`, as the template does. The forms it tests
+are `git tag v1.2.3`, `git tag -a`, `git tag -s` and `git tag -m` (each with `-m`), `gh release create v1.2.3`,
+`git push <remote> v1.2.3`, `git push <remote> refs/tags/v1.2.3`, `git push <remote> tag v1.2.3`,
+`git push <remote> --tags`, `git push --tags`, `git push --tags <remote>`, `git push --follow-tags` and
+`git push <remote> --follow-tags`. A deny that also blocks a loop command (such as `Bash(git push:*)`) is
+reported once, as blocking the loop. Without `.claude/settings.json` it prints one note; its notes name
+the owner's apply line. A notes directory, a `worktrees_dir` or loop
 worktrees outside the project and not in `additionalDirectories` are `MISSING` (in auto mode every edit
 there asks); sibling worktrees of the old layout are a note once `worktrees_dir` is set.
 
