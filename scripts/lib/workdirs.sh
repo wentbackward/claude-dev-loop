@@ -9,9 +9,10 @@
 # The suites' name prefixes, the only ones dl_work_dir_ok accepts.
 DL_WORK_PREFIXES="dev-loop-smoke dev-loop-identity"
 
-# dl_tmp_dir: TMPDIR (default /tmp) with symlinks resolved; fails when it does not exist.
+# dl_tmp_dir: TMPDIR (default /tmp) with symlinks resolved; fails when it does not exist. Every cd here
+# clears CDPATH and ends options with --, so a relative or option-like name means a dir of that name here.
 dl_tmp_dir() {
-  (cd -P "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)
+  (CDPATH='' cd -P -- "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)
 }
 
 # dl_tmpdir_absolute: make a relative TMPDIR absolute (symlinks resolved), so the suite's work dir path stays
@@ -19,7 +20,7 @@ dl_tmp_dir() {
 dl_tmpdir_absolute() {
   local abs
   case ${TMPDIR:-/} in /*) return 0 ;; esac
-  abs=$(cd -P "$TMPDIR" 2>/dev/null && pwd -P) && TMPDIR=$abs
+  abs=$(CDPATH='' cd -P -- "$TMPDIR" 2>/dev/null && pwd -P) && TMPDIR=$abs
   return 0
 }
 
@@ -37,7 +38,7 @@ dl_work_dir_ok() {
   local x='[A-Za-z0-9]'
   # shellcheck disable=SC2254  # the pattern is meant to match
   case $name in "$prefix".$x$x$x$x$x$x) ;; *) return 1 ;; esac
-  real=$(cd -P "$path" 2>/dev/null && pwd -P) || return 1
+  real=$(CDPATH='' cd -P -- "$path" 2>/dev/null && pwd -P) || return 1
   [ "${real##*/}" = "$name" ] || return 1
   tmp=$(dl_tmp_dir) || return 1
   [ "${real%/*}" = "$tmp" ] || return 1
