@@ -5396,27 +5396,45 @@ kout=$(cd "$kwork/cdp/a" && env TMPDIR=rel CDPATH="$kwork/cdp/b" DEV_LOOP_SMOKE_
   "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
 expect "work dirs: a suite with CDPATH exported is green and removes its dir" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
 expect "work dirs: the CDPATH suite leaves nothing in either rel" "" "$(cd "$kwork/cdp" && for d in a/rel/* b/rel/*; do [ -e "$d" ] && echo "$d"; done)"
-# A work dir that cannot be made: both suites stop at once, before any setup.
-mkdir -p "$kwork/nowrite/run"
-for ksuite_name in smoke identity; do
-  kout=$(cd "$kwork/nowrite/run" && env TMPDIR="$kwork/nowrite/missing" "$plugin/tests/$ksuite_name.sh" --section 'Forced failure' 2>&1)
-  krc=$?
-  expect "work dirs: $ksuite_name.sh with a missing TMPDIR fails" 1 "$krc"
-  expect "work dirs: $ksuite_name.sh with a missing TMPDIR says so and runs nothing" "cannot make a work dir" \
-    "$(printf '%s\n' "$kout" | grep -v '^mktemp: ')"
-done
-mkdir "$kwork/nowrite/ro" && chmod 555 "$kwork/nowrite/ro"
-if [ -w "$kwork/nowrite/ro" ]; then
-  pass "work dirs: a read-only TMPDIR is writable here (root), not tested"
+# dl_make_work_dir, called directly: no suite ever runs past its work dir guard here.
+mkdir -p "$kwork/mk/run" "$kwork/mk/a/rel" "$kwork/mk/b/rel"
+# kmake VAR=VALUE... -- PREFIX [SHELL CODE]: from $kwork/mk/a, with these variables, run SHELL CODE (e.g. a
+# fake mktemp) and then dl_make_work_dir PREFIX; prints its output and exit status.
+kmake() {
+  local vars=()
+  while [ "$1" != -- ]; do vars+=("$1") && shift; done
+  shift
+  (cd "$kwork/mk/a" && env "${vars[@]}" bash -c '. "$1" && eval "${3:-}"; dl_make_work_dir "$2"; echo "rc=$?"' _ \
+    "$plugin/scripts/lib/workdirs.sh" "$@" 2>/dev/null)
+}
+kmk=$(cd -P "$kwork/mk/a" && pwd -P)
+expect "work dirs: no work dir in a missing TMPDIR" "rc=1" "$(kmake TMPDIR="$kwork/mk/missing" -- dev-loop-smoke)"
+mkdir "$kwork/mk/ro" && chmod 555 "$kwork/mk/ro"
+if [ -w "$kwork/mk/ro" ]; then
+  echo "SKIP work dirs: no work dir in a read-only TMPDIR (it is writable here, as root)"
 else
-  kout=$(cd "$kwork/nowrite/run" && env TMPDIR="$kwork/nowrite/ro" "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1)
-  expect "work dirs: smoke.sh with a read-only TMPDIR fails at once" "1 cannot make a work dir" \
-    "$? $(printf '%s\n' "$kout" | grep -v '^mktemp: ')"
+  expect "work dirs: no work dir in a read-only TMPDIR" "rc=1" "$(kmake TMPDIR="$kwork/mk/ro" -- dev-loop-smoke)"
 fi
-chmod 755 "$kwork/nowrite/ro"
-expect "work dirs: nothing is written next to a failed suite" "" "$(cd "$kwork/nowrite" && for d in run/* ro/*; do [ -e "$d" ] && echo "$d"; done)"
-awk '/dl_tmpdir_absolute/ { a = NR } /mktemp -d/ { if (a && a < NR) ok = 1 } END { exit !ok }' "$plugin/tests/identity.sh" &&
-  pass "work dirs: identity.sh makes TMPDIR absolute before mktemp" || fail "work dirs: identity.sh does not make TMPDIR absolute before mktemp"
+chmod 755 "$kwork/mk/ro"
+expect "work dirs: no work dir for an unknown prefix" "rc=1" "$(kmake TMPDIR="$kwork/mk/run" -- not-a-suite)"
+expect "work dirs: no work dir when mktemp prints /" "rc=1" "$(kmake TMPDIR="$kwork/mk/run" -- dev-loop-smoke 'mktemp() { echo /; }')"
+expect "work dirs: no work dir when mktemp prints nothing" "rc=1" "$(kmake TMPDIR="$kwork/mk/run" -- dev-loop-smoke 'mktemp() { :; }')"
+expect "work dirs: no work dir when mktemp prints a relative path" "rc=1" \
+  "$(kmake TMPDIR="$kwork/mk/run" -- dev-loop-smoke 'mktemp() { echo rel/dev-loop-smoke.abc123; }')"
+expect "work dirs: nothing is made in the failed TMPDIRs" "" "$(cd "$kwork/mk" && for d in run/* ro/*; do [ -e "$d" ] && echo "$d"; done)"
+kmade=$(kmake TMPDIR=rel CDPATH="$kwork/mk/b" -- dev-loop-identity)
+kdir=${kmade%%$'\n'*}
+case $kdir in "$kmk/rel/dev-loop-identity."??????) [ -d "$kdir" ] && [ "${kmade#*$'\n'}" = rc=0 ] ;; *) false ;; esac &&
+  pass "work dirs: a relative TMPDIR with CDPATH exported gets an absolute work dir in the local dir" ||
+  fail "work dirs: dl_make_work_dir with a relative TMPDIR and CDPATH: $kmade"
+expect "work dirs: nothing is made in the CDPATH dir" "" "$(cd "$kwork/mk/b/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
+for ksuite_name in smoke identity; do
+  awk -v p="dev-loop-$ksuite_name" '/^dl_tmpdir_absolute$/ { a = NR }
+    index($0, "work=$(dl_make_work_dir " p ") || { echo \"cannot make a work dir\" >&2; exit 1; }") == 1 { if (a) ok = 1 }
+    /^work=[$][(]mktemp/ { bad = 1 } END { exit !(ok && !bad) }' "$plugin/tests/$ksuite_name.sh" &&
+    pass "work dirs: $ksuite_name.sh makes TMPDIR absolute, then its work dir through dl_make_work_dir, or stops" ||
+    fail "work dirs: $ksuite_name.sh does not make its work dir through dl_make_work_dir with the guard"
+done
 grep -q 'dl_suite_end identity "\$work" "\$passed" "\$failed"' "$plugin/tests/identity.sh" &&
   pass "work dirs: identity.sh ends through dl_suite_end" || fail "work dirs: identity.sh does not end through dl_suite_end"
 
