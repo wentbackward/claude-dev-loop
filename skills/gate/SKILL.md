@@ -169,9 +169,10 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   issue for a test that is genuinely flaky.
 - `TRAIN rebase conflict at <branch>` (exit 3), after a `TRAIN conflict in: <files>` line: with
   `merge.union_files` set (e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`), conflicts in those files get here
-  only when a side has a line like a long conflict marker, or when a merge driver set in the repository's
-  or the user's attributes wins; otherwise the stacking keeps both
-  conflicting hunks whole, the base first, then the branch. Any other conflict gets here. Drop that branch,
+  when a conflict hunk changes or deletes existing lines (an amended entry next to a new one), when a side
+  has a line like a long conflict marker, when the driver fails, or when a merge driver set in the
+  repository's or the user's attributes wins; otherwise (both sides only added lines) the stacking keeps
+  both conflicting hunks whole, the base first, then the branch. Any other conflict gets here. Drop that branch,
   gate the others, and have its implementer rebase it onto the new base after they merge (`git rebase
   --onto <remote>/<base> <old base> <branch>` when it was stacked; that form is not in the allow list, so
   it asks for permission). Never force-push it: publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh

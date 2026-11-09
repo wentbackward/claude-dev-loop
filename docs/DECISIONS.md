@@ -1067,12 +1067,17 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `core.attributesFile` in git, so a driver they set wins too. The file is removed when the script exits.
 - **Driver:** git calls a custom driver for every file both sides changed, conflicting or not, so
   `scripts/union-merge.sh` first runs plain `git merge-file`; when that is clean its result is used, exactly
-  as without the option (a change both sides made the same way is kept once). Only a merge with conflicts
-  takes `git merge-file --diff3` (diff3 style keeps each conflict hunk whole: git does not refine it the
-  way it refines `merge=union` hunks), drops the base part of each conflict and keeps ours (in a rebase:
-  the base) then theirs (the branch). The guarantee is exact per conflict hunk: the output of each hunk is
-  its ours part, then its theirs part; outside the hunks the result is git's diff3 merge (an identical
-  change on both sides once, as git does). The line-count check of the first version is dropped: it
+  as without the option (a change both sides made the same way is kept once, but only when git merges the
+  file without a conflict; the same change next to each side's own entry is a conflict and stops). Only
+  a merge with conflicts takes `git merge-file --diff3` (diff3 style keeps each conflict hunk whole: git
+  does not refine it the way it refines `merge=union` hunks), and only when every conflict hunk's base
+  part is empty (both sides only added lines) is it resolved, as ours (in a rebase: the base) then theirs
+  (the branch). A hunk with a base part (a side changed or deleted existing lines: an amended entry next to
+  a prepended one, a delete against a modify, overlapping edits) is a conflict (exit 1): keeping both
+  parts would bring back lines one side removed or keep an old and an amended line side by side. Any
+  failure of the driver (awk, merge-file, mktemp) is a conflict too, and the file is left unchanged. The
+  guarantee: the output of each kept hunk is its ours part, then its theirs part; outside the hunks the
+  result is git's diff3 merge. The line-count check of the first version is dropped: it
   stopped merges that git does cleanly (the same change to a line on both sides) and could still miss a
   fold. Files with a line starting with 32 of one marker character are a conflict (the driver could not
   tell the markers apart); a CR before the line end is ignored when markers are matched, so CRLF files

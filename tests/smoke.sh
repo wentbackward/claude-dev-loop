@@ -6792,7 +6792,8 @@ cd "$work/project" || exit 1
 # 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
 # the same spot gate together and merge in order with no rebase, both entries kept whole (base first, then
 # the branch; also with shared lines and CRLF), also in the merge replay; what git merges cleanly merges as
-# git does (a same change once); a conflict in any other file, a listed file the repository's
+# git does (a same change once); a conflict hunk that changes or deletes existing lines (amend vs prepend,
+# delete vs modify), a failing awk in the driver, a conflict in any other file, a listed file the repository's
 # .gitattributes gives another merge driver, and the option off still stop the train. The user's global
 # attributes still apply; the user's and the repository's git config are never changed.
 uwork="$work/union"

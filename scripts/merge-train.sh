@@ -6,10 +6,10 @@
 #
 # Refuses unless the last gate-train.sh run was GREEN for these branches. For each branch: replay its own
 # commits onto the current <remote>/<base> (with merge.union_files, keeping both sides of a conflict in those
-# files, as the gate does) and verify the tree equals the gated train-<branch> tree. When
-# the branch already contains the base and has that tree, it merges as it is; otherwise a merge commit with
-# the gated tree and two parents (the branch head, the base) is pushed to the branch as a plain
-# fast-forward, never forced (the remote refuses it when the branch moved). Then: create the PR if missing
+# files where both sides only added lines, as the gate does) and verify the tree equals the gated
+# train-<branch> tree. When the branch already contains the base and has that tree, it merges as it is;
+# otherwise a merge commit with the gated tree and two parents (the branch head, the base) is pushed to the
+# branch as a plain fast-forward, never forced (the remote refuses it when the branch moved). Then: create the PR if missing
 # (title and body from the notes file: first line title, a leading "#" is stripped, the rest is the body),
 # squash-merge exactly that head (--match-head-commit; its squash is the gated tree, since the head
 # contains the base), confirm the PR is MERGED and delete the remote branch.

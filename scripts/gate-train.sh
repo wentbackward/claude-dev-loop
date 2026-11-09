@@ -6,10 +6,11 @@
 # In the gate worktree, stacks each <remote>/<branch> on the latest <remote>/<base> in order, keeping each
 # branch's rebased head as train-<branch>. A branch already stacked on the previous one in the train replays
 # only its own commits (rebase --onto), so no branch ever carries foreign commits. With "merge":
-# {"union_files": [...]} (off by default) the rebase keeps both conflicting hunks of those files whole (the
-# base side first, then the branch; what git merges cleanly stays git's own result; scripts/union-merge.sh,
-# passed with a temporary core.attributesFile for that command only, see dl_union_attributes); a conflict in
-# any other file stops the train as before, and a conflict names its files. Then it runs every check
+# {"union_files": [...]} (off by default) the rebase keeps both conflicting hunks of those files whole when
+# both sides only added lines (the base side first, then the branch; any other conflict hunk stops; what git
+# merges cleanly stays git's own result; scripts/union-merge.sh, passed with a temporary core.attributesFile
+# for that command only, see dl_union_attributes); a conflict in any other file stops the train as before,
+# and a conflict names its files. Then it runs every check
 # of .dev-loop.json "checks" once on the top of the stack; heavy checks run through heavy.sh, so the
 # machine-wide slot limit and memory cap apply.
 #
