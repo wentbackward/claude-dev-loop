@@ -4,6 +4,9 @@
 # as. Like GitHub, a PR author cannot approve its own PR, and a merge needs an approval when
 # FAKE_GH_REQUIRE_APPROVAL=1. PRs get numbers in creation order; issues come from $FAKE_GH_DIR/issues.tsv
 # ("<number>\t<state>\t<reason>[\t<createdAt>]"). `pr list` and `issue list` print the rows the scripts' --jq asks for.
+# `auth status` succeeds once $FAKE_GH_DIR/logged-in exists. `gh api PATH` prints $FAKE_GH_DIR/api/<PATH with / as
+# _> when it exists (else nothing); a <file>.fail next to it makes the call fail with its text, as gh does
+# for an HTTP error ("gh: Not Found (HTTP 404)" on stderr, the body on stdout).
 # Supports only what the plugin's scripts call.
 set -u
 dir=${FAKE_GH_DIR:?FAKE_GH_DIR not set}
@@ -94,8 +97,24 @@ case "${1:-} ${2:-}" in
     rm -rf "$work"
     echo MERGED >"$dir/$(key "$branch").state"
     ;;
+  "auth status")
+    [ -f "$dir/logged-in" ] || { echo "fake gh: not logged in" >&2; exit 1; }
+    ;;
   "api "*)
     printf '%s\n' "$*" >>"$dir/api.log"
+    shift
+    path=""
+    while [ $# -gt 0 ]; do
+      case $1 in
+        -X | --method | -f | -F | --field | --raw-field | --input | --jq | -H | --header) shift 2 ;;
+        -*) shift ;;
+        *) path=$1; break ;;
+      esac
+    done
+    canned="$dir/api/$(key "$path")"
+    [ -f "$canned" ] || exit 0
+    cat "$canned"
+    [ ! -f "$canned.fail" ] || { echo "gh: $(cat "$canned.fail")" >&2; exit 1; }
     ;;
   *) echo "fake gh: unsupported: $*" >&2; exit 1 ;;
 esac
