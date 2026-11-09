@@ -1065,19 +1065,25 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   (`core.attributesFile`, else the XDG default), so the user's attributes still apply and a driver they set
   for a listed file wins. The repository's `.gitattributes` and `info/attributes` rank above any
   `core.attributesFile` in git, so a driver they set wins too. The file is removed when the script exits.
-- **Driver:** `scripts/union-merge.sh` runs `git merge-file --diff3` (diff3 style keeps each conflict hunk
-  whole: git does not refine it the way it refines `merge=union` hunks), drops the base part of each
-  conflict and keeps ours (in a rebase: the base) then theirs (the branch). It then requires every line to
-  appear in the result at least ours + theirs - base times; that holds for every region of a whole-hunk
-  union, so it fails only where git folded both sides' identical additions into one copy, and the merge
-  becomes a conflict. Files with a line starting with 32 of one marker character are a conflict (the
-  driver could not tell the markers apart). Entries with spaces, wildcards, a backslash or a leading `!` or
-  `#` are skipped with a warning.
+- **Driver:** git calls a custom driver for every file both sides changed, conflicting or not, so
+  `scripts/union-merge.sh` first runs plain `git merge-file`; when that is clean its result is used, exactly
+  as without the option (a change both sides made the same way is kept once). Only a merge with conflicts
+  takes `git merge-file --diff3` (diff3 style keeps each conflict hunk whole: git does not refine it the
+  way it refines `merge=union` hunks), drops the base part of each conflict and keeps ours (in a rebase:
+  the base) then theirs (the branch). The guarantee is exact per conflict hunk: the output of each hunk is
+  its ours part, then its theirs part; outside the hunks the result is git's diff3 merge (an identical
+  change on both sides once, as git does). The line-count check of the first version is dropped: it
+  stopped merges that git does cleanly (the same change to a line on both sides) and could still miss a
+  fold. Files with a line starting with 32 of one marker character are a conflict (the driver could not
+  tell the markers apart); a CR before the line end is ignored when markers are matched, so CRLF files
+  work. In a merge with conflicts the result ends with a newline. Entries with spaces, wildcards, a
+  backslash or a leading `!` or `#` are skipped with a warning.
 - **Reason:** CLAUDE.md requires every option to be off or backwards compatible by default; a default list
   would turn conflicts that stop the train today into merges in every existing project. git's own
   `merge=union` uses zealous refinement and silently folds lines that two entries share (`- **Alternatives:**
   none.`, blank separators), so it is not used. The merge replay uses the same driver, so the replayed tree
   still equals the gated one.
 - **Alternatives:** the issue's default list when the files exist (changes behaviour without a key); git's
-  `merge=union` plus a line-count check afterwards (stops on most decisions entries, which share lines);
+  `merge=union` plus a line-count check afterwards (stops on most decisions entries, which share lines, and
+  on same-change merges git does cleanly);
   writing `.git/info/attributes` or a driver into the git config (changes the repository's state).

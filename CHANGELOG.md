@@ -24,11 +24,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   short-word remark (letters, digits, `_`, `-`).
 - Union logs (#95): `merge.union_files` (off by default) lists the append-only logs every branch adds to,
   as literal paths, e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`. The gate's stacking (`gate-train.sh`)
-  and the merge replay (`merge-train.sh`) resolve a conflict in those files with the plugin's merge driver
-  `scripts/union-merge.sh`: both conflicting hunks are kept whole, the base side's first, then the
+  and the merge replay (`merge-train.sh`) merge those files with the plugin's merge driver
+  `scripts/union-merge.sh`. What git merges without a conflict is git's own result, as without the
+  option; in a merge with conflicts both conflicting hunks are kept whole, the base side's first, then the
   branch's, with no lines merged inside them (unlike git's `merge=union`, which folds shared lines into
-  one copy). It stops as a conflict when a line the two sides added is missing from the result or a file
-  has a line like a long conflict marker. Two branches that each add an entry gate together and merge in
+  one copy). A file with a line like a long conflict marker (32 or more `<`, `|`, `=` or `>`) is a
+  conflict; CRLF files keep their CRs. Two branches that each add an entry gate together and merge in
   order without a rebase or a `-vN` push; a base that gained an entry after the gate is a re-gate
   (exit 4), not a replay conflict. The driver and a temporary attributes file (followed by the user's own
   global attributes) are passed to that one rebase with `git -c`; no git config or `.gitattributes` is

@@ -86,14 +86,14 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
    `repush.sh` (the loop never force-pushes). The output names the conflicting files (`TRAIN conflict
    in: ...`). Append-only logs that every branch adds to (`CHANGELOG.md` `## Unreleased`,
    `docs/DECISIONS.md`) need not conflict: list them in `merge.union_files` (off by default; literal
-   paths from the repository root). The stacking then resolves a conflict in those files with the
-   plugin's merge driver `scripts/union-merge.sh`: each conflicting hunk is kept whole, the base side's
-   hunk first, then the branch's, and no lines are merged inside them (git's own `merge=union` would fold
-   lines both entries share, such as `- **Alternatives:** none.`, into one copy). The driver then checks
-   that every line of the result appears at least as often as the two sides added it; when not (both
-   sides added the same lines at the same spot) it is a conflict, as is a file with a line that looks
-   like a long conflict marker. The driver and a temporary `core.attributesFile` are passed to that one
-   rebase with `git -c`; the user's and the repository's git config and `.gitattributes` are never
+   paths from the repository root). The stacking then merges those files with the plugin's merge driver
+   `scripts/union-merge.sh`. A merge that git does without a conflict is git's own result, as without
+   the option (a change both sides made the same way is kept once). A merge with conflicts keeps each
+   conflict hunk whole, the base side's hunk first, then the branch's, and merges no lines inside them
+   (git's own `merge=union` would fold lines both entries share, such as `- **Alternatives:** none.`,
+   into one copy); the lines outside the hunks merge as git merges them. A file with a line that starts
+   with 32 of one of git's conflict-marker characters is a conflict. CRLF files keep their CRs. The
+   driver and a temporary `core.attributesFile` are passed to that one rebase with `git -c`; the user's and the repository's git config and `.gitattributes` are never
    changed. A conflict in any other file stops the train as before, and a merge driver that the
    repository's `.gitattributes` (or `.git/info/attributes`) or the user's own global attributes set for
    a listed file wins. Two branches that make the very same file need no merge: git keeps one copy, with
@@ -836,7 +836,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `stall_minutes` (in a check entry, `affected`, `scenarios`) | none (off) | the gate stops a stage whose log has not grown for this many minutes: `<name> stalled: no output for <n> min`, the train is red; a stage queued for a heavy slot is not stalled |
 | `stop_gate.require_clean_tree`, `stop_gate.max_blocks` | `true`, `5` | the Stop hook's rules; the tree check counts untracked files only when newer than the session |
 | `merge.method`, `merge.delete_branch` | `squash`, `true` | how merge-train merges; `delete_branch` is the remote branch |
-| `merge.union_files` | `[]` (off) | literal paths from the repository root (no spaces, wildcards or backslashes; such entries are skipped with a warning) whose conflicts the gate's stacking and the merge replay resolve by keeping both conflicting hunks whole, the base first (`scripts/union-merge.sh`; a lost line is still a conflict), e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`; any other conflict still stops the train |
+| `merge.union_files` | `[]` (off) | literal paths from the repository root (no spaces, wildcards or backslashes; such entries are skipped with a warning) whose conflicts the gate's stacking and the merge replay resolve by keeping both conflicting hunks whole, the base first (`scripts/union-merge.sh`; a merge git does without a conflict is git's own result; a file with a line starting with 32 or more `<`, `|`, `=` or `>` counts as a conflict), e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`; any other conflict still stops the train |
 | `merge.delete_local` | `true` | merge-train also deletes the local branch (and its clean worktree) after the merge |
 | `merge.rebuildable` | `node_modules dist build target out coverage .venv` and the usual caches | ignored directories a merged worktree may lose when it is removed; a worktree with any other ignored file, or a secret or data file inside these (`.env`, keys, certificates, databases, any case; also `id_rsa`, `credentials*`, `secrets*`, which the search inside a `merge.rebuildable_caches` folder skips since vendored code uses such names), is kept |
 | `merge.rebuildable_caches` | `node_modules .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache .tox .next .turbo .parcel-cache` | the names of `merge.rebuildable` whose files also count one by one (a self-ignoring cache with its own `.gitignore` lists its files, not itself); output folders such as `build` or `out` count only as a whole, so results listed one by one keep the worktree |

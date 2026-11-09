@@ -169,8 +169,8 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   issue for a test that is genuinely flaky.
 - `TRAIN rebase conflict at <branch>` (exit 3), after a `TRAIN conflict in: <files>` line: with
   `merge.union_files` set (e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`), conflicts in those files get here
-  only when the driver finds a lost line (both sides added the same lines at the same spot), or when a
-  merge driver set in the repository's or the user's attributes wins; otherwise the stacking keeps both
+  only when a side has a line like a long conflict marker, or when a merge driver set in the repository's
+  or the user's attributes wins; otherwise the stacking keeps both
   conflicting hunks whole, the base first, then the branch. Any other conflict gets here. Drop that branch,
   gate the others, and have its implementer rebase it onto the new base after they merge (`git rebase
   --onto <remote>/<base> <old base> <branch>` when it was stacked; that form is not in the allow list, so
