@@ -5747,10 +5747,11 @@ echo "$out" | grep -qF "kept worktree $kwork/wt22: its archive could not be writ
   pass "kwt: an archive directory that cannot be written keeps the worktree and its branch" || fail "kwt: unwritable: $out"
 
 # The settle window above 0 after the move: renaming the worktree sets its own folder's ctime to now, which
-# must not count as a change. A find shim turns -mmin/-cmin into -newer/-cnewer against a file touched after
-# the setup, so only a later change is recent.
+# must not count as a change. A find shim turns -mmin/-cmin into -newer/-cnewer against a file touched right
+# after the setup (no sleep: a setup file is at most as new, never newer), so only a later change is recent;
+# the move comes many git calls later.
 kbranch feat/50-settle merged && kwt feat/50-settle "$kwork/wt50"
-: >"$kwork/settle.ref" && sleep 1
+: >"$kwork/settle.ref"
 mkdir -p "$kwork/shim2"
 cat >"$kwork/shim2/find" <<SHIM
 #!/usr/bin/env bash
@@ -5811,6 +5812,16 @@ echo "$out" | grep -F "$kwork/wt51 " | grep -qF "$kaside" &&
   pass "kwt: the next dry run notes a missing worktree whose folder was moved aside" || fail "kwt: no note for wt51: $out"
 [ -z "$kaside" ] || mv "$kaside" "$kwork/wt51"
 
+# A worktree path with a newline: the porcelain line cut at the newline names another worktree (wt60, of
+# feat/61), which must not be listed under the newline worktree's branch.
+knl="$kwork/wt60$(printf '\nx')"
+kbranch feat/60-newline merged && kwt feat/60-newline "$knl"
+kbranch feat/61-cut merged && kwt feat/61-cut "$kwork/wt60"
+out=$(kenv "$plugin/scripts/cleanup.sh")
+[ -z "$(printf '%s\n' "$out" | grep -F "feat/60-newline")" ] && kline "$kwork/wt60 " | grep -qF feat/61-cut &&
+  pass "kwt: a worktree path with a newline is not listed under another worktree's path" || fail "kwt: wt60: $out"
+git -C "$kwork/project" worktree remove --force "$knl"
+
 # merge-train's kept line names the command; the dev-loop skill and the CHANGELOG point at it.
 kept=$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_remove_merged_local feat/2-unmerged "$(git rev-parse feat/2-unmerged)"' \
   _ "$plugin" 2>&1)
@@ -5828,7 +5839,7 @@ awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#83' &&
 git -C "$kwork/project" checkout -q main
 git -C "$kwork/project" worktree unlock "$kwork/wt3"
 chmod 755 "$kwork/wt14/locked-away"
-for d in wt2 wt3 project-gate wt6 wt9 wt11/dist/inner wt11 wt13 wt14 wt20 wt21 wt22 wt23 wt24 wt25 wt40 wt50 wt51 wt52 wt53 restored1 restored41; do
+for d in wt2 wt3 project-gate wt6 wt9 wt11/dist/inner wt11 wt13 wt14 wt20 wt21 wt22 wt23 wt24 wt25 wt40 wt50 wt51 wt52 wt53 wt60 restored1 restored41; do
   [ ! -d "$kwork/$d" ] || git -C "$kwork/project" worktree remove --force "$kwork/$d"
 done
 cd "$work/project" || exit 1
