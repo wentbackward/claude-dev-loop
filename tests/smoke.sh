@@ -5477,7 +5477,7 @@ expect "ask rules: doctor leaves the settings files unchanged" "$qbefore" "$(qsu
 # The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
 grep -qF 'note permissions: ask rule' "$plugin/skills/doctor/SKILL.md" && pass "ask rules: the doctor skill has the ask-rule row" ||
   fail "ask rules: the doctor skill lacks the ask-rule row"
-awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF 'ask rule' &&
+awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF 'ask beats allow' &&
   pass "ask rules: the README permissions section describes the ask-rule check" || fail "ask rules: the README lacks the ask-rule check"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#84' && pass "ask rules: CHANGELOG has a #84 entry under Unreleased" ||
   fail "ask rules: no #84 entry under ## Unreleased"

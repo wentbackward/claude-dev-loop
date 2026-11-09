@@ -43,6 +43,7 @@ session as the owner) or the rule to move, and wait; never edit those files your
 | `note worktrees: <n> loop worktrees of the old layout ...` | nothing to do: they finish where they are (edits there ask in auto mode until they merge) |
 | `MISSING permissions: deny rule <rule> in <file> blocks "<command>"` | remove or narrow that deny rule in the project's settings file (the loop runs the command) |
 | `MISSING permissions: deny rule <rule> in <file> blocks "<command>": no release can be made ...` | a deny on `git tag`, `gh release` or a tag push: move it to `ask` in that file (the template asks; releases happen on the owner's go) |
+| `note permissions: ask rule <rule> in <file> stops "<command>" ...` | the rule asks for a command the loop runs (ask beats allow, so auto mode stops every time): the owner narrows it in that file, e.g. to the paths it guards; a `... matches inside other words` remark means a leading `*` before a short word such as `*go` also catches `cargo` |
 | `note current-state docs off: ...` | nothing is wrong; to adopt the docs, the `setup` skill's step 3b (gradual adoption for large existing docs) |
 | `MISSING docs aspect <name>: <path> does not exist` | create the doc (the `setup` skill's step 3b), or fix the path in `docs.aspects` |
 | `MISSING docs.map rule <n>: "<name>" is not in docs.aspects` | name a configured aspect, or add the aspect |

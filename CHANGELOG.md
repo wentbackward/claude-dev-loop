@@ -4,6 +4,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
+  `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
+  command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,
+  `gate_setup`, `format`): auto mode stops for confirmation on it every time, and ask beats allow. The
+  note names the file, the rule, the command and the fix (narrow it, e.g. to the paths it guards); a rule
+  such as `Bash(*go * -o*)` is also said to match inside other words. The template's ask rules match
+  nothing. Doctor stays read only.
 - Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` name their work dir on their first line
   (`started smoke (work dir PATH)`, a form the summary patterns `^(smoke|identity): ` do not match) and
   remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names

@@ -997,8 +997,8 @@ default mode; in auto mode the classifier judges it; in bypass mode only the sto
 hold it back.
 
 Claude Code merges the rules of every settings file, and a deny anywhere wins. `doctor.sh` reads only the
-project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`, never the user's
-own files): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
+project's `.claude/settings.json` and `.claude/settings.local.json` (their `permissions`; of the user's own
+files only the ask rules, below): a deny rule that blocks a command the loop runs is `MISSING`; a missing allow list, or one that
 lacks the current `fast_check` and `checks` commands or other loop rules, is a note; complete rules print
 nothing. A deny rule that blocks a tag, a release or a tag push is `MISSING` too, since no release could be
 made even on the owner's go; the fix is to move it to `ask`, as the template does. The forms it tests are
@@ -1011,7 +1011,12 @@ differs. A deny that blocks a loop command is reported in either settings file, 
 blocking the loop. Without `.claude/settings.json` it prints one note; its notes name the owner's apply
 line. A notes directory, a `worktrees_dir` or loop worktrees outside the project and not in
 `additionalDirectories` are `MISSING` (in auto mode every edit there asks); sibling worktrees of the old
-layout are a note once `worktrees_dir` is set.
+layout are a note once `worktrees_dir` is set. An ask rule that matches a command the loop runs or one
+`.dev-loop.json` configures (`fast_check`, `checks`, `affected`, `gate_setup`, `format`) is a note naming
+the file, the rule and the command: auto mode stops for confirmation on it every time, and since
+ask beats allow, the fix is to narrow the rule (e.g. to the paths it guards). For this check it also
+reads the `permissions.ask` list of the user settings (`DEV_LOOP_CLAUDE_DIR`, default `CLAUDE_CONFIG_DIR`, else
+`~/.claude`), and nothing else there. The template's ask rules match none of these commands.
 
 A wildcard cannot exclude arguments: `git push -u origin feat/*` would also match
 `git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask
