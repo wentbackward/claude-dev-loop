@@ -277,7 +277,7 @@ doctor_scenarios() {
 doctor_permissions() {
   local root rel file rule cmd allow commands="" lacking=0 samples
   if [ ! -f "$DL_ROOT/.claude/settings.json" ]; then
-    optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
+    optional "permissions: no .claude/settings.json: in the default permission mode every loop command asks (the owner applies the loop's rules: $(dl_perm_apply_line "$scripts_dir"))"
     return
   fi
   root=$(cd "$scripts_dir/.." && pwd)
@@ -295,32 +295,37 @@ doctor_permissions() {
   done
   allow=$(dl_perm_rules "$DL_ROOT/.claude/settings.json" allow; dl_perm_rules "$DL_ROOT/.claude/settings.local.json" allow)
   if [ -z "$allow" ]; then
-    optional "permissions: no allow list: in the default permission mode every loop command asks (the setup skill's permissions step: permissions.sh --apply)"
+    optional "permissions: no allow list: in the default permission mode every loop command asks (the owner applies the loop's rules: $(dl_perm_apply_line "$scripts_dir"))"
     return
   fi
   while IFS= read -r cmd; do
     printf '%s\n' "$allow" | grep -qxF -- "Bash($cmd)" || commands="${commands:+$commands, }Bash($cmd)"
   done < <(dl_perm_project_commands)
   [ -n "$commands" ] &&
-    optional "permissions: the allow list lacks the project commands: $commands (permissions.sh --apply)"
+    optional "permissions: the allow list lacks the project commands: $commands (the owner runs: $(dl_perm_apply_line "$scripts_dir"))"
   while IFS=$'\t' read -r _ rule; do
     printf '%s\n' "$allow" | grep -qxF -- "$rule" || lacking=$((lacking + 1))
   done < <({ dl_perm_wanted "$root" shared; dl_perm_wanted "$root" local; } | awk -F'\t' '$1 == "allow"' |
     grep -vxF -f <(dl_perm_project_commands | awk '{ print "allow\tBash(" $0 ")" }'))
   [ "$lacking" -gt 0 ] &&
-    optional "permissions: the allow list lacks $lacking of the loop's rules (permissions.sh lists them; --apply adds them)"
+    optional "permissions: the allow list lacks $lacking of the loop's rules (permissions.sh lists them; the owner adds them: $(dl_perm_apply_line "$scripts_dir"))"
   return 0
 }
 
 # doctor_release_denies: a deny rule in the project's .claude/settings.json or settings.local.json (never the
 # user's own files) that blocks a tag, a release or a tag push is MISSING: no release can be made while it
-# stands, even on the owner's go; the template asks for these instead.
+# stands, even on the owner's go; the template asks for these instead. A rule that also blocks a loop command
+# is left to doctor_permissions, which reports it once.
 doctor_release_denies() {
-  local rel rule cmd samples
-  samples=$(printf '%s\n' "git tag v1.2.3" "git tag -a v1.2.3 -m v1.2.3" "gh release create v1.2.3" \
-    "git push $DL_REMOTE v1.2.3" "git push $DL_REMOTE --tags")
+  local rel rule cmd samples loop
+  samples=$(printf '%s\n' "git tag v1.2.3" "git tag -a v1.2.3 -m v1.2.3" "git tag -s v1.2.3 -m v1.2.3" \
+    "git tag -m v1.2.3 v1.2.3" "gh release create v1.2.3" "git push $DL_REMOTE v1.2.3" \
+    "git push $DL_REMOTE refs/tags/v1.2.3" "git push $DL_REMOTE tag v1.2.3" "git push $DL_REMOTE --tags" \
+    "git push --tags" "git push --tags $DL_REMOTE" "git push --follow-tags" "git push $DL_REMOTE --follow-tags")
+  loop=$(dl_perm_loop_samples "$(cd "$scripts_dir/.." && pwd)")
   for rel in .claude/settings.json .claude/settings.local.json; do
     while IFS= read -r rule; do
+      doctor_rule_matches_any "$rule" "$loop" && continue
       while IFS= read -r cmd; do
         if dl_perm_match "$rule" "$cmd"; then
           missing "permissions: deny rule $rule in $rel blocks \"$cmd\": no release can be made, even on the owner's go (move it to ask; the owner edits the settings)"
@@ -329,6 +334,15 @@ doctor_release_denies() {
       done <<<"$samples"
     done < <(dl_perm_rules "$DL_ROOT/$rel" deny)
   done
+}
+
+# doctor_rule_matches_any RULE COMMANDS: true when the Bash permission RULE matches one of the COMMANDS (one per line).
+doctor_rule_matches_any() {
+  local cmd
+  while IFS= read -r cmd; do
+    dl_perm_match "$1" "$cmd" && return 0
+  done <<<"$2"
+  return 1
 }
 
 # doctor_worktrees: print worktrees_dir; outside the working directory and not in the project's

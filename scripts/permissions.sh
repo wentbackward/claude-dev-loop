@@ -104,6 +104,6 @@ elif [ -n "$apply" ]; then
   echo "permissions: added $total rules"
 else
   # The agent may not change its own permissions: the owner runs the apply (the ! prefix runs it as the owner).
-  echo "permissions: $total rules to add (dry run). The owner applies them in the session with: ! $scripts_dir/permissions.sh --apply"
+  echo "permissions: $total rules to add (dry run). The owner applies them in the session with: $(dl_perm_apply_line "$scripts_dir")"
 fi
 exit "$status"
