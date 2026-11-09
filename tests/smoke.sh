@@ -2620,7 +2620,7 @@ g origin main" "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='
 \$HOME
 E
 $p5" "cat <<'E'
-never ends" "/usr/bin/gi? push origin main" "GIT push origin main" "git-push origin main" "git status & git push"
+$p5" "/usr/bin/gi? push origin main" "GIT push origin main" "git-push origin main" "git status & git push"
 done
 grefused "$gg/proj-1" "pushd ../proj && git push -u origin HEAD" "env -C ../proj git push -u origin HEAD" \
   "env --chdir=../proj git push" "env --chd ../proj git push -u origin HEAD" "env -iC../proj git push -u origin HEAD" \
@@ -2645,7 +2645,7 @@ gpassed "$gg/proj-1" "git rebase origin/main" "git push -u origin HEAD" \
 out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "cwd": sys.argv[1],
   "tool_input": {"command": "git push origin $(echo main)"}}))' "$gg/proj-1" |
   CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
-case $out in *"not a plain command line"*"write it plainly"*"ask the owner"*) pass "git guard: a refusal of a non-plain command says to write it plainly" ;;
+case $out in *"not a plain command line"*"Write it plainly"*"ask the owner"*) pass "git guard: a refusal of a non-plain command says to write it plainly" ;;
   *) fail "git guard: the non-plain refusal does not explain itself: $out" ;; esac
 # Many refspecs and long commands: the text checks come first, refspecs are capped and the hook ends quickly.
 specs=$(awk 'BEGIN { for (i = 0; i < 6000; i++) printf "feat/r%d ", i }')

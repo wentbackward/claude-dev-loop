@@ -10,6 +10,8 @@ passes it when the project has neither scenarios nor identities). `guard-role.py
 store path as resolved from DIR (for tests).
 """
 
+import fnmatch
+import functools
 import glob
 import json
 import os
@@ -52,9 +54,6 @@ WRAPPERS = {
 }
 RESERVED = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-# Programs that never run their arguments as a command: a word git after them is text.
-NO_EXEC = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "cat", "ls", "head", "tail", "wc", "test", "[",
-           "which", "type", "man", "true", "false", ":"}
 SEPARATOR_CHARS = set(";&|()\n")
 SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
 GLOB_CHARS = set("*?[")
@@ -68,12 +67,17 @@ class Unparsable(Exception):
 
 
 def text_names_git(text: str) -> bool:
-    """True when text may run git: "git" once line continuations (a backslash-newline after an even number
-    of backslashes), quotes and backslashes are removed, or an ANSI-C string ($'...') that may spell it."""
-    if "$'" in text:
-        return True
+    """True when text may name git: "git" in any case (GIT_ variables included) once line continuations
+    (a backslash-newline after an even number of backslashes), quotes, backslashes, braces and commas are
+    removed and $'...' escapes decoded, or a glob that may match git (such as gi? or g[i]t)."""
     joined = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", text)
-    return "git" in re.sub(r"[\\'\"]", "", joined)
+    if "$'" in joined:
+        joined += "\n" + ANSI_C_ESCAPE.sub(ansi_c_char, joined)
+    if "git" in re.sub(r"[\\'\"{},]", "", joined).lower():
+        return True
+    globs = re.findall(r"[^\s;&|<>()'\"]*[*?[][^\s;&|<>()'\"]*", joined)
+    return any(set(word.lower()) & set("git") and fnmatch.fnmatchcase("git", os.path.basename(word).lower())
+               for word in globs)
 
 
 def refuse(reason: str) -> None:
@@ -837,9 +841,434 @@ GIT_DANGER = {
         "force-if-includes": "force-pushes (--force-if-includes)",
     },
 }
-GIT_GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path",
-                    "--super-prefix", "--list-cmds", "--attr-source"}
+GIT_GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix",
+                    "--list-cmds", "--attr-source"}
 REBASE_ACTIONS = {"continue", "abort", "skip", "quit", "edit-todo", "show-current-patch"}
+CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool", "--list",
+                "-l"}
+CONFIG_VALUE = {"-f", "--file", "--blob", "--type", "--default", "--comment"}
+MAX_REFSPECS = 50
+MAX_DIRS = 20
+
+# The plain command line: what the git check reads. Programs that run a command string or a file of
+# commands, compound commands, wrappers it follows, and programs whose arguments are only text.
+RUNNERS = {"alias", "eval", "builtin", "command", "exec", "source", ".", "trap", "watch", "script", "flock", "su",
+           "sudo", "doas", "busybox", "xargs", "parallel", "enable", "fc"}
+COMPOUND = {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "select",
+            "function", "coproc", "!", "[[", "]]"}
+ALL_SHELLS = SHELLS | {"ash", "mksh", "yash", "fish", "csh", "tcsh"}
+PLAIN_WRAPPERS = {name: WRAPPERS[name] for name in ("time", "nohup", "nice", "timeout", "stdbuf")}
+TEXT_PROGRAMS = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "cat", "ls", "head", "tail", "wc", "test", "[",
+                 "which", "type", "man", "true", "false", ":", "gh", "sort", "uniq", "cut", "tr", "diff", "cmp",
+                 "basename", "dirname", "realpath", "readlink", "stat", "file", "du", "df", "mkdir", "touch", "rm",
+                 "rmdir", "cp", "mv", "ln", "chmod", "tee", "jq", "pwd", "sleep", "date"}
+DIR_PROGRAMS = {"cd", "pushd", "popd"}
+DECLARERS = {"export", "declare", "typeset", "local", "readonly"}
+# Variables that change which git runs, where, or with what config.
+PROTECTED_ENV = re.compile(r"^(GIT_\w*|PATH|HOME|CDPATH|XDG_CONFIG_HOME|BASH_ENV|ENV|LD_PRELOAD)$")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
+# Text that reads as a git command line ("git push", "/usr/lib/git-core/git-push origin"): a program
+# given it may run it.
+GIT_TEXT = re.compile(r"(?<![\w.-])git(?:-[\w-]+)?\s", re.IGNORECASE)
+REDIRECT_OPS = ("<<<", "<<-", "&>>", "<<", ">>", ">|", "<>", ">&", "<&", "&>", "<", ">")
+HEREDOC_WORD = re.compile(r"""(?:'([\w.-]+)'|"([\w.-]+)"|\\([\w.-]+)|([\w.-]+))(?=[\s;&|<>]|$)""")
+
+
+class NotPlain(Exception):
+    """A command naming git that is not a plain command line; the message says what is not plain."""
+
+
+class Word:
+    """One shell word: its literal text, whether any of it was quoted, whether it has an unquoted glob
+    character, and the offset of its first quoted character (-1 when none)."""
+
+    def __init__(self) -> None:
+        self.text, self.quoted, self.glob, self.first_quote = "", False, False, -1
+
+
+class Simple:
+    """A simple command: its words, its redirection targets (here-document bodies included) and the
+    operator after it ("" at the end)."""
+
+    def __init__(self) -> None:
+        self.words: list[Word] = []
+        self.targets: list[Word] = []
+        self.op = ""
+
+
+class PlainLexer:
+    """Splits a plain command line into simple commands, as bash reads it; raises NotPlain on anything that
+    is not literal (an expansion, a brace, a subshell, a background &, an unbalanced quote, ...)."""
+
+    def __init__(self, text: str) -> None:
+        self.text, self.index = text, 0
+        self.commands = [Simple()]
+        self.pending: list[tuple[bool, bool, str, Word]] = []  # here-documents waiting for their bodies
+        self.word: Word | None = None
+        self.redirect = ""  # a redirection waiting for its target word
+
+    def run(self) -> list[Simple]:
+        """The simple commands of the text."""
+        text = self.text
+        while self.index < len(text):
+            char = text[self.index]
+            if char in " \t":
+                self.end_word()
+                self.index += 1
+            elif char == "\\":
+                self.backslash()
+            elif char == "'":
+                self.single_quote()
+            elif char == '"':
+                self.double_quote()
+            elif char in "$`":
+                raise NotPlain(f"a {char} expansion")
+            elif char in "{}()":
+                raise NotPlain(f"a {char} (braces, subshells and functions are not plain)")
+            elif char == "#" and self.word is None:
+                end = text.find("\n", self.index)
+                self.index = len(text) if end < 0 else end
+            elif char in "<>" or text.startswith("&>", self.index):
+                self.redirection()
+            elif char in ";|&\n":
+                self.operator()
+            else:
+                self.add(char, glob=char in GLOB_CHARS)
+                self.index += 1
+        self.end_word()
+        if self.pending:
+            raise NotPlain("a here-document without its end line")
+        if self.redirect:
+            raise NotPlain("a redirection without a target")
+        return [command for command in self.commands if command.words or command.targets]
+
+    def add(self, chars: str, quoted: bool = False, glob: bool = False) -> None:
+        """Append chars to the current word (starting one)."""
+        if self.word is None:
+            self.word = Word()
+        word = self.word
+        if quoted and word.first_quote < 0:
+            word.first_quote = len(word.text)
+        word.text += chars
+        word.quoted, word.glob = word.quoted or quoted, word.glob or glob
+
+    def end_word(self) -> None:
+        """Finish the current word: a leading unquoted ~ is the home directory; the word is the pending
+        redirection's target or the next word of the command."""
+        word, self.word = self.word, None
+        if word is None:
+            return
+        if word.first_quote != 0 and (word.text == "~" or word.text.startswith("~/")):
+            word.text = os.environ.get("HOME", "") + word.text[1:]
+        if self.redirect:
+            self.commands[-1].targets.append(word)
+            self.redirect = ""
+        else:
+            self.commands[-1].words.append(word)
+
+    def backslash(self) -> None:
+        """A backslash quotes the next character; before a newline it continues the line."""
+        following = self.text[self.index + 1 : self.index + 2]
+        if following != "\n":
+            self.add(following or "\\", quoted=True)
+        self.index += 2
+
+    def single_quote(self) -> None:
+        """A single-quoted string: literal up to the next single quote."""
+        end = self.text.find("'", self.index + 1)
+        if end < 0:
+            raise NotPlain("an unbalanced quote")
+        self.add(self.text[self.index + 1 : end], quoted=True)
+        self.index = end + 1
+
+    def double_quote(self) -> None:
+        """A double-quoted string without $ or backticks; a backslash quotes $ ` " \\ and newline only."""
+        text, index, out = self.text, self.index + 1, []
+        while index < len(text) and text[index] != '"':
+            char = text[index]
+            if char in "$`":
+                raise NotPlain(f"a {char} expansion")
+            if char == "\\" and text[index + 1 : index + 2] in {"$", "`", '"', "\\", "\n"}:
+                out.append("" if text[index + 1] == "\n" else text[index + 1])
+                index += 2
+            else:
+                out.append(char)
+                index += 1
+        if index >= len(text):
+            raise NotPlain("an unbalanced quote")
+        self.add("".join(out), quoted=True)
+        self.index = index + 1
+
+    def redirection(self) -> None:
+        """A redirection operator (a file descriptor number before it is part of it); a here-document
+        reads its end word now and its body after the next newline."""
+        word = self.word
+        if word is not None and word.text.isdigit() and not word.quoted and self.text[self.index] in "<>":
+            self.word = None
+        else:
+            self.end_word()
+        if self.redirect:
+            raise NotPlain("a redirection without a target")
+        operator = next(op for op in REDIRECT_OPS if self.text.startswith(op, self.index))
+        self.index += len(operator)
+        if operator in {"<<", "<<-"}:
+            self.heredoc(operator == "<<-")
+        else:
+            self.redirect = operator
+
+    def heredoc(self, strip_tabs: bool) -> None:
+        """The end word of a here-document: one plain word, maybe quoted as a whole."""
+        while self.index < len(self.text) and self.text[self.index] in " \t":
+            self.index += 1
+        match = HEREDOC_WORD.match(self.text, self.index)
+        if not match:
+            raise NotPlain("a here-document end word that is not one plain word")
+        body = Word()
+        self.commands[-1].targets.append(body)
+        delimiter = next(group for group in match.groups() if group)
+        self.pending.append((strip_tabs, match.group(4) is None, delimiter, body))
+        self.index = match.end()
+
+    def operator(self) -> None:
+        """&&, ||, ;, |, |& or a newline (which starts the pending here-document bodies); a lone & is not
+        plain."""
+        self.end_word()
+        if self.redirect:
+            raise NotPlain("a redirection without a target")
+        pair = self.text[self.index : self.index + 2]
+        if pair in {"&&", "||", "|&"}:
+            operator, size = ("|" if pair == "|&" else pair), 2
+        elif pair[0] == "&":
+            raise NotPlain("a background &")
+        else:
+            operator, size = pair[0], 1
+        self.commands[-1].op = operator
+        self.commands.append(Simple())
+        self.index += size
+        if operator == "\n" and self.pending:
+            self.bodies()
+
+    def bodies(self) -> None:
+        """Read the pending here-document bodies; an unquoted end word's body must expand nothing."""
+        text = self.text
+        for strip_tabs, quoted, delimiter, body in self.pending:
+            lines = []
+            while True:
+                if self.index >= len(text):
+                    raise NotPlain("a here-document without its end line")
+                end = text.find("\n", self.index)
+                end = len(text) if end < 0 else end
+                line, self.index = text[self.index : end], end + 1
+                if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                    break
+                if not quoted and any(char in line for char in "$`\\"):
+                    raise NotPlain("a here-document body with $, backticks or backslashes and an unquoted end word")
+                lines.append(line)
+            body.text, body.quoted = "\n".join(lines), True
+        self.pending = []
+
+
+class Directories:
+    """The directories the next command may run in, following cd, pushd and popd across &&, ||, ; and
+    newlines: a cd that may fail or be skipped keeps the directory before it possible."""
+
+    def __init__(self, cwd: str) -> None:
+        self.dirs = {cwd}
+        self.fallback: set[str] = set()  # directories before a cd of this and-or list
+        self.stack: list[set[str]] = []
+
+    def change(self, program: str, args: list[Word], previous: str) -> None:
+        """Apply cd, pushd or popd (previous: the operator before it)."""
+        old = set(self.dirs)
+        if program == "popd":
+            if args or not self.stack:
+                raise NotPlain("a popd the guard cannot follow")
+            new = self.stack.pop()
+        else:
+            target = dir_target(program, args)
+            new = {os.path.normpath(os.path.join(directory, target)) for directory in old}
+            if program == "pushd":
+                self.stack.append(old)
+        self.dirs = new | old if previous == "||" else new
+        self.fallback |= old
+        if len(self.dirs | self.fallback) > MAX_DIRS:
+            raise NotPlain("more directory changes than the guard follows")
+
+    def after(self, operator: str) -> None:
+        """After || ; or a newline the directories before a failed cd are possible again."""
+        if operator in {"||", ";", "\n", ""}:
+            self.dirs = self.dirs | self.fallback  # a new set: the old one may be in use by a git command
+        if operator in {";", "\n", ""}:
+            self.fallback = set()
+
+
+def dir_target(program: str, args: list[Word]) -> str:
+    """The directory a plain cd or pushd changes to (HOME for a bare cd)."""
+    words = [word for word in args if word.text not in {"-L", "-P", "--"}]
+    if not words:
+        if program == "pushd":
+            raise NotPlain("a pushd without a directory")
+        return os.environ.get("HOME", "/")
+    target = words[0]
+    if target.text.startswith(("-", "+")) or target.glob:
+        raise NotPlain(f"a {program} the guard cannot follow ({target.text})")
+    return target.text
+
+
+def is_assignment(word: Word) -> bool:
+    """True when a word is a variable assignment (its = unquoted)."""
+    match = ASSIGNMENT.match(word.text)
+    return bool(match) and (word.first_quote < 0 or match.end() <= word.first_quote)
+
+
+def check_assignment(text: str) -> None:
+    """Refuse an assignment to a variable that changes what git runs, or of text naming a git command."""
+    name = re.split(r"[\[+=]", text, maxsplit=1)[0]
+    if PROTECTED_ENV.match(name):
+        raise NotPlain(f"it sets {name}, which changes which git runs, where, or with what config")
+    if GIT_TEXT.search(text.partition("=")[2] + " "):
+        raise NotPlain(f"it stores text naming git in {name}")
+
+
+def skip_env(words: list[Word], index: int, dirs: set[str]) -> tuple[int, set[str]]:
+    """The index after env's options and assignments, and the directories its -C/--chdir gives."""
+    while index < len(words):
+        text = words[index].text
+        value = None
+        if ASSIGNMENT.match(text):
+            check_assignment(text)
+        elif text == "--":
+            return index + 1, dirs
+        elif not text.startswith("-") or text == "-":
+            return index, dirs
+        elif text.startswith("--"):
+            name, equals, value = text[2:].partition("=")
+            if "split-string".startswith(name):
+                raise NotPlain("env -S splits a string into a command")
+            if not equals and any(option.startswith(name) for option in ("chdir", "unset", "argv0")):
+                value, index = (words[index + 1].text if index + 1 < len(words) else ""), index + 1
+            value = value if "chdir".startswith(name) else None
+        else:
+            for position, letter in enumerate(text[1:]):
+                if letter == "S":
+                    raise NotPlain("env -S splits a string into a command")
+                if letter in "Cua":
+                    rest = text[position + 2 :]
+                    if not rest:
+                        rest, index = (words[index + 1].text if index + 1 < len(words) else ""), index + 1
+                    value = rest if letter == "C" else None
+                    break
+        if value is not None:
+            if GLOB_CHARS & set(value):
+                raise NotPlain(f"an env -C the guard cannot follow ({value})")
+            dirs = {os.path.normpath(os.path.join(directory, value)) for directory in dirs}
+        index += 1
+    return index, dirs
+
+
+def unwrap(words: list[Word], dirs: set[str]) -> tuple[int, set[str]]:
+    """The index of the program word after assignments and wrappers (env, time, nohup, nice, timeout,
+    stdbuf, as-role.sh ROLE, heavy.sh), and the directories it runs in."""
+    index = 0
+    while index < len(words) and is_assignment(words[index]):
+        check_assignment(words[index].text)
+        index += 1
+    texts = [word.text for word in words]
+    while index < len(words):
+        name = os.path.basename(texts[index])
+        if name == "env":
+            index, dirs = skip_env(words, index + 1, dirs)
+        elif name in PLAIN_WRAPPERS:
+            index = skip_wrapper_options(texts, index + 1, name)
+        elif name in {"as-role.sh", "heavy.sh"}:
+            index += 2 if name == "as-role.sh" else 1
+        else:
+            break
+    return index, dirs
+
+
+def man_runs(text: str) -> bool:
+    """True when a man option names a program to run (-H, -P, --html, --pager, or a prefix of them)."""
+    if text.startswith("--"):
+        name = text[2:].split("=", 1)[0]
+        return bool(name) and ("html".startswith(name) or "pager".startswith(name))
+    return text.startswith("-") and bool(set(text[1:]) & {"H", "P"})
+
+
+def check_program(program: str, texts: list[str]) -> None:
+    """Refuse a program that runs a command string the guard cannot read, or changes git's environment."""
+    if program in COMPOUND:
+        raise NotPlain(f"a compound command ({program} ...)")
+    if program in RUNNERS:
+        raise NotPlain(f"{program} runs a command the guard cannot read")
+    if program in ALL_SHELLS and (len(texts) < 2 or texts[1].startswith(("-", "+"))):
+        raise NotPlain(f"{program} reads its commands from a string or stdin")
+    if program == "find" and {"-exec", "-execdir", "-ok", "-okdir"} & set(texts):
+        raise NotPlain("find -exec runs a command")
+    if program == "rg" and any(text == "--pre" or text.startswith("--pre=") for text in texts):
+        raise NotPlain("rg --pre runs a command")
+    if program == "man" and any(man_runs(text) for text in texts[1:]):
+        raise NotPlain("man -H/-P/--html/--pager runs a command")
+    if program == "gh" and texts[1:2] == ["alias"]:
+        raise NotPlain("gh alias defines a command")
+    if program in DECLARERS:
+        for text in texts[1:]:
+            if not text.startswith("-"):
+                check_assignment(text if "=" in text else text + "=")
+
+
+def other_program(words: list[Word], targets: list[Word], dirs: set[str]) -> list[tuple[list[str], set[str]]]:
+    """For a program the guard does not know: every word git (or git-<name>) starts a git command, since
+    the program may run it; text naming git before it, or in its input, is refused."""
+    program = words[0].text if words else ""
+    if any(GIT_TEXT.search(target.text + " ") for target in targets if target.quoted):
+        raise NotPlain(f"{program or 'a command'} reads text naming git, which it may run")
+    for position, word in enumerate(words):
+        name = os.path.basename(word.text).lower()
+        if name == "git" or name.startswith("git-"):
+            return [(git_argv([word.text for word in words[position:]]), dirs)]
+        if word.glob and fnmatch.fnmatchcase("git", os.path.basename(word.text).lower()):
+            raise NotPlain(f"a glob that may match git ({word.text})")
+        if GIT_TEXT.search(word.text):
+            raise NotPlain(f"{program} is given text naming git, which it may run")
+    return []
+
+
+def git_argv(texts: list[str]) -> list[str]:
+    """A git command's argv, with git-<name> read as git <name>."""
+    name = os.path.basename(texts[0]).lower()
+    return ["git", name[4:]] + texts[1:] if name.startswith("git-") else ["git"] + texts[1:]
+
+
+def git_invocations(commands: list[Simple], cwd: str) -> list[tuple[list[str], set[str]]]:
+    """The git commands of a plain command line, each with the directories it may run in; refuses
+    (NotPlain) what may run text the guard cannot read."""
+    found: list[tuple[list[str], set[str]]] = []
+    where, previous, tainted = Directories(cwd), "", False
+    for command in commands:
+        index, dirs = unwrap(command.words, where.dirs)
+        words = command.words[index:]
+        texts = [word.text for word in words]
+        program = os.path.basename(texts[0]).lower() if texts else ""
+        tainted = tainted and previous == "|"
+        if words and words[0].glob:
+            raise NotPlain(f"a glob as the command name ({texts[0]})")
+        check_program(program, texts)
+        if program in DIR_PROGRAMS:
+            if "|" in {previous, command.op}:
+                raise NotPlain(f"a {program} in a pipeline")
+            where.change(program, words[1:], previous)
+        elif program == "git" or program.startswith("git-"):
+            found.append((git_argv(texts), dirs))
+        elif program and program not in TEXT_PROGRAMS:
+            if tainted:
+                raise NotPlain(f"text naming git is piped into {program}, which may run it")
+            found += other_program(words, command.targets, dirs)
+        tainted = tainted or any(GIT_TEXT.search(word.text + " ") for word in command.words + command.targets
+                                 if word.quoted)
+        previous = command.op
+        where.after(command.op)
+    return found
 
 
 def guard_on(config: dict) -> bool:
@@ -849,32 +1278,50 @@ def guard_on(config: dict) -> bool:
 
 def git_refuse(command: str, why: str) -> None:
     """Refuse a git command that a stop condition forbids."""
-    refuse(f"'{command}' is refused: it {why}, which is a stop condition; ask the owner to run it")
+    shown = command if len(command) <= 200 else command[:200] + " ..."
+    refuse(f"'{shown}' is refused: it {why}, which is a stop condition; ask the owner to run it")
 
 
-def git_split(tokens: list[str], cwd: str) -> tuple[str, list[str], str, bool]:
-    """(subcommand, its arguments, the directory git runs in, whether config is injected with -c)."""
-    index, injected = 1, False
+def refuse_not_plain(command: str, reason: str) -> None:
+    """Refuse a command that names git but is not a plain command line."""
+    first = command.strip().splitlines()[0][:120] if command.strip() else command
+    refuse(
+        f"'{first}' is refused: it names git but is not a plain command line ({reason}), so the guard"
+        " cannot tell what it runs. Write it plainly: literal words joined by &&, ||, ;, | or newlines, no $"
+        " or backtick expansions, braces, subshells, functions, aliases, eval or sh -c; a commit message as"
+        " git commit -F - <<'EOF' (a quoted end word). Or ask the owner to run it"
+    )
+
+
+def git_split(tokens: list[str], dirs: set[str]) -> tuple[str, list[str], set[str], set[str]]:
+    """(subcommand, its arguments, the directories git runs in, the global options that matter: "config"
+    for -c/--config-env, "elsewhere" for --git-dir/--work-tree, "exec-path" for --exec-path=<dir>)."""
+    index, flags = 1, set()
     while index < len(tokens):
         token = tokens[index]
         name = token.split("=", 1)[0]
+        if name in {"-c", "--config-env"}:
+            flags.add("config")
+        if name in {"--git-dir", "--work-tree"}:
+            flags.add("elsewhere")
+        if name == "--exec-path" and "=" in token:
+            flags.add("exec-path")
         if token in GIT_GLOBAL_VALUE:
             value = tokens[index + 1] if index + 1 < len(tokens) else ""
             if token == "-C":
-                cwd = expand(value, cwd)
-            injected = injected or token in {"-c", "--config-env"}
+                dirs = {os.path.normpath(os.path.join(directory, value)) for directory in dirs}
+                flags |= {"glob"} if GLOB_CHARS & set(value) else set()
             index += 2
         elif token.startswith("-"):
-            injected = injected or name == "--config-env"
             index += 1
         else:
             break
     if index >= len(tokens):
-        return "", [], cwd, injected
-    sub, rest = tokens[index], tokens[index + 1 :]
+        return "", [], dirs, flags
+    sub, rest = tokens[index].lower(), tokens[index + 1 :]
     if sub == "worktree" and rest[:1] == ["remove"]:
         sub, rest = "worktree remove", rest[1:]
-    return sub, rest, cwd, injected
+    return sub, rest, dirs, flags
 
 
 def resolve_long(sub: str, name: str) -> set[str]:
@@ -926,6 +1373,7 @@ def git_parse(sub: str, args: list[str]) -> tuple[list[tuple[str, str]], list[st
     return options, positional
 
 
+@functools.lru_cache(maxsize=None)
 def current_branch(cwd: str) -> str:
     """The branch checked out in cwd ("HEAD" when detached), or empty outside a repository."""
     try:
@@ -939,38 +1387,49 @@ def current_branch(cwd: str) -> str:
         return ""
 
 
-def is_tag(name: str, cwd: str) -> bool:
-    """True when name is a tag and not a branch of the repository in cwd."""
-
-    def exists(ref: str) -> bool:
-        try:
-            return subprocess.run(["git", "-C", cwd, "show-ref", "--verify", "--quiet", ref]).returncode == 0
-        except OSError:
-            return False
-
-    return exists(f"refs/tags/{name}") and not exists(f"refs/heads/{name}")
+@functools.lru_cache(maxsize=None)
+def local_refs(cwd: str) -> tuple[frozenset[str], frozenset[str]]:
+    """(the branch names, the tag names) of the repository in cwd, from one git show-ref."""
+    try:
+        lines = subprocess.run(["git", "-C", cwd, "show-ref"], capture_output=True, text=True).stdout.splitlines()
+    except OSError:
+        lines = []
+    refs = [line.partition(" ")[2] for line in lines]
+    heads = frozenset(ref[len("refs/heads/") :] for ref in refs if ref.startswith("refs/heads/"))
+    tags = frozenset(ref[len("refs/tags/") :] for ref in refs if ref.startswith("refs/tags/"))
+    return heads, tags
 
 
 def names_base(ref: str, base: str) -> bool:
-    """True when a ref as written in a refspec names the base branch."""
-    return ref in {base, f"heads/{base}", f"refs/heads/{base}"}
+    """True when a ref as written in a refspec names the base branch (in any case)."""
+    return ref.lower() in {base.lower(), f"heads/{base}".lower(), f"refs/heads/{base}".lower()}
 
 
-def head_branch(ref: str, cwd: str, command: str) -> str:
-    """A ref with HEAD (or @) replaced by the branch checked out in cwd; refuses when it cannot tell."""
-    if ref not in {"HEAD", "@"}:
-        return ref
-    branch = current_branch(cwd)
-    if not branch:
-        git_refuse(command, f"pushes HEAD from {cwd}, a directory the guard cannot read, so maybe the base branch")
-    return branch
+def config_reads(args: list[str]) -> bool:
+    """True when a git config command only reads (--get*, --list/-l, get, list)."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in CONFIG_READS:
+            return True
+        if arg in CONFIG_VALUE:
+            index += 2
+        elif arg.startswith("-"):
+            index += 1
+        else:
+            return arg in {"get", "list"}
+    return False
 
 
-def check_push(options: list[tuple[str, str]], positional: list[str], cwd: str, base: str, command: str) -> None:
-    """Refuse a push that forces, deletes or tags, or whose source or destination is the base branch."""
+def push_texts(options: list[tuple[str, str]], positional: list[str], base: str, command: str) -> list[tuple[str, str]]:
+    """Refuse a push whose refspecs, as written, force, delete, tag or name the base branch; the
+    (source, destination) pairs left for the checks that need git (destination empty when not given)."""
     repo_given = any(option == "repo" for option, _ in options)
     refspecs = positional if repo_given else positional[1:]
+    pairs = []
     for spec in refspecs or ["HEAD"]:
+        if spec == "tag":
+            git_refuse(command, "pushes a tag (tag <name>)")
         if spec.startswith("+"):
             git_refuse(command, f"force-pushes ({spec})")
         if GLOB_CHARS & set(spec):
@@ -978,72 +1437,101 @@ def check_push(options: list[tuple[str, str]], positional: list[str], cwd: str, 
         source, colon, destination = spec.partition(":")
         if colon and not source:
             git_refuse(command, f"deletes a remote branch ({spec})")
-        source = head_branch(source, cwd, command)
-        destination = destination if colon else source
         for ref in (source, destination):
-            if ref.startswith(("refs/tags/", "tags/")) or (ref == source and is_tag(ref, cwd)):
+            if ref.lower().startswith(("refs/tags/", "tags/")):
                 git_refuse(command, f"pushes a tag ({spec})")
             if names_base(ref, base):
                 git_refuse(command, f"pushes the base branch {base} ({spec})")
+        pairs.append((source, destination))
+    if len(refspecs) > MAX_REFSPECS:
+        git_refuse(command, f"pushes {len(refspecs)} refspecs, more than the guard checks ({MAX_REFSPECS})")
+    return pairs
 
 
-def check_rebase(options: list[tuple[str, str]], positional: list[str], cwd: str, base: str, command: str) -> None:
-    """Refuse a rebase whose rewritten branch is the base branch."""
+def push_refs(pairs: list[tuple[str, str]], dirs: set[str], base: str, command: str) -> None:
+    """Refuse a push of HEAD (or @) from a directory where the base branch is checked out or where the
+    branch cannot be read, and a push of a name that is a tag and not a branch."""
+    for directory in sorted(dirs):
+        heads, tags = local_refs(directory)
+        for source, destination in pairs:
+            ref = source
+            if source in {"HEAD", "@"}:
+                ref = current_branch(directory)
+                if not ref:
+                    git_refuse(command, f"pushes HEAD from {directory}, a directory the guard cannot read, so maybe"
+                               " the base branch")
+            if names_base(ref, base):
+                git_refuse(command, f"pushes the base branch {base} ({source} in {directory})")
+            for name in (ref, destination):
+                if name in tags and name not in heads:
+                    git_refuse(command, f"pushes a tag ({name})")
+
+
+def rebase_branch(dirs: set[str], base: str, command: str) -> None:
+    """Refuse a rebase of HEAD where the base branch is checked out."""
+    for directory in sorted(dirs):
+        if names_base(current_branch(directory), base):
+            git_refuse(command, f"rewrites the base branch {base} (checked out in {directory})")
+
+
+def check_rebase(options: list[tuple[str, str]], positional: list[str], dirs: set[str], base: str,
+                 command: str) -> list:
+    """Refuse a rebase whose rewritten branch, as written, is the base branch; the check of HEAD is left
+    for later (it needs git)."""
     names = {option for option, _ in options}
     if names & REBASE_ACTIONS:
-        return
+        return []
     wanted = 0 if "root" in names else 1
     branch = positional[wanted] if len(positional) > wanted else "HEAD"
-    if branch in {"HEAD", "@"}:
-        branch = current_branch(cwd)
-    if names_base(branch, base):
-        git_refuse(command, f"rewrites the base branch {base}")
+    if branch not in {"HEAD", "@"}:
+        if names_base(branch, base):
+            git_refuse(command, f"rewrites the base branch {base}")
+        return []
+    return [functools.partial(rebase_branch, dirs, base, command)]
 
 
-def check_git(tokens: list[str], cwd: str, base: str) -> None:
-    """Refuse a git command whose parsed argv hits a stop condition."""
-    sub, args, cwd, injected = git_split(tokens, cwd)
+def check_git(tokens: list[str], dirs: set[str], base: str) -> list:
+    """Refuse a git command whose text hits a stop condition; returns the checks that need git itself (the
+    branch checked out, the tags), which run after every text check."""
+    sub, args, dirs, flags = git_split(tokens, dirs)
     command = " ".join(tokens)
-    if injected:
+    if "config" in flags:
         git_refuse(command, "injects git config (-c/--config-env), which can run a command (aliases, pagers, ssh)")
+    if "exec-path" in flags:
+        git_refuse(command, "runs git commands from another directory (--exec-path)")
+    if "glob" in flags:
+        git_refuse(command, "runs in a directory a glob names (-C)")
+    if "elsewhere" in flags and sub in {"push", "rebase"}:
+        git_refuse(command, f"{sub}es another repository's branch (--git-dir/--work-tree), maybe the base")
+    if sub == "config" and not config_reads(args):
+        git_refuse(command, "writes git config (an alias or a hook can run any command)")
+    if (sub == "submodule" and "foreach" in args) or (sub == "bisect" and "run" in args):
+        git_refuse(command, f"runs a command string ({sub} {'foreach' if sub == 'submodule' else 'run'})")
+    if sub == "filter-branch":
+        git_refuse(command, "runs command strings (filter-branch)")
     if sub not in GIT_LONG:
-        return
+        return []
     options, positional = git_parse(sub, args)
     for option, _ in options:
         if option in GIT_DANGER.get(sub, {}):
             git_refuse(command, GIT_DANGER[sub][option])
     if sub == "push":
-        check_push(options, positional, cwd, base, command)
-    elif sub == "rebase":
-        check_rebase(options, positional, cwd, base, command)
-
-
-def git_commands(command: str, cwd: str) -> list[tuple[list[str], str]]:
-    """The git commands in a shell command with the directory each runs in (cd followed): every unquoted
-    word git (or a path to it) starts one, wherever it stands in its simple command, since the guard cannot
-    always tell which word bash runs (as-role.sh, heavy.sh, unknown wrappers, a substitution or arithmetic
-    before it); only after a program that never runs its arguments (echo, grep, ...) is it text."""
-    found = []
-    for tokens in parsed_segments(command):
-        program = os.path.basename(tokens[0])
-        if program == "cd":
-            cwd = expand(tokens[1], cwd) if len(tokens) > 1 else os.environ.get("HOME", cwd)
-            continue
-        if program in NO_EXEC:
-            continue
-        found += [(tokens[i:], cwd) for i, token in enumerate(tokens) if os.path.basename(token) == "git"]
-    return found
+        pairs = push_texts(options, positional, base, command)
+        return [functools.partial(push_refs, pairs, dirs, base, command)]
+    if sub == "rebase":
+        return check_rebase(options, positional, dirs, base, command)
+    return []
 
 
 def names_git(event: dict) -> bool:
-    """True when a Bash call may run git: "git" in its command once quotes and backslashes are removed."""
+    """True when a Bash call may run git (text_names_git on its command)."""
     if event.get("tool_name") != "Bash":
         return False
     return text_names_git(str((event.get("tool_input") or {}).get("command", "")))
 
 
 def refuse_unparsable(command: str) -> None:
-    """Refuse a command that names git but cannot be parsed."""
+    """Refuse a command that names git but cannot be parsed (identity and scenario checks)."""
     first = command.strip().splitlines()[0] if command.strip() else command
     refuse(
         f"'{first}' (and what follows) cannot be parsed by the guard (a quote it reads differently from"
@@ -1061,16 +1549,24 @@ def parsed_segments(command: str) -> list[list[str]]:
 
 
 def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
-    """Refuse a Bash call with a git command that a stop condition forbids (unless "guard": false)."""
+    """Refuse a Bash call that names git unless it is a plain command line whose git commands hit no stop
+    condition (unless "guard": false). Text checks run first; the checks that need git run once each."""
     if event.get("tool_name") != "Bash" or not guard_on(config):
         return
     base = str(config.get("base_branch") or "main")
     command = str((event.get("tool_input") or {}).get("command", ""))
-    for tokens, at in git_commands(command, cwd):
-        try:
-            check_git(tokens, at, base)
-        except Exception as error:  # fail closed: a git command the guard cannot parse is not let through
-            git_refuse(" ".join(tokens), f"cannot be checked by the guard ({type(error).__name__})")
+    if not text_names_git(command):
+        return
+    try:
+        invocations = git_invocations(PlainLexer(command).run(), cwd)
+    except NotPlain as error:
+        refuse_not_plain(command, str(error))
+        return
+    deferred = []
+    for tokens, dirs in invocations:
+        deferred += check_git(tokens, dirs, base)
+    for check in deferred:
+        check()
 
 
 def main() -> None:
