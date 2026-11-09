@@ -870,9 +870,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 
 ## 2026-11-09 — Repush keeps the notes' line endings (#82)
 
-- **Decision:** `repush.sh` writes the Supersedes line (and the blank lines around it) with the notes'
-  own line ending, CRLF when any line of the notes ends in CR, and keeps a missing final newline missing;
-  a CR-only line counts as blank when the blank lines before the footer are trimmed.
+- **Decision:** `repush.sh` writes the Supersedes line (and the blank lines around it) with CRLF when any
+  line of the notes ends in CR, else LF, and keeps a missing final newline missing (a last line ending in
+  a bare CR or a NUL byte included); every original line keeps its own ending, the footer too, and a
+  CR-only line counts as blank when the blank lines before the footer are trimmed to one.
 - **Reason:** the issue asks that the body is otherwise unchanged; keeping the bytes is a few characters
   of awk, and a byte-compare test then states exactly what changes.
 - **Alternatives:** normalising the notes to LF (rewrites every line of a CRLF file); adding a final

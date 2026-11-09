@@ -43,21 +43,22 @@ taken() {
 
 # with_supersedes NOTES LINE: NOTES with LINE added after a blank line, before the closing
 # "Generated with [Claude Code]" footer line when the notes end with one, so the PR body still ends with it.
-# The added lines take the notes' line ending (CRLF when a line ends in CR), and notes without a final
-# newline still end without one; every other byte is kept.
+# The added lines take CRLF when any line of the notes ends in CR, else LF; notes without a final newline
+# still end without one. The blank lines before the footer become one and blank lines after it are
+# dropped; every other byte is kept.
 with_supersedes() {
   local open=0
-  [ -z "$(tail -c 1 "$1")" ] || open=1
+  [ -s "$1" ] && [ "$(tail -c 1 "$1" | wc -l)" -eq 0 ] && open=1
   LC_ALL=C awk -v line="$2" -v open="$open" 'function blank(s) { return s == "" || s == "\r" }
     { text[NR] = $0 } /\r$/ { cr = "\r" } !blank($0) { last = NR }
     END {
       footer = last && index(text[last], "\360\237\244\226 Generated with ") == 1
       end = footer ? last - 1 : NR
       while (footer && end > 0 && blank(text[end])) end--
-      for (i = 1; i <= end; i++) printf "%s%s\n", text[i], (i == NR && open ? cr : "")
+      for (i = 1; i <= end; i++) printf "%s%s\n", text[i], (i == NR && open && text[i] !~ /\r$/ ? cr : "")
       printf "%s\n%s", cr, line
-      if (footer) { f = text[last]; sub(/\r$/, "", f); printf "%s\n%s\n%s", cr, cr, f }
-      printf "%s", (open ? "" : cr "\n")
+      if (footer) printf "%s\n%s\n%s%s", cr, cr, text[last], (open ? "" : "\n")
+      else printf "%s", (open ? "" : cr "\n")
     }' "$1"
 }
 
