@@ -343,6 +343,42 @@ doctor_release_denies() {
   done
 }
 
+# doctor_ask_rules: an ask rule of the project's .claude/settings.json or settings.local.json, or of the user
+# settings (only their permissions.ask), that matches a command the loop runs or one the project configures
+# stops auto mode for confirmation every time (ask beats allow): a note per rule with the first such command.
+doctor_ask_rules() {
+  local samples label file rule cmd user
+  samples=$(dl_perm_loop_samples "$(cd "$scripts_dir/.." && pwd)"; dl_perm_configured_commands)
+  user="$(dl_mp_claude_dir)/settings.json"
+  while IFS=$'\t' read -r label file; do
+    while IFS= read -r rule; do
+      cmd=$(doctor_first_match "$rule" "$samples") || continue
+      optional "permissions: ask rule $rule in $label stops \"$cmd\", a command the loop runs: auto mode stops for confirmation every time$(doctor_inside_words "$rule") (narrow it, e.g. to the paths it guards; ask beats allow; the owner edits the settings)"
+    done < <(dl_perm_rules "$file" ask)
+  done < <(printf '%s\t%s\n' .claude/settings.json "$DL_ROOT/.claude/settings.json" \
+    .claude/settings.local.json "$DL_ROOT/.claude/settings.local.json" "the user settings ($user)" "$user")
+}
+
+# doctor_first_match RULE COMMANDS: the first of the COMMANDS (one per line) the Bash permission RULE matches;
+# fails when it matches none.
+doctor_first_match() {
+  local cmd
+  while IFS= read -r cmd; do
+    dl_perm_match "$1" "$cmd" && { printf '%s\n' "$cmd"; return 0; }
+  done <<<"$2"
+  return 1
+}
+
+# doctor_inside_words RULE: for a rule that starts with "*" and a short word (such as Bash(*go * -o*)), the
+# remark that the word also matches inside other words; nothing otherwise.
+doctor_inside_words() {
+  local body word
+  case $1 in "Bash(*"*) body=${1#Bash(\*} ;; *) return 0 ;; esac
+  word=${body%%[!A-Za-z0-9_-]*}
+  [ -n "$word" ] && [ "${#word}" -le 4 ] && [ "$word" != "$body" ] || return 0
+  printf '; "*%s" matches inside other words too (any word that holds "%s")' "$word" "$word"
+}
+
 # doctor_rule_matches_any RULE COMMANDS: true when the Bash permission RULE matches one of the COMMANDS (one per line).
 doctor_rule_matches_any() {
   local cmd
@@ -538,6 +574,7 @@ else
   done
   doctor_permissions
   doctor_release_denies
+  doctor_ask_rules
   doctor_worktrees
   doctor_notes_dir
   project_settings="$DL_ROOT/.claude/settings.json"
