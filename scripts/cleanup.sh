@@ -37,12 +37,13 @@
 # merge-train.sh kept for their changes are listed too: path, branch, modified and untracked files (the
 # first names), and "remove" or "keep" with the reason. --apply --include worktrees archives each "remove"
 # one first, to a new ~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/ (changes.patch and
-# staged.patch against HEAD, untracked.tar, manifest.txt) and checks the archive, checks right before the
-# removal that the worktree still matches it, then removes it and deletes its branch at the merged tip
-# (bundled like the others). Always kept: the main checkout and the gate worktree (real paths), a locked
-# one, one holding another worktree, assume-unchanged or skip-worktree files, ignored files that are not
-# build output (merge.rebuildable) or a folder it cannot read, and one with a file changed (mtime or
-# ctime) in the last DEV_LOOP_WORKTREE_SETTLE_MINUTES (default 10; an agent may still work there).
+# staged.patch against HEAD, untracked.tar, manifest.txt with a restore line) and checks the archive,
+# checks that the worktree still matches it, moves it aside and checks again, then removes it and deletes
+# its branch at the merged tip (bundled like the others). Always kept: the main checkout and the gate
+# worktree (real paths), a locked one, one with submodules, per-worktree refs or another worktree inside,
+# assume-unchanged or skip-worktree files, ignored files that are not build output (merge.rebuildable) or
+# a folder it cannot read, and one with a file changed (mtime or ctime) in the last
+# DEV_LOOP_WORKTREE_SETTLE_MINUTES (default 10; an agent may still work there).
 #
 # Exit: 0 done, 1 some deletions failed (listed), 2 usage/config.
 set -u
@@ -337,6 +338,15 @@ recent_or_unreadable() {
   [ ! -s "$work/find.err" ] || printf 'unreadable %s\n' "$(head -n 1 "$work/find.err")"
 }
 
+# has_submodules PATH: the worktree at PATH has a gitlink in its index or a modules directory.
+has_submodules() {
+  local modules
+  [ -z "$(git -C "$1" ls-files -s 2>/dev/null | awk '$1 == 160000 {print; exit}')" ] || return 0
+  modules=$(git -C "$1" rev-parse --git-path modules 2>/dev/null) || return 1
+  case "$modules" in /*) ;; *) modules=$1/$modules ;; esac
+  [ -d "$modules" ]
+}
+
 # worktree_verdict PATH BRANCH: "remove", or "keep: <reason>", for the worktree of a merged BRANCH.
 worktree_verdict() {
   local dir found
@@ -346,6 +356,10 @@ worktree_verdict() {
   [ "$(dl_worktree_of "$2" | sed -n 2p)" != locked ] || { echo "keep: locked"; return; }
   found=$(nested_worktree "$1")
   [ -z "$found" ] || { echo "keep: holds another worktree ($found)"; return; }
+  # A submodule's git dir and per-worktree refs live in the worktree's own git dir, which the removal deletes.
+  ! has_submodules "$1" || { echo "keep: has submodules"; return; }
+  found=$(git -C "$1" for-each-ref --format='%(refname)' refs/worktree refs/bisect 2>/dev/null | head -n 1)
+  [ -z "$found" ] || { echo "keep: has per-worktree refs ($found)"; return; }
   # Assume-unchanged (lowercase) and skip-worktree (S) entries hide local changes from the diff.
   found=$(git -C "$1" ls-files -v 2>/dev/null | awk '/^([a-z]|S) / {print substr($0, 3); exit}')
   [ -z "$found" ] || { echo "keep: has assume-unchanged or skip-worktree files ($found)"; return; }
@@ -362,10 +376,10 @@ worktree_verdict() {
 # worktree_contents PATH: "<n> modified, <m> untracked[: <the first five file names> ...]".
 worktree_contents() {
   local names
-  names=$(git -C "$1" status --porcelain 2>/dev/null | cut -c4- | head -n 6 | paste -sd' ' -)
+  names=$(git --no-optional-locks -C "$1" status --porcelain 2>/dev/null | cut -c4- | head -n 6 | paste -sd' ' -)
   [ "$(printf '%s\n' "$names" | wc -w)" -le 5 ] || names="$(printf '%s\n' "$names" | cut -d' ' -f1-5) ..."
   printf '%s modified, %s untracked%s\n' \
-    "$(git -C "$1" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(git --no-optional-locks -C "$1" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')" \
     "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')" "${names:+: $names}"
 }
 
@@ -435,9 +449,16 @@ archive_worktree() {
   (cd "$path" && tar -cf "$dir/untracked.tar" --null -T "$dir/untracked.z") || return 1
   {
     printf 'worktree: %s\nbranch: %s\ntip: %s\narchived: %s\n' "$path" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'restore: git fetch <bundle> refs/heads/%s:refs/heads/%s, git worktree add <path> %s, then in it\n' "$2" "$2" "$2"
-    printf '  git apply --cached staged.patch, git apply --binary changes.patch and tar -xf untracked.tar\nmodified:\n'
-    git -C "$path" status --porcelain --untracked-files=no
+    printf 'restore: git worktree add <path> %s, then in it git apply --cached staged.patch,\n' "$3"
+    printf '  git apply --binary changes.patch and tar -xf untracked.tar\n'
+    if git merge-base --is-ancestor "$3" "$base" 2>/dev/null; then
+      printf '  (the base contains %s)\n' "$3"
+    else
+      printf '  (the base does not contain %s: first git fetch <bundle> refs/heads/%s:refs/heads/%s, from the\n' "$3" "$2" "$2"
+      printf '  branches-<time>.bundle this run of cleanup.sh printed)\n'
+    fi
+    printf 'modified:\n'
+    git --no-optional-locks -C "$path" status --porcelain --untracked-files=no
     printf 'untracked:\n'
     tr '\0' '\n' <"$dir/untracked.z"
   } >"$dir/manifest.txt" || return 1
@@ -488,8 +509,24 @@ if [[ "$include" == *" worktrees "* ]] && grep -q $'\tremove$' "$work/kept-workt
       echo "kept worktree $path: it changed while it was archived (the archive in $slot is not complete)"
       continue
     fi
-    if ! git worktree remove --force "$path" >/dev/null 2>&1; then
-      echo "not removed: worktree $path"
+    # Moved aside, an agent still working there fails instead of writing into a folder about to go.
+    aside=$path.removing-$$
+    if [ -e "$aside" ] || ! git worktree move "$path" "$aside" >/dev/null 2>&1; then
+      echo "kept worktree $path: it could not be moved aside"
+      failed=$((failed + 1))
+      continue
+    fi
+    if ! worktree_as_archived "$aside" "$name" "$tip" "$slot"; then
+      if git worktree move "$aside" "$path" >/dev/null 2>&1; then
+        echo "kept worktree $path: it changed after it was moved aside (the archive in $slot is not complete)"
+      else
+        echo "kept worktree $aside: it changed after it was moved aside from $path, and could not be moved back"
+        failed=$((failed + 1))
+      fi
+      continue
+    fi
+    if ! git worktree remove --force "$aside" >/dev/null 2>&1; then
+      echo "not removed: worktree $aside (moved aside from $path)"
       failed=$((failed + 1))
       continue
     fi
