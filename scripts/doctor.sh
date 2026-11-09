@@ -18,6 +18,8 @@ optional() { echo "note    $*"; }
 
 # shellcheck source=lib/docs.sh
 . "$scripts_dir/lib/docs.sh"
+# shellcheck source=lib/identity.sh
+. "$scripts_dir/lib/identity.sh"
 
 # doctor_tmp_free_inodes DIR: the percentage of free inodes on DIR's filesystem (df -i, columns found by
 # name: IFree/ifree and IUsed/iused); prints nothing where df -i fails or reports no inode counts.
@@ -483,12 +485,154 @@ doctor_marketplace_older() {
   done <<<"$3"
 }
 
+# doctor_protection: read only, on a GitHub remote with a logged-in gh: one ok line when the base branch
+# needs a PR, blocks force pushes and deletion (branch protection or rulesets) and an active tag ruleset
+# covers release tags (v*); else a note per gap with the owner step. What cannot be checked (no gh, not
+# logged in, not GitHub, the API refusing) is a note too, never MISSING.
+doctor_protection() {
+  local repo tmp base tags step
+  git -C "$DL_ROOT" remote get-url "$DL_REMOTE" >/dev/null 2>&1 || return 0
+  if ! repo=$(doctor_github_repo); then
+    optional "remote protection: $DL_REMOTE is not a GitHub remote, so its branch and tag protection is not checked"
+    return 0
+  fi
+  step="the owner adds it at https://github.com/$repo/settings/rules, or with gh api -X POST repos/$repo/rulesets --input <ruleset.json>"
+  if [ "$gh_login" != yes ]; then
+    optional "remote protection: could not be checked ($([ "$gh_login" = none ] && echo "gh is not installed" || echo "gh is not logged in")); the remote's branch and tag protection is the boundary the git guard and permission rules cannot be: https://github.com/$repo/settings/rules"
+    return 0
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-doctor.XXXXXX") || return 0
+  base=$(doctor_base_protection "$repo" "$tmp")
+  tags=$(doctor_tag_protection "$repo" "$tmp")
+  rm -rf "$tmp"
+  if [ "$base" = ok ] && [ "$tags" = ok ]; then
+    ok "remote protection: $DL_BASE on $repo needs a pull request and blocks force pushes and deletion; a tag ruleset covers release tags (v*)"
+    return 0
+  fi
+  case $base in
+    ok) ;;
+    unknown:*) optional "remote protection: $DL_BASE on $repo could not be checked (${base#unknown: }): $step" ;;
+    *) optional "remote protection: $DL_BASE on $repo does not ${base#gaps: } ($step)" ;;
+  esac
+  case $tags in
+    ok) ;;
+    unknown:*) optional "remote protection: the tag rulesets of $repo could not be checked (${tags#unknown: }): $step" ;;
+    *) optional "remote protection: no active tag ruleset on $repo covers release tags (v*) ($step, for refs/tags/v*)" ;;
+  esac
+}
+
+# doctor_github_repo: owner/name of the GitHub repository (github.repo, else a github.com remote URL);
+# fails for a remote elsewhere.
+doctor_github_repo() {
+  local url
+  url=$(git -C "$DL_ROOT" remote get-url "$DL_REMOTE" 2>/dev/null)
+  [ -n "$(cfg github.repo "")" ] || case $url in *[@/]github.com[:/]*) ;; *) return 1 ;; esac
+  dl_github_repo
+}
+
+# doctor_gh_get PATH OUT: gh api PATH (a GET, at most 10 seconds where timeout exists) into OUT.body and
+# OUT.err; on failure prints the reason (gh's message) and fails.
+doctor_gh_get() {
+  local rc reason
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10 gh api "$1" >"$2.body" 2>"$2.err"
+  else
+    gh api "$1" >"$2.body" 2>"$2.err"
+  fi
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  reason=$(sed 's/^gh: //' "$2.err" | tail -n 1)
+  [ "$rc" -ne 124 ] || reason="no answer from GitHub within 10 seconds"
+  printf '%s\n' "${reason:-gh api $1 failed}"
+  return 1
+}
+
+# doctor_base_protection REPO TMP: "ok" when the base branch needs a PR (or blocks updates), blocks force
+# pushes and deletion through branch protection or rulesets; else "gaps: <what is missing>", or
+# "unknown: <reason>" when a source that might close the gaps could not be read.
+doctor_base_protection() {
+  local pr="" force="" del="" unknown="" reason n i gaps=""
+  if reason=$(doctor_gh_get "repos/$1/branches/$DL_BASE/protection" "$2/protection"); then
+    [ -n "$(json_get required_pull_request_reviews <"$2/protection.body")" ] && pr=yes
+    [ "$(json_get allow_force_pushes.enabled <"$2/protection.body")" = false ] && force=yes
+    [ "$(json_get allow_deletions.enabled <"$2/protection.body")" = false ] && del=yes
+  elif ! grep -qF 'Branch not protected' "$2/protection.err"; then
+    unknown=$reason
+  fi
+  if reason=$(doctor_gh_get "repos/$1/rules/branches/$DL_BASE" "$2/rules"); then
+    n=$(json_len "" <"$2/rules.body")
+    for ((i = 0; i < n; i++)); do
+      case $(json_get "$i.type" <"$2/rules.body") in
+        pull_request | update) pr=yes ;;
+        non_fast_forward) force=yes ;;
+        deletion) del=yes ;;
+      esac
+    done
+  else
+    unknown=${unknown:-$reason}
+  fi
+  [ -n "$pr" ] || gaps="require a pull request"
+  [ -n "$force" ] || gaps="${gaps:+$gaps, }block force pushes"
+  [ -n "$del" ] || gaps="${gaps:+$gaps, }block deletion"
+  if [ -z "$gaps" ]; then echo ok; elif [ -n "$unknown" ]; then echo "unknown: $unknown"; else echo "gaps: $gaps"; fi
+}
+
+# doctor_tag_protection REPO TMP: "ok" when an active tag ruleset with rules covers release tags (v*),
+# "unknown: <reason>" when the rulesets could not be read, else "missing".
+doctor_tag_protection() {
+  local reason n i id unknown=""
+  reason=$(doctor_gh_get "repos/$1/rulesets" "$2/rulesets") || { echo "unknown: $reason"; return 0; }
+  n=$(json_len "" <"$2/rulesets.body")
+  for ((i = 0; i < n; i++)); do
+    [ "$(json_get "$i.target" <"$2/rulesets.body")" = tag ] || continue
+    [ "$(json_get "$i.enforcement" <"$2/rulesets.body")" = active ] || continue
+    id=$(json_get "$i.id" <"$2/rulesets.body")
+    if ! reason=$(doctor_gh_get "repos/$1/rulesets/$id" "$2/ruleset"); then
+      unknown=$reason
+      continue
+    fi
+    doctor_covers_release_tags "$2/ruleset.body" && { echo ok; return 0; }
+  done
+  if [ -n "$unknown" ]; then echo "unknown: $unknown"; else echo missing; fi
+}
+
+# doctor_covers_release_tags FILE: true when the ruleset in FILE has rules and its ref conditions include,
+# and do not exclude, a release tag such as v1.0.0.
+doctor_covers_release_tags() {
+  local n i pattern included=""
+  [ "$(json_len rules <"$1")" -gt 0 ] || return 1
+  n=$(json_len conditions.ref_name.include <"$1")
+  for ((i = 0; i < n; i++)); do
+    pattern=$(json_get "conditions.ref_name.include.$i" <"$1")
+    doctor_ref_matches_release "$pattern" && included=yes
+  done
+  [ -n "$included" ] || return 1
+  n=$(json_len conditions.ref_name.exclude <"$1")
+  for ((i = 0; i < n; i++)); do
+    pattern=$(json_get "conditions.ref_name.exclude.$i" <"$1")
+    doctor_ref_matches_release "$pattern" && return 1
+  done
+  return 0
+}
+
+# doctor_ref_matches_release PATTERN: true when the ruleset ref PATTERN (~ALL, refs/tags/<glob>) matches the
+# release tag v1.0.0.
+doctor_ref_matches_release() {
+  local glob=${1#refs/tags/} tag=v1.0.0
+  [ "$1" = "~ALL" ] && return 0
+  # shellcheck disable=SC2254 # the pattern is a glob on purpose
+  case $tag in $glob) return 0 ;; esac
+  return 1
+}
+
 if command -v git >/dev/null 2>&1; then ok "git $(git --version | cut -d' ' -f3)"; else missing "git"; fi
 if command -v jq >/dev/null 2>&1; then ok "jq"; elif command -v python3 >/dev/null 2>&1; then
   optional "jq not found: JSON is read with python3"
 else missing "jq or python3 (to read .dev-loop.json)"; fi
+gh_login=none
 if command -v gh >/dev/null 2>&1; then
-  if gh auth status >/dev/null 2>&1; then ok "gh (authenticated)"; else missing "gh is not logged in (gh auth login)"; fi
+  gh_login=no
+  if gh auth status >/dev/null 2>&1; then ok "gh (authenticated)"; gh_login=yes; else missing "gh is not logged in (gh auth login)"; fi
 else missing "gh (GitHub CLI) for issues and PRs"; fi
 if command -v flock >/dev/null 2>&1; then ok "flock"; else optional "flock not found: heavy.sh uses lock directories"; fi
 if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -577,6 +721,7 @@ else
   doctor_ask_rules
   doctor_worktrees
   doctor_notes_dir
+  doctor_protection
   project_settings="$DL_ROOT/.claude/settings.json"
   if [ -f "$project_settings" ]; then
     for event in Stop PostToolUse; do
