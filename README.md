@@ -1068,6 +1068,10 @@ tests/smoke.sh --section 20 --section 'Script help'
 `--section` takes a section number (`11`, `11b`) or text from one of the section's comment lines, and runs
 the shared setup, that section and the earlier sections it needs (`smoke_needs` in the script's header),
 then the summary. A new section that uses the state or helpers of an earlier one adds a line there.
+A section starts at a `# <n>. ` or `# <n><letter>. ` line at column 0; one numbered below the previous
+section makes every mode print that header and exit 2 before running anything, and `make lint` runs
+`tests/smoke.sh --list` to catch it. A numbered list inside a section is indented (`#   1. `); so is a
+`# <n>. ` line inside a here-document in a test, which at column 0 counts as a header and fails the check.
 
 ## License
 

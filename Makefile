@@ -7,7 +7,8 @@ validate: ## Validate the plugin and marketplace manifests, agents and skills
 	claude plugin validate --strict agents
 	claude plugin validate --strict skills
 
-lint: ## shellcheck the scripts, ruff the Python helpers
+lint: ## smoke.sh's sections in order, shellcheck the scripts, ruff the Python helpers
+	tests/smoke.sh --list >/dev/null
 	uvx --from shellcheck-py shellcheck -x scripts/*.sh scripts/lib/*.sh hooks/*.sh tests/*.sh tests/fake-gh tests/fake-browser
 	uvx ruff check --select E,F,W,B hooks/guard-role.py scripts/lib/manifest_listener.py tests/fake-curl
 
