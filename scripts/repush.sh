@@ -55,10 +55,10 @@ with_supersedes() {
       footer = last && index(text[last], "\360\237\244\226 Generated with ") == 1
       end = footer ? last - 1 : NR
       while (footer && end > 0 && blank(text[end])) end--
-      for (i = 1; i <= end; i++) printf "%s%s\n", text[i], (i == NR && open && text[i] !~ /\r$/ ? cr : "")
+      for (i = 1; i <= end; i++) printf "%s%s\n", text[i], (i == NR && open == 1 && text[i] !~ /\r$/ ? cr : "")
       printf "%s\n%s", cr, line
-      if (footer) printf "%s\n%s\n%s%s", cr, cr, text[last], (open ? "" : "\n")
-      else printf "%s", (open ? "" : cr "\n")
+      if (footer) printf "%s\n%s\n%s%s", cr, cr, text[last], (open == 1 && last == NR ? "" : "\n")
+      else printf "%s", (open == 1 ? "" : cr "\n")
     }' "$1"
 }
 

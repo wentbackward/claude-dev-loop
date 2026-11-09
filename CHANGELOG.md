@@ -13,7 +13,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   nothing. Doctor stays read only.
 - Repush notes (#82): `repush.sh` keeps a CRLF notes file CRLF (the Supersedes line and its blank line
   take CRLF when any line of the notes ends in CR, and a CR-only line before the footer counts as blank),
-  and notes without a final newline (also ones ending in a bare CR or a NUL byte) still end without one.
+  and notes without a final newline (also ones ending in a bare CR) still end without one; for notes
+  ending in a NUL byte no newline is added (BSD awk drops the NUL itself).
   Besides the added Supersedes line, the blank lines before the footer become one and blank lines after it
   are dropped; every other byte is kept.
   `tests/smoke.sh --section` was already matching a section id before a title; a test now covers it.
