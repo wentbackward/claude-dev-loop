@@ -706,6 +706,38 @@ dl_in_cache() {
   return 1
 }
 
+# dl_union_attributes: write a temporary attributes file that merges each path of merge.union_files (a
+# pattern from the repository root) by keeping both sides (merge=union), followed by the user's own global
+# attributes (core.attributesFile, else the XDG default), so a driver the user set still wins; print its path.
+# Prints nothing when merge.union_files is missing or empty. The repository's .gitattributes and
+# info/attributes rank above any core.attributesFile, so a merge driver they set for a listed file stays.
+dl_union_attributes() {
+  local count i pattern file user
+  count=$(cfg_len merge.union_files)
+  [ "$count" -gt 0 ] || return 0
+  file=$(mktemp "${TMPDIR:-/tmp}/dev-loop-union.XXXXXX") || return 1
+  for ((i = 0; i < count; i++)); do
+    pattern=$(cfg "merge.union_files.$i")
+    case $pattern in
+      "" | *[[:space:]]* | '!'* | '#'*) dl_warn "merge.union_files: skipping '$pattern' (no spaces, ! or #)" ;;
+      *) printf '/%s merge=union\n' "${pattern#/}" >>"$file" ;;
+    esac
+  done
+  user=$(git config --path core.attributesFile 2>/dev/null) ||
+    user=${XDG_CONFIG_HOME:-${HOME:-}/.config}/git/attributes
+  [ ! -f "$user" ] || cat "$user" >>"$file"
+  printf '%s\n' "$file"
+}
+
+# dl_git_union ARGS...: git ARGS, with the attributes of dl_union_attributes (DL_UNION_ATTRIBUTES) when set.
+dl_git_union() {
+  if [ -n "${DL_UNION_ATTRIBUTES:-}" ]; then
+    git -c core.attributesFile="$DL_UNION_ATTRIBUTES" "$@"
+  else
+    git "$@"
+  fi
+}
+
 # dl_cfg_words PATH DEFAULT: the array at PATH in the project config as " a b ... ", or DEFAULT.
 dl_cfg_words() {
   local count i words=" "
