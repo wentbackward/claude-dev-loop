@@ -16,6 +16,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `github.api_url` (GitHub Enterprise): a note that it could not be checked, never `MISSING`. The README's
   Permission modes section says why: the guard and the permission rules are tripwires, the remote's
   protection is the boundary. `tests/fake-gh` answers `gh api` from canned files.
+- Ask-rule follow-ups (#91): `dl_perm_rules` reads a permission list that is not an array (an object or a
+  string) as no rules under jq too, as python3 already did, so doctor no longer notes the values of an
+  object `ask` list. An ask rule that matches only `gate_setup`, `affected` or `format` is worded for them:
+  the gate and the format hook run these outside the Bash tool, so the rule stops only an agent that runs
+  the command itself through the Bash tool. The DECISIONS entry of #84 names the characters of the
+  short-word remark (letters, digits, `_`, `-`).
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,

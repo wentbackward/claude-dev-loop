@@ -858,8 +858,10 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   loop's sample commands and every command the project configures: `fast_check`, `checks`, `affected`,
   `gate_setup` and `format`, with `{file}` as `src/example` (or appended, as the format hook does). Each
   matching rule is one note, naming the file, the rule, the first command it stops and the fix. A rule that
-  starts with `*` and a word of at most four letters (such as `Bash(*go * -o*)`) is also said to match
-  inside other words.
+  starts with `*` and a word of at most four characters (letters, digits, `_`, `-`), such as
+  `Bash(*go * -o*)`, is also said to match inside other words. A rule that matches only `gate_setup`,
+  `affected` or `format` is worded for them (#91): the gate and the format hook run these outside the Bash
+  tool, so the rule stops only an agent that runs the command itself through the Bash tool.
 - **Reason:** an ask stalls auto mode but blocks nothing, so it is a note, not a problem; ask beats allow,
   so the fix is to narrow the rule, and only the owner edits the settings. The user's ask rules apply to
   every project and stall the loop the same way, so they are read too; their allow and deny lists stay
