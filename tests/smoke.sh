@@ -164,6 +164,7 @@ fi
 
 # shellcheck source=../scripts/lib/workdirs.sh
 . "$plugin/scripts/lib/workdirs.sh"
+dl_tmpdir_absolute
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
 # Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
 echo "started smoke (work dir $work)"

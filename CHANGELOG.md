@@ -11,14 +11,18 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   note names the file, the rule, the command and the fix (narrow it, e.g. to the paths it guards); a rule
   such as `Bash(*go * -o*)` is also said to match inside other words. The template's ask rules match
   nothing. Doctor stays read only.
+- Work dir removal (#86): `scripts/lib/workdirs.sh` refuses a work dir named by a relative path, and the
+  suites make a relative `TMPDIR` absolute (symlinks resolved) before `mktemp`, so their green dir is
+  still removed. With `TMPDIR=/` nothing is ever removed, on purpose (documented in the file's header).
 - Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` name their work dir on their first line
   (`started smoke (work dir PATH)`, a form the summary patterns `^(smoke|identity): ` do not match) and
   remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names
   it as before, and `DEV_LOOP_KEEP_WORK=1` always keeps it. Removal (`scripts/lib/workdirs.sh`) only
   touches the suite's own `mktemp -d` dir: a real directory (not a symlink) owned by the user, directly in
-  `TMPDIR` on disk (no `.` or `..` in the path, symlinks resolved), named `dev-loop-smoke.XXXXXX` or `dev-loop-identity.XXXXXX`. After the checks, `gate-train.sh`
-  records the work dirs named (`(work dir PATH)`) in the logs of the stages that ran in this run, so also
-  a run that crashed or was stopped before its summary, in `gate-work-dirs.txt` in the state directory,
+  `TMPDIR` on disk (no `.` or `..` in the path, symlinks resolved), named `dev-loop-smoke.XXXXXX` or
+  `dev-loop-identity.XXXXXX`. After the checks, `gate-train.sh` records the work dirs named
+  (`(work dir PATH)`) in the logs of the stages that ran in this run, so also a run that crashed or was
+  stopped before its summary, in `gate-work-dirs.txt` in the state directory,
   and keeps only the newest recorded one of each suite, removing the older ones under the same rule unless
   something in them changed in the last 10 minutes (`DEV_LOOP_WORK_DIR_SETTLE_MINUTES`); dirs those logs
   never named are left alone. `doctor.sh` reports TMPDIR's free space (`df -P`) and free inodes (`df -i`,
