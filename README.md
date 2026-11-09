@@ -1005,7 +1005,9 @@ be made even on the owner's go; the fix is to move it to `ask`, as the template 
 are `git tag v1.2.3`, `git tag -a`, `git tag -s` and `git tag -m` (each with `-m`), `gh release create v1.2.3`,
 `git push <remote> v1.2.3`, `git push <remote> refs/tags/v1.2.3`, `git push <remote> tag v1.2.3`,
 `git push <remote> --tags`, `git push --tags`, `git push --tags <remote>`, `git push --follow-tags` and
-`git push <remote> --follow-tags`. A deny that also blocks a loop command (such as `Bash(git push:*)`) is
+`git push <remote> --follow-tags`, with `<remote>` the configured remote and also `origin` when that
+differs. A deny that blocks a loop command is reported in either settings file, also without
+`.claude/settings.json`; one that also blocks a tag push (such as `Bash(git push:*)`) is
 reported once, as blocking the loop. Without `.claude/settings.json` it prints one note; its notes name
 the owner's apply line. A notes directory, a `worktrees_dir` or loop
 worktrees outside the project and not in `additionalDirectories` are `MISSING` (in auto mode every edit
