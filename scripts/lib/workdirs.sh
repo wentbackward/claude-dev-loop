@@ -24,6 +24,18 @@ dl_tmpdir_absolute() {
   return 0
 }
 
+# dl_make_work_dir PREFIX: make a suite's work dir, mktemp -d "$TMPDIR/PREFIX.XXXXXX" (TMPDIR made absolute
+# first), and print it; fails, printing nothing, for a PREFIX not in DL_WORK_PREFIXES and unless mktemp gives
+# an absolute path other than /. Run in $(...), it cannot change the caller's TMPDIR, so the caller runs
+# dl_tmpdir_absolute too.
+dl_make_work_dir() {
+  local dir
+  case " $DL_WORK_PREFIXES " in *" $1 "*) ;; *) return 1 ;; esac
+  dl_tmpdir_absolute
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/$1.XXXXXX") || return 1
+  case $dir in /?*) printf '%s\n' "$dir" ;; *) return 1 ;; esac
+}
+
 # dl_work_dir_ok PATH PREFIX: PATH is a suite's own mktemp dir: PREFIX is one of DL_WORK_PREFIXES, PATH is
 # absolute, has no `.` or `..` component, is a directory and not a symlink, owned by the user, its name is
 # PREFIX.XXXXXX, and on disk (symlinks resolved) its parent is TMPDIR. Prints the resolved path.
