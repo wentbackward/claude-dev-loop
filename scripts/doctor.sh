@@ -552,7 +552,8 @@ doctor_gh_get() {
   # The watchdog takes its sleep with it when it is stopped, so no sleep outlives the call.
   (
     nap=""
-    trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+    # $! is set when sleep forks, so a TERM before nap=$! still stops the sleep.
+    trap 'kill $! 2>/dev/null; exit 0' TERM
     sleep "$limit" &
     nap=$!
     wait "$nap" && : >"$2.timeout" && kill "$pid"

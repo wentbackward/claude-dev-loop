@@ -115,9 +115,9 @@ case "${1:-} ${2:-}" in
     canned="$dir/api/$(key "$path")"
     if [ -f "$canned.sleep" ]; then
       # Killed while it waits, it takes its sleep with it.
+      trap 'kill $! 2>/dev/null; exit 143' TERM
       sleep "$(cat "$canned.sleep")" &
       nap=$!
-      trap 'kill "$nap" 2>/dev/null; exit 143' TERM
       wait "$nap"
       trap - TERM
     fi
