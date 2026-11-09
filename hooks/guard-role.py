@@ -1662,10 +1662,10 @@ def positional_problem(word: Word, dirs: set[str], root: str, package: bool = Fa
     text = word.text
     if not text:
         return "an empty argument"
-    if package and text not in {".", ".."} and not text.startswith(("./", "../")):
-        return f"{text} is an import path, which may name the standard library or a dependency (write ./{text})"
     if text.startswith(("-", "+")):
         return f"{text} is not on the safe list"
+    if package and text not in {".", ".."} and not text.startswith(("./", "../")):
+        return f"{text} is an import path, which may name the standard library or a dependency (write ./{text})"
     if text.startswith("@"):
         return f"{text} is a response file (@file), which a runner may expand into options"
     if "=" in text:
@@ -1678,11 +1678,12 @@ def positional_problem(word: Word, dirs: set[str], root: str, package: bool = Fa
     return None
 
 
-def value_problem(flag: str, kind: str, value: str, separate: bool) -> str | None:
+def value_problem(flag: str, kind: str, value: str, separate: bool, written: str = "") -> str | None:
     """Why the value of a flag is refused, or None: a separate word starting with - or + (pytest reads -p
-    anywhere, cargo may read the word as its own option), or a count outside 1 to 256."""
+    anywhere, cargo may read the word as its own option), or a count outside 1 to 256. written: the word
+    as typed (a bundle such as -vk), when it differs from the flag."""
     if separate and value.startswith(("-", "+")):
-        return f"{flag} {value}: a value in its own word may not start with - or + (attach it, {flag}=...)"
+        return f"{written or flag} {value}: a value in its own word may not start with - or + (attach it, {flag}=...)"
     if kind == COUNT and not (value.isdigit() and 1 <= int(value) <= 256):
         return f"{flag} takes a count from 1 to 256, not {value}"
     return None
@@ -1720,18 +1721,20 @@ def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple
         if kind != NO and letters:
             return value_problem(flag, kind, letters, False), index, [letters]
         if kind != NO:
-            return next_value(text, kind, args, index)
+            return next_value(flag, kind, args, index, "" if text == flag else text)
     return None, index, []
 
 
-def next_value(text: str, kind: str, args: list[Word], index: int) -> tuple[str | None, int, list[str]]:
-    """flag_problem's result for a flag whose value, if any, is the next word (index)."""
+def next_value(flag: str, kind: str, args: list[Word], index: int,
+               written: str = "") -> tuple[str | None, int, list[str]]:
+    """flag_problem's result for a flag whose value, if any, is the next word (index); written: the word
+    as typed when it is a bundle (-vk for -k), so the hint names the flag letter."""
     if kind in {VAL, COUNT} and index >= len(args):
-        return f"{text} needs a value", index, []
+        return (f"{written} needs a value for {flag}" if written else f"{flag} needs a value"), index, []
     if not takes_next(kind, args, index):
         return None, index, []
     value = args[index].text
-    return value_problem(text, kind, value, True), index + 1, [value]
+    return value_problem(flag, kind, value, True, written), index + 1, [value]
 
 
 def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str,

@@ -4,11 +4,16 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Targeted refusal hints (#105): for a bundled short flag the guard's hint names the flag letter
+  (`pytest -vk -p` says `attach it, -k=...`; `pytest -vk` says `-vk needs a value for -k`), and a `go test`
+  or `go vet` word starting with `-` or `+` is refused as an option that is not on the safe list, not as an
+  import path. Only the texts change: the same commands are refused and pass.
 - Guard fails closed on any exception (#96): `hooks/guard-role.py` reads the hook event inside its error
   handler, which now catches every exception but `SystemExit` (refusals and normal exits keep their
   code). An interrupt (`KeyboardInterrupt`) or another error in a project with `.dev-loop.json` refuses
   the call when the event read so far names git or a targeted runner, or when nothing was read yet;
-  without `.dev-loop.json` it ends as before.
+  stdin that cannot be read at all (closed, `<&-`) is refused there too (it used to exit 1). Without
+  `.dev-loop.json` it ends as before.
 - Remote protection (#88): `doctor.sh` reads, read only, the base branch's protection and rules and the
   tag rulesets of a github.com remote (`gh api` GETs, lists at 100 a page, each call stopped by a watchdog
   after `DEV_LOOP_GH_TIMEOUT` seconds, default 10; after one timeout no further call): one `ok` line when

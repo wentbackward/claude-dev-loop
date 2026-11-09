@@ -1157,7 +1157,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `BaseException`. In a project with `.dev-loop.json` it refuses when the text read so far names git (the
   existing raw test) or the program of a targeted runner form (the default forms, whether or not the
   project configures `targeted`), and also when nothing was read yet: there is nothing to inspect, so
-  the guard cannot tell the call is harmless. A failure of that text test counts as naming them. Without
+  the guard cannot tell the call is harmless. Stdin that cannot be read at all (closed, `<&-`) is such an
+  exception, so a loop project refuses it too (it used to exit 1). A failure of that text test counts as
+  naming them. Without
   `.dev-loop.json`, or for text that names neither, the exception is re-raised as before (a
   `KeyboardInterrupt` ends the process by SIGINT, which does not block the call). The smoke cases send
   SIGINT to the guard while it waits on a stdin pipe held open, so production code has no test switch.
@@ -1168,3 +1170,13 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   to is unchecked); refusing every exception in a loop project whatever the text (blocks calls the guard
   would never refuse); an environment switch that raises inside the guard (a test hook in production
   code).
+
+## 2026-11-09 — Targeted refusal hints name the flag letter of a bundle (#105)
+
+- **Decision:** for a bundled short flag (`-vk`) the refusal keeps the word as typed and names the flag
+  whose value is wrong: `-vk -p: ... (attach it, -k=...)` and `-vk needs a value for -k`; a single flag
+  keeps the old texts. A go package word starting with `-` or `+` is checked as an option first (`+x is
+  not on the safe list`), before the import-path hint.
+- **Reason:** `-vk=...` is not a spelling pytest reads as `-k=...`, and `write ./+x` suggests a fix for a
+  word that was never meant as a package. The checks and their results stay the same.
+- **Alternatives:** naming only the flag letter (`-k -p: ...`), which hides the word the agent wrote.
