@@ -52,9 +52,15 @@ WRAPPERS = {
 }
 RESERVED = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+# Programs that never run their arguments as a command: a word git after them is text.
+NO_EXEC = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "cat", "ls", "head", "tail", "wc", "test", "[",
+           "which", "type", "man", "true", "false", ":"}
 SEPARATOR_CHARS = set(";&|()\n")
 SCENARIO_BLIND = {"implementer", "test-engineer", "code-reviewer"}
 GLOB_CHARS = set("*?[")
+# A redirection word at the head of a simple command (its target attached, or the next word when the word
+# ends with an operator).
+REDIRECTION = re.compile(r"^[0-9]*(?:<<<|<<-?|<>|>>|>\||[<>]&|[<>])", re.S)
 
 
 class Unparsable(Exception):
@@ -62,8 +68,12 @@ class Unparsable(Exception):
 
 
 def text_names_git(text: str) -> bool:
-    """True when text has "git" once quotes, backslashes and line continuations are removed."""
-    return "git" in re.sub(r"[\\'\"]", "", text.replace("\\\n", ""))
+    """True when text may run git: "git" once line continuations (a backslash-newline after an even number
+    of backslashes), quotes and backslashes are removed, or an ANSI-C string ($'...') that may spell it."""
+    if "$'" in text:
+        return True
+    joined = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", text)
+    return "git" in re.sub(r"[\\'\"]", "", joined)
 
 
 def refuse(reason: str) -> None:
@@ -275,9 +285,11 @@ def heredoc_word(command: str, index: int) -> tuple[bool, bool, str, int] | None
         index += 1
     start = index
     while index < len(command) and command[index] not in " \t\n;&|()<>":
-        if command[index] in "'\"":
+        if command[index] in "'\"`":
             close = command.find(command[index], index + 1)
             index = len(command) if close < 0 else close + 1
+        elif command.startswith("$(", index):
+            index = arithmetic_end(command, index + 1)  # the word goes on to the matching )
         else:
             index += 2 if command[index] == "\\" else 1
     word = command[start:index]
@@ -334,11 +346,43 @@ def ansi_c_end(command: str, index: int) -> int:
     return -1
 
 
+ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
+                 "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+ANSI_C_ESCAPE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|.)", re.S)
+
+
+def ansi_c_char(match: re.Match) -> str:
+    """The text one $'...' escape stands for, as bash decodes it (an unknown escape stays as written)."""
+    escape = match.group(1)
+    if escape[0] in "xuU":
+        code = int(escape[1:], 16)
+        return chr(code) if code <= 0x10FFFF else match.group(0)
+    if escape[0] in "01234567":
+        return chr(int(escape, 8) & 0xFF)
+    if escape[0] == "c" and len(escape) == 2:
+        return chr(ord(escape[1]) & 0x1F)
+    return ANSI_C_SIMPLE.get(escape, match.group(0))
+
+
 def ansi_c_quoted(body: str) -> str:
-    """A $'...' body as a plain single-quoted word: escaped quotes and backslashes taken literally, other
-    escapes kept as written (they only change text, never where the word ends)."""
-    text = re.sub(r"\\([\\'\"])", r"\1", body)
+    """A $'...' body decoded as bash decodes it (up to a NUL, where bash ends the string), as a plain
+    single-quoted word, so an escaped name such as $'\\x67it' is still git."""
+    text = ANSI_C_ESCAPE.sub(ansi_c_char, body).split("\0", 1)[0]
     return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def backtick_end(command: str, index: int) -> int:
+    """The index after the backtick substitution that starts at index (the end when it never closes)."""
+    index += 1
+    while index < len(command) and command[index] != "`":
+        index += 2 if command[index] == "\\" else 1
+    return min(index + 1, len(command))
+
+
+def plain_arithmetic(command: str, index: int) -> bool:
+    """True when the $(( )) at index holds no command substitution (so it is one word with no command)."""
+    body = command[index : arithmetic_end(command, index + 1)]
+    return "$(" not in body[1:] and "`" not in body
 
 
 def strip_heredocs(command: str) -> str:
@@ -353,16 +397,27 @@ def strip_heredocs(command: str) -> str:
     extra: list[str] = []
     pending: list[tuple[bool, bool, str]] = []
     stack: list[list] = []  # one [quote outside, open parentheses] per $( ) entered
-    quote, index = "", 0
+    quote, index, glued = "", 0, False  # glued: the last step ended a $(( )) or $( ) inside a word
     while index < len(command):
         char = command[index]
-        step = 1
+        step, after = 1, glued
+        glued = False
         if quote == "'":
             quote = "" if char == "'" else quote
+        elif char == "\\" and command.startswith("\n", index + 1):
+            index += 2  # a line continuation (outside single quotes): bash removes it
+            continue
         elif char == "\\":
             step = 2
+        elif char == "`":
+            step = backtick_end(command, index) - index  # its own command: no here-document of ours inside
         elif quote == '"' and char == '"':
             quote = ""
+        elif command.startswith("$((", index) and not quote and plain_arithmetic(command, index):
+            end = arithmetic_end(command, index + 1)
+            out.append(command[index:end].replace("(", "\\(").replace(")", "\\)"))  # one word for the lexer
+            index, glued = end, True
+            continue
         elif command.startswith("$((", index) or (not quote and command.startswith("((", index)):
             step = arithmetic_end(command, index + (1 if char == "$" else 0)) - index
         elif command.startswith("$(", index):
@@ -370,6 +425,10 @@ def strip_heredocs(command: str) -> str:
             quote, step = "", 2
         elif quote:
             pass
+        elif command.startswith((">&", "<&", ">|"), index):
+            out.append(char + "\\" + command[index + 1])  # a redirection, not a separator, for the lexer
+            index += 2
+            continue
         elif command.startswith("$'", index) and ansi_c_end(command, index) > 0:
             end = ansi_c_end(command, index)
             out.append(ansi_c_quoted(command[index + 2 : end - 1]))
@@ -383,8 +442,8 @@ def strip_heredocs(command: str) -> str:
             if stack[-1][1]:
                 stack[-1][1] -= 1
             else:
-                quote = stack.pop()[0]
-        elif char == "#" and (index == 0 or command[index - 1] in " \t\n;&|()"):
+                quote, glued = stack.pop()[0], True
+        elif char == "#" and not after and (not out or out[-1][-1:] in " \t\n;&|()"):
             end = command.find("\n", index)
             index = len(command) if end < 0 else end
             continue
@@ -394,7 +453,9 @@ def strip_heredocs(command: str) -> str:
             parsed = heredoc_word(command, index + 2)
             if parsed:
                 pending.append(parsed[:3])
-                step = parsed[3] - index
+                out.append("<<WORD")  # the delimiter is text: one plain word for the lexer
+                index = parsed[3]
+                continue
             else:
                 step = 2
         elif char == "\n" and pending:
@@ -463,7 +524,7 @@ def segments(command: str) -> list[list[str]]:
     """Split a shell command into simple commands (best effort): here-document bodies dropped, nested
     bash -c and eval strings and command substitutions expanded. Raises Unparsable when a command that
     names git cannot be split (a quote read differently from bash would hide every later command)."""
-    command = strip_heredocs(command.replace("\\\n", ""))
+    command = strip_heredocs(command)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
@@ -494,13 +555,16 @@ def segments(command: str) -> list[list[str]]:
 
 
 def strip_prefix(segment: list[str]) -> list[str]:
-    """Drop leading variable assignments, reserved words (if, then, !, {, ...) and wrapper commands such as
-    env, nice, timeout or nohup with their own options and values."""
+    """Drop leading variable assignments, redirections (>x, 2>&1, <<E, > x), reserved words (if, then, !,
+    {, ...) and wrapper commands such as env, nice, timeout or nohup with their own options and values."""
     index = 0
     while index < len(segment):
         token = segment[index]
         wrapper = os.path.basename(token)
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or token in RESERVED:
+        redirect = REDIRECTION.match(token)
+        if redirect:
+            index += 2 if token.endswith(("<", ">", ">|")) else 1  # the target is the next word
+        elif re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token) or token in RESERVED:
             index += 1
         elif wrapper in WRAPPERS:
             split = env_split_string(segment, index + 1) if wrapper == "env" else None
@@ -955,20 +1019,19 @@ def check_git(tokens: list[str], cwd: str, base: str) -> None:
 
 
 def git_commands(command: str, cwd: str) -> list[tuple[list[str], str]]:
-    """The git commands in a shell command with the directory each runs in (cd followed; as-role.sh and
-    heavy.sh unwrapped)."""
+    """The git commands in a shell command with the directory each runs in (cd followed): every unquoted
+    word git (or a path to it) starts one, wherever it stands in its simple command, since the guard cannot
+    always tell which word bash runs (as-role.sh, heavy.sh, unknown wrappers, a substitution or arithmetic
+    before it); only after a program that never runs its arguments (echo, grep, ...) is it text."""
     found = []
     for tokens in parsed_segments(command):
         program = os.path.basename(tokens[0])
         if program == "cd":
             cwd = expand(tokens[1], cwd) if len(tokens) > 1 else os.environ.get("HOME", cwd)
             continue
-        if program == "as-role.sh":
-            tokens = strip_prefix(tokens[2:])
-        elif program == "heavy.sh":
-            tokens = strip_prefix(tokens[1:])
-        if tokens and os.path.basename(tokens[0]) == "git":
-            found.append((tokens, cwd))
+        if program in NO_EXEC:
+            continue
+        found += [(tokens[i:], cwd) for i, token in enumerate(tokens) if os.path.basename(token) == "git"]
     return found
 
 
@@ -1020,8 +1083,17 @@ def main() -> None:
         event = json.load(sys.stdin)
     except ValueError:
         return
+    try:
+        check_event(event, sys.argv[1:2] == ["--git-only"])
+    except Exception as error:  # fail closed: a crash (exit 1) would let a git command run unchecked
+        if not names_git(event):
+            raise
+        refuse(f"cannot check this git command ({type(error).__name__}); ask the owner to run it")
+
+
+def check_event(event: dict, git_only: bool) -> None:
+    """Refuse what the scenario store, the git stop conditions and identity mode do not allow."""
     cwd = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    git_only = sys.argv[1:2] == ["--git-only"]
     if git_only and not names_git(event):
         return
     config = load_config(cwd)
