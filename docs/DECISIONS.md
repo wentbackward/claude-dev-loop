@@ -928,13 +928,17 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `rulesets?per_page=100` plus each active tag ruleset. The base is protected when the two sources together
   give a pull request (`pull_request`, `update`, or classic `lock_branch`), no force push and no deletion;
   classic protection counts only with `enforce_admins` on, and a ruleset the current login can bypass
-  (`always` or `exempt`; `pull_requests_only` still needs a PR) does not count. Release tags are protected
+  (`always` or `exempt`; `never` and `pull_requests_only`, which still needs a PR, count) does not count.
+  A ruleset whose `current_user_can_bypass` is missing or has another value, and a base rule that names no
+  `ruleset_id`, are not credited and make a remaining gap "could not be checked". Release tags are protected
   when active tag rulesets the login cannot bypass, whose `refs/tags/` patterns (or `~ALL`) include and do
   not exclude `v1.0.0`, together restrict `creation`, `update` and `deletion`. An answer that is not the
   expected JSON array or object, or a gap with a source that could not be read, is "could not be checked",
   never "unprotected". Each call runs under a portable watchdog (gh in the background, `sleep; kill`) after
-  `DEV_LOOP_GH_TIMEOUT` seconds (default 10); after one timeout no further call is made. Only `github.repo`
-  or a `github.com` remote is checked, and nothing when `github.api_url` names another host.
+  `DEV_LOOP_GH_TIMEOUT` seconds (default 10), whose own sleep is stopped with it; after one timeout no
+  further call is made. Only `github.repo`
+  or a `github.com` remote is checked, and nothing when `github.api_url` (one trailing `/` ignored) names
+  another host.
 - **Reason:** both protection mechanisms are in use; the rules endpoint is readable with read access while
   classic protection needs admin. In solo mode the agent runs as the owner's login, usually an admin, so an
   exemption for admins or for that login is no boundary. Creating a tag is what pushing a release tag

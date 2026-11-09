@@ -9,7 +9,8 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   after `DEV_LOOP_GH_TIMEOUT` seconds, default 10; after one timeout no further call): one `ok` line when
   the base branch requires a pull request (or is locked) and blocks force pushes and deletion, and active
   tag rulesets on `v*` restrict creation, update and deletion, none of it bypassable by the current gh
-  login (classic protection counts only when it includes administrators); otherwise a note naming what is
+  login (classic protection counts only when it includes administrators; a ruleset whose bypass it
+  cannot read does not count); otherwise a note naming what is
   missing and the owner step (the repository's rules settings page, or the `gh api` call). No `gh`, not
   logged in, a refusal (403, 404), an answer that is not JSON, no answer, a remote elsewhere or a
   `github.api_url` (GitHub Enterprise): a note that it could not be checked, never `MISSING`. The README's
