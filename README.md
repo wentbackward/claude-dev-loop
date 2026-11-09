@@ -1256,25 +1256,38 @@ Go flags take one or two dashes and `-flag=value`; the others take bundled short
 `-kEXPR`), `--long` and `--long=value`. A flag matches only as written in the table, so an abbreviation
 (`--ev`, `--basete`) or a flag the table leaves out (`-test.testlogfile=`, `-compiler`, `--basetemp`,
 `-p`, `--prefix`, `--target-dir`, `-Z`) is refused; so is `--`, which hands what follows to the runner or
-the test binary. A plain argument may not start with `-` or `+`, hold `=` (`make` and `npm` read
-`VAR=value` as a setting), a blank or a control character, or be an unquoted glob (the shell expands it,
-maybe to a file named like an option). A path, absolute or relative, must stay inside the worktree the
+the test binary. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
+arguments, so a file the agent writes could carry any option; a flag value may not start with `@` either),
+hold `=` (`make` and `npm` read `VAR=value` as a setting), a blank or a control character, or be an
+unquoted glob (the shell expands it, maybe to a file named like an option). `make` takes one target: a
+second one (`make test deploy`) is refused, since `Bash(make test *)` would run a target nobody listed. In
+an entry the word after `make` or `npm run` must be a plain name (`"make -s"` is refused). A path, absolute or relative, must stay inside the worktree the
 command runs in (`..` and symlinks resolved; `~` is the home directory, so `~/x` is outside). The guard
 follows `cd`, `pushd` and `popd` like the git guard, and refuses a targeted command that may run outside
 the worktree (`cd ../other && make test`), an output redirection to a file outside it (`> /tmp/out`;
 `/dev/null` and `2>&1` pass), a variable set before the runner (`GOFLAGS=...`, `MAKEFLAGS=...`, through
-`env` too), a runner started through a program that runs commands (`xargs`, `command`, `exec`, `sudo`,
+`env` too) or anywhere in the same line (`export`, `declare`, `typeset`, `readonly`, `local`, `set -a`,
+`set -o allexport`, a bare `MAKEFLAGS=...;`), a runner started through a program that runs commands (`xargs`, `command`, `exec`, `sudo`,
 `bash -c`, ...), and a command line naming a targeted runner that is not plain (a `$` or backtick
 expansion, braces, a subshell). A refusal names the argument and the runner forms and says to ask the
-owner. The project's exact `fast_check` and `checks` commands pass as written (they have their own exact
-rules). The check is on whenever `targeted` lists an accepted entry, also with `"guard": false`; a runner
-form no accepted entry names is not checked (it has no allow rule, so it asks as before).
+owner. The project's exact `fast_check` and `checks` commands pass with their own arguments (they have their own
+exact rules), but the directory and redirection checks apply to them too (`cd /tmp && make lint` is
+refused). The check is on whenever `targeted` lists an accepted entry, also with `"guard": false`; a
+`.dev-loop.json` that holds `"targeted"` but does not parse checks every runner form (fail closed); a
+runner form no accepted entry names is not checked (it has no allow rule, so it asks as before). A project
+without the key starts no git process for this check.
 
 The limit, plainly: **a targeted test still runs the project's own test code.** `go test` runs the
 package's tests, `make test` runs the recipe in the Makefile, `npm test` runs the package's script, and
 pytest loads `conftest.py`. The guard keeps the runner from running other programs or touching paths
 outside the project through its options; it does not judge what the project's code does, and an agent can
-still change that code before it runs it. Like the git guard it is a tripwire, not the boundary.
+still change that code before it runs it. The same holds for the runners' own config files, which the
+agent can write and the runner reads: pytest's `addopts` (`pytest.ini`, `pyproject.toml`, `setup.cfg`,
+`tox.ini`), `.npmrc` (`script-shell`, `node-options`), `.yarnrc.yml` (`yarnPath`), `.cargo/config.toml`
+(`target.<triple>.runner`, `build.rustc-wrapper`), and the machine-wide `go env -w GOFLAGS=...` set
+earlier. The path check reads the file system at the time of the check, so a symlink made earlier in the
+same line (`ln -s /etc tests/l2 && pytest tests/l2`) is not caught. Like the git guard it is a tripwire,
+not the boundary.
 
 `doctor.sh` notes each allow rule in the project's two settings files (never the user's own) that wildcards
 a runner, an interpreter or a git subcommand with destructive options, with the reason: `make *`, `go *`,

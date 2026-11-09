@@ -1654,6 +1654,8 @@ def positional_problem(word: Word, dirs: set[str], root: str) -> str | None:
         return "an empty argument"
     if text.startswith(("-", "+")):
         return f"{text} is not on the safe list"
+    if text.startswith("@"):
+        return f"{text} is a response file (@file), which a runner may expand into options"
     if "=" in text:
         return f"{text} is a setting (VAR=value), which the runner reads as configuration"
     if re.search(r"[\s\x00-\x1f]", text):
@@ -1664,58 +1666,65 @@ def positional_problem(word: Word, dirs: set[str], root: str) -> str | None:
     return None
 
 
-def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple[str | None, int]:
-    """(why the flag at index is refused or None, the index after it and its value)."""
+def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple[str | None, int, list[str]]:
+    """(why the flag at index is refused or None, the index after it and its value, the values it takes)."""
     text = args[index].text
     index += 1
     if text in {"--", "--end-of-options"}:
-        return f"{text} passes what follows to the runner unchecked", index
+        return f"{text} passes what follows to the runner unchecked", index, []
     if style == "go" or text.startswith("--"):
-        key, eq, _ = text.partition("=")
+        key, eq, value = text.partition("=")
         if style == "go" and key.startswith("--"):
             key = key[1:]
         kind = flags.get(key)
         if kind is None or (kind == NO and eq):
-            return f"{text} is not on the safe list", index
-        if not eq and kind == VAL:
-            index += 1
-        elif not eq and kind == OPT and index < len(args) and args[index].text.isdigit():
-            index += 1
-        return None, index
+            return f"{text} is not on the safe list", index, []
+        if eq:
+            return None, index, [value]
+        if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
+            return None, index + 1, [arg.text for arg in args[index : index + 1]]
+        return None, index, []
     letters = text[1:]
     while letters:
         kind = flags.get("-" + letters[0])
         if kind is None:
-            return f"{text} is not on the safe list (-{letters[0]})", index
-        rest, letters = letters[1:], letters[1:]
-        if kind == VAL:
-            index += 0 if rest else 1
-            break
+            return f"{text} is not on the safe list (-{letters[0]})", index, []
+        letters = letters[1:]
+        if kind in {VAL, OPT} and letters:
+            return None, index, [letters]
+        if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
+            return None, index + 1, [arg.text for arg in args[index : index + 1]]
         if kind == OPT:
-            if not rest and index < len(args) and args[index].text.isdigit():
-                index += 1
             break
-    return None, index
+    return None, index, []
 
 
-def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str) -> str | None:
-    """Why the arguments after a runner form are refused (the first bad one), or None."""
-    index = 0
+def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str,
+                      max_positional: int = -1) -> str | None:
+    """Why the arguments after a runner form are refused (the first bad one), or None. max_positional caps
+    the plain words (-1: no cap)."""
+    index, positional = 0, 0
     while index < len(args):
         word = args[index]
         if word.glob:
             return f"{word.text} is a glob the shell expands"
         if word.text.startswith("-") and word.text != "-":
-            problem, after = flag_problem(style, flags, args, index)
+            problem, after, values = flag_problem(style, flags, args, index)
             if problem:
                 return problem
             if any(arg.glob for arg in args[index + 1 : after]):
                 return f"{args[after - 1].text} is a glob the shell expands"
+            for value in values:
+                if value.startswith("@"):
+                    return f"{value} is a response file (@file), which a runner may expand into options"
             index = after
             continue
         problem = positional_problem(word, dirs, root)
         if problem:
             return problem
+        positional += 1
+        if 0 <= max_positional < positional:
+            return f"{word.text} is a second target, which no \"targeted\" entry lists"
         index += 1
     return None
 
@@ -1730,6 +1739,12 @@ def redirect_problem(targets: list[Word], dirs: set[str], root: str) -> str | No
         if any(not within(os.path.join(directory, target.text), root) for directory in dirs):
             return f"it writes {target.text}, outside the project"
     return None
+
+
+def max_positional(form: tuple) -> int:
+    """How many plain words a runner form takes: one target for make (a second one runs a target no entry
+    lists), any number for the others (-1)."""
+    return 1 if form == ("make", "<word>") else -1
 
 
 def targeted_refusal(entry: str) -> str:
@@ -1754,10 +1769,13 @@ def targeted_refusal(entry: str) -> str:
         return "not an accepted runner form (" + ", ".join(" ".join(form) for form, _, _ in TARGETED_FORMS) + ")"
     form, style, flags = found
     rest = [Word(text) for text in words[len(form_words(form)) :]]
-    if form[-1] == "<word>" and not rest:
+    if form[-1] == "<word>":
         what = "target" if form[0] == "make" else "script"
-        return f"a bare runner: name the {what} (\"{entry} <{what}>\")"
-    problem = arguments_problem(style, flags, rest, {"/project"}, "/project")
+        if not rest:
+            return f"a bare runner: name the {what} (\"{entry} <{what}>\")"
+        if rest[0].text.startswith(("-", "+", "@")):
+            return f"the {what} after \"{' '.join(form_words(form))}\" must be a plain name, not {rest[0].text}"
+    problem = arguments_problem(style, flags, rest, {"/project"}, "/project", max_positional(form))
     return problem or ""
 
 
@@ -1821,32 +1839,48 @@ def project_root(cwd: str, project: str) -> str:
 
 
 def command_problem(command: Simple, dirs: set[str], forms: list[tuple], configured: list[list[str]],
-                    root: str) -> str | None:
-    """Why one simple command that runs a targeted runner is refused, or None (also for other commands)."""
+                    root: str) -> tuple[bool, str | None]:
+    """(whether one simple command runs a targeted runner, why it is refused or None)."""
     texts = [word.text for word in command.words]
-    if texts in configured:
-        return None
     index, dirs = unwrap(command.words, dirs)
     words = command.words[index:]
     rest = texts[index:]
     if not rest:
-        return None
+        return False, None
     program = os.path.basename(rest[0])
     if program in RUNNERS | ALL_SHELLS and runner_named(" ".join(rest[1:]), forms):
-        return f"{program} runs a targeted runner the guard cannot check"
+        return True, f"{program} runs a targeted runner the guard cannot check"
     found = match_form(rest)
     if found is None or found not in forms:
-        return None
-    if any(is_assignment(word) or os.path.basename(word.text) == "env" for word in command.words[:index]):
-        return "variables set before it can change what the runner runs"
-    if rest in configured:
-        return None
+        return False, None
     for directory in sorted(dirs):
         if not within(directory, root):
-            return f"it runs in {directory}, outside the project"
+            return True, f"it runs in {directory}, outside the project"
+    problem = redirect_problem(command.targets, dirs, root)
+    if problem or texts in configured:
+        return True, problem
+    if any(is_assignment(word) or os.path.basename(word.text) == "env" for word in command.words[:index]):
+        return True, "variables set before it can change what the runner runs"
+    if rest in configured:
+        return True, None
     form, style, flags = found
-    return (arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root)
-            or redirect_problem(command.targets, dirs, root))
+    return True, arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root, max_positional(form))
+
+
+def sets_variables(command: Simple) -> str | None:
+    """What in a simple command may set a variable a later runner reads (export, declare, typeset,
+    readonly, local, set -a or -o allexport, a bare assignment), or None."""
+    texts = [word.text for word in command.words]
+    if not texts:
+        return None
+    program = os.path.basename(texts[0])
+    if program in DECLARERS:
+        return program
+    if program == "set" and any(re.match(r"^[-+][A-Za-z]*a", text) or text == "allexport" for text in texts[1:]):
+        return "set -a"
+    if all(is_assignment(word) for word in command.words):
+        return f"the assignment {texts[0]}"
+    return None
 
 
 def targeted_refuse(command: str, problem: str, forms: list[tuple]) -> None:
@@ -1860,25 +1894,53 @@ def targeted_refuse(command: str, problem: str, forms: list[tuple]) -> None:
     )
 
 
+def targeted_config(cwd: str, project: str) -> tuple[dict, list[tuple]] | None:
+    """(the config, the runner forms to check) when the project's .dev-loop.json has "targeted", else None.
+    The file named by DEV_LOOP_CONFIG or in the project directory is read first, so a project without the
+    key starts no git process; a file that holds "targeted" but does not parse checks every form."""
+    text = None
+    for path in (os.environ.get("DEV_LOOP_CONFIG") or os.path.join(project, ".dev-loop.json"), None):
+        try:
+            with open(path or config_path(project), encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+            break
+        except OSError:
+            continue
+    if text is None or '"targeted"' not in text:
+        return None
+    try:
+        config = json.loads(text)
+    except ValueError:
+        return {}, list(TARGETED_FORMS)
+    if not isinstance(config, dict):
+        return {}, list(TARGETED_FORMS)
+    return config, targeted_forms(config)
+
+
 def check_targeted(event: dict, cwd: str) -> None:
     """Refuse a Bash call that runs a runner of the project's "targeted" forms with an argument that is not
-    a plain path, package or pattern inside the project, or a flag on that runner's safe list. A command
-    line naming such a runner that is not plain is refused too. Only with "targeted" in .dev-loop.json."""
+    a plain path, package or pattern inside the project, or a flag on that runner's safe list, or in a line
+    that may set a variable the runner reads. A command line naming such a runner that is not plain is
+    refused too. Only with "targeted" in .dev-loop.json."""
     if event.get("tool_name") != "Bash":
         return
     command = str((event.get("tool_input") or {}).get("command", ""))
     if not runner_named(command, TARGETED_FORMS):
         return
+    forms: list[tuple] = []
     try:
         project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd
-        config = load_config(project)
-        forms = targeted_forms(config)
+        found = targeted_config(cwd, project)
+        if found is None:
+            return
+        config, forms = found
         if not forms or not runner_named(command, forms):
             return
         root = project_root(cwd, project)
         commands = PlainLexer(command).run()
         where, previous = Directories(cwd), ""
         configured = configured_argvs(config)
+        runs, setter = False, None
         for simple in commands:
             index, _ = unwrap(simple.words, where.dirs)
             texts = [word.text for word in simple.words[index:]]
@@ -1888,13 +1950,17 @@ def check_targeted(event: dict, cwd: str) -> None:
                     raise NotPlain(f"a {program} in a pipeline")
                 where.change(program, simple.words[index + 1 :], previous)
             else:
-                problem = command_problem(simple, where.dirs, forms, configured, root)
+                setter = setter or sets_variables(simple)
+                targeted, problem = command_problem(simple, where.dirs, forms, configured, root)
+                runs = runs or targeted
                 if problem:
                     targeted_refuse(command, problem, forms)
             previous = simple.op
             where.after(simple.op)
+        if runs and setter:
+            targeted_refuse(command, f"{setter} in the same line can set a variable the runner reads", forms)
     except NotPlain as error:
-        targeted_refuse(command, f"it is not a plain command line ({error})", forms)
+        targeted_refuse(command, f"it is not a plain command line ({error})", forms or TARGETED_FORMS)
     except Exception as error:  # fail closed: a crash (exit 1) would let the command run unchecked
         if in_loop_project():
             refuse(f"cannot check this command against the targeted runners ({type(error).__name__}); ask the"

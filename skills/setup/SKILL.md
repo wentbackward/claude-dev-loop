@@ -85,7 +85,8 @@ running system against holdout scenarios". Skip any question whose answer you al
      `bash -c` alone would run anything (`permissions.sh` refuses those entries with the reason). Tell the
      user plainly: a targeted test still runs the project's own test code (a test, a Makefile recipe, an
      npm script), so the guard keeps out other programs and paths, not what the project's code does. Leave
-     the key out when the user does not want it: nothing changes then.
+     the key out when the user does not want it: nothing changes then. The template's `targeted` list is an
+     example, not a default: confirm the entries with the user before writing them.
    - Remove keys you do not need (`gate_setup`, `deploy`, `identities`, ...). Leave `notes_dir` empty
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and

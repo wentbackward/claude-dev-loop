@@ -422,7 +422,7 @@ doctor_targeted() {
         body=${rule#Bash(}
         first=${body%%[ :*]*}
         case $DOCTOR_RUNNERS in *" $first "*) ;; *) continue ;; esac
-        reason="a wildcard after $first, a runner whose arguments the guard checks only for the forms listed in \"targeted\""
+        reason="a wildcard after $first: it runs a command no \"targeted\" entry lists without asking (the guard checks a runner's arguments only for the forms \"targeted\" lists, and even then not which target or script runs)"
       fi
       optional "permissions: allow rule $rule in $rel is a wildcard: $reason (list the exact forms in \"targeted\", then the owner runs permissions.sh --apply and removes this rule)"
     done < <(dl_perm_rules "$DL_ROOT/$rel" allow)

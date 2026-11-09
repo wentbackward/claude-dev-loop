@@ -1120,6 +1120,13 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   while checking refuses the call in a loop project. Doctor notes wildcard allow rules for runners,
   interpreters and destructive git subcommands from sample commands (so `Bash`, `go:*` and `go *` are all
   found) and any other wildcard after a runner's name, except the rules written for accepted entries.
+  Review round 2: `make` takes one target (a second would run one nobody listed); the word after `make`
+  or `npm run` in an entry must be a plain name; a word or flag value starting with `@` is refused for
+  every runner (pytest expands response files; the others gain nothing from it); a line that runs a
+  targeted runner may not also `export`, `declare`, `typeset`, `readonly`, `local`, `set -a`/`-o allexport`
+  or make a bare assignment; the exact configured commands get the directory and redirection checks; the
+  config is read from `DEV_LOOP_CONFIG` or the project directory first, so a project without `targeted`
+  starts no git process, and one that holds `"targeted"` but does not parse checks every form.
 - **Reason:** review round 1 showed that ask rules over the command text cannot protect a runner
   wildcard: abbreviations, quoting, tabs and options no list names get through, as in #71. An allowlist
   checked on the parsed argv closes the class; small explicit lists keep it reviewable. Checking the whole
