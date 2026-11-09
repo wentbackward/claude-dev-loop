@@ -802,6 +802,11 @@ dl_branch_args() {
         dl_usage "$script"
         exit 0
         ;;
+      --)
+        echo 'dev-loop: "--" is not a branch: branch names never start with "-", so there is nothing to separate' >&2
+        dl_usage "$script" >&2
+        exit 2
+        ;;
       -*)
         echo "dev-loop: unknown option $arg" >&2
         dl_usage "$script" >&2

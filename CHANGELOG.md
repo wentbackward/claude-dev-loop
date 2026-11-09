@@ -24,6 +24,15 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   and acceptEdits edit there without a prompt; it never adds the project's parent. `doctor.sh` reports an
   uncovered notes dir, worktrees dir or sibling loop worktrees as MISSING and notes old-layout worktrees
   (never moved). The setup skill writes `"worktrees_dir": "../<repo>-worktrees"` for new projects.
+- Review follow-ups (#76): the stop gate clamps the session start to the current time, so a transcript
+  whose first timestamp is in the future no longer lets every untracked file through. A bare `--` given to
+  `gate-train.sh`, `merge-train.sh`, `repush.sh` or `open-pr.sh` is refused with a message that branch
+  names never start with `-`. `repush.sh` puts its `Supersedes` line before the notes' closing
+  `Generated with` footer, so the PR body still ends with it. `tests/smoke.sh --section <id or name>`
+  (repeatable) runs the shared setup, that section and the earlier sections it needs, in a new work dir;
+  `--list` lists the sections. The implementer and code-reviewer briefs point at such selectors instead of
+  ad-hoc runners. Smoke sections 11 and 20 write and remove `.claude/` files only by absolute paths in
+  their throwaway projects.
 
 ## 0.8.2 — 2026-11-08
 

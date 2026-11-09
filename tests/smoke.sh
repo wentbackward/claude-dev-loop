@@ -1,9 +1,142 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015,SC2016  # pass/fail never fail; single quotes are expanded by the inner shell
 # Smoke test of the plugin's hooks and scripts on a throwaway project with a local bare origin.
-# No network, no real GitHub: `gh` is tests/fake-gh. Run: tests/smoke.sh   (TMPDIR picks the work dir)
+# No network, no real GitHub: `gh` is tests/fake-gh. Each run makes a new work dir under TMPDIR.
+#
+# Usage: tests/smoke.sh [--section <id or name>]... [--list]
+#   (none)            run every section
+#   --section <id>    run the shared setup, then only that section and the sections it needs (smoke_needs),
+#                     in file order, then the summary; <id> is a section number (11, 11b) or text from one
+#                     of the section's comment lines (the first match wins). Repeatable.
+#   --list            print each section's id, the sections it needs, and its title
+#
+# A section starts at a line "# <n>. " or "# <n><letter>. " whose number is not below the previous
+# section's (so a numbered list inside a section is not one) and ends where the next starts; the summary
+# from the line 'echo "smoke: ' on is shared. A section that uses the state or helpers of earlier ones
+# names them in smoke_needs.
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+smoke_file="$plugin/tests/${BASH_SOURCE[0]##*/}"
+
+# smoke_usage: the Usage block of this header.
+smoke_usage() {
+  awk '/^# Usage:/ { on = 1 } on && !/^#/ { exit } on && /^#$/ { exit } on { sub(/^# ?/, ""); print }' "$smoke_file"
+}
+
+# smoke_needs ID: the sections whose state or helpers section ID uses directly (the runner adds theirs).
+smoke_needs() {
+  case $1 in
+    2) echo 1 ;;
+    3 | 4 | 6 | 7 | 10 | 11 | 13 | 15 | 25) echo 2 ;;
+    5) echo 4 ;;
+    8 | 9) echo 7 ;;
+    11c) echo 11b ;;
+    12) echo 5 6 8 9 10 11 ;;
+    14) echo 13 ;;
+    14b) echo 14 ;;
+    14c) echo 11b 14b ;;
+    16) echo 10 12 14 15 ;;
+    26) echo 16 ;;
+  esac
+}
+
+# smoke_sections: one line per section, "<id> TAB <first line> TAB <last line> TAB <title>", in file order.
+smoke_sections() {
+  awk 'BEGIN { OFS = "\t"; last = -1 }
+    /^echo "smoke: / { foot = NR; exit }
+    match($0, /^# [0-9]+[a-z]?\. /) {
+      id = substr($0, 3, RLENGTH - 4)
+      if (id + 0 >= last) {
+        if (cur != "") print cur, start, NR - 1, title
+        last = id + 0; cur = id; start = NR; title = substr($0, RLENGTH + 1)
+      }
+    }
+    END { if (cur != "") print cur, start, foot - 1, title }' "$smoke_file"
+}
+
+# smoke_find ID_OR_NAME: the id of the section with that id, else of the one holding the first comment line
+# (a line starting "# ") that contains the text; fails when there is none.
+smoke_find() {
+  local lineno
+  smoke_sections | awk -F'\t' -v id="$1" '$1 == id { print id; found = 1; exit } END { exit !found }' && return 0
+  [ -n "$1" ] || return 1
+  lineno=$(awk -v name="$1" -v from="$(smoke_sections | head -n 1 | cut -f2)" \
+    'NR >= from && /^echo "smoke: / { exit } NR >= from && index($0, "# ") == 1 && index($0, name) { print NR; exit }' \
+    "$smoke_file")
+  [ -n "$lineno" ] || return 1
+  smoke_sections | awk -F'\t' -v n="$lineno" '$2 <= n && n <= $3 { print $1; exit }'
+}
+
+# smoke_closure ID...: the ids and every section they need, space separated.
+smoke_closure() {
+  local todo="$*" seen="" id
+  while [ -n "$todo" ]; do
+    id=${todo%% *}
+    todo=${todo#"$id"}
+    todo=${todo# }
+    case " $seen " in *" $id "*) continue ;; esac
+    seen="${seen:+$seen }$id"
+    todo="$todo${todo:+ }$(smoke_needs "$id")"
+    todo=${todo% }
+  done
+  echo "$seen"
+}
+
+# smoke_code IDS: the code of the sections in IDS in file order, a cd into the shared project before one
+# whose predecessor is skipped, then the shared summary.
+smoke_code() {
+  local id first lastl ran=yes
+  while IFS="$(printf '\t')" read -r id first lastl _; do
+    case " $1 " in
+      *" $id "*)
+        [ "$ran" = yes ] || echo 'cd "$work/project" || exit 1'
+        sed -n "${first},${lastl}p" "$smoke_file"
+        ran=yes
+        ;;
+      *) ran=no ;;
+    esac
+  done < <(smoke_sections)
+  sed -n '/^echo "smoke: /,$p' "$smoke_file"
+}
+
+smoke_select=""
+smoke_list=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    -h | --help)
+      smoke_usage
+      exit 0
+      ;;
+    --list) smoke_list=yes ;;
+    --section)
+      if [ $# -lt 2 ]; then
+        echo "smoke: --section needs a section id or name" >&2
+        smoke_usage >&2
+        exit 2
+      fi
+      smoke_id=$(smoke_find "$2") || {
+        echo "smoke: no section matches '$2' (tests/smoke.sh --list)" >&2
+        exit 2
+      }
+      smoke_select="${smoke_select:+$smoke_select }$smoke_id"
+      shift
+      ;;
+    *)
+      echo "smoke: unknown argument $1" >&2
+      smoke_usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+if [ -n "$smoke_list" ]; then
+  while IFS="$(printf '\t')" read -r smoke_id _ _ smoke_title; do
+    printf '%s\tneeds: %s\t%s\n' "$smoke_id" "$(smoke_needs "$smoke_id")" "$smoke_title"
+  done < <(smoke_sections)
+  exit 0
+fi
+[ -z "$smoke_select" ] || smoke_select=$(smoke_closure "$smoke_select")
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
 export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
@@ -35,6 +168,12 @@ EOF
 chmod +x check.sh
 echo "line one" >src.txt
 git add . && git commit -q -m "chore: start" && git push -q origin main
+
+# A section run (--section): only the chosen sections and those they need, then the summary.
+if [ -n "$smoke_select" ]; then
+  eval "$(smoke_code "$smoke_select")"
+  exit
+fi
 
 # 1. Hooks without config are no-ops.
 edit_input='{"tool_input":{"file_path":"'"$work/project/src.txt"'"}}'
@@ -141,6 +280,14 @@ rm -- -dash.txt
 echo new >-new-dash.txt
 expect "stop gate blocks on a new untracked leading-dash name" 2 "$(stop_session s1 "$transcript")"
 rm -- -new-dash.txt
+# A transcript whose first timestamp is in the future starts the session now, not then (#76).
+printf '{"type":"user","timestamp":"2099-01-01T00:00:00.000Z"}\n' >"$work/future.jsonl"
+expect "stop gate's first run with a future transcript start does not block on older files" 0 \
+  "$(stop_session s5 "$work/future.jsonl")"
+echo new >after.txt
+expect "stop gate clamps a future transcript start to now: a new untracked file blocks" 2 \
+  "$(stop_session s5 "$work/future.jsonl")"
+rm after.txt
 echo new >"new file.txt"
 echo "line three" >>src.txt
 awk '{ sub(/"fast_check"/, "\"stop_gate\": {\"require_clean_tree\": false}, \"fast_check\""); print }' \
@@ -403,15 +550,15 @@ expect "the perl fallback leaves no process behind" "" "$(alive $(cat "$work/slo
 git checkout -q main
 
 # 11. doctor flags the leftovers of a hand-built loop.
-mkdir -p .claude/agents && echo "---" >.claude/agents/code-reviewer.md
+mkdir -p "$work/project/.claude/agents" && echo "---" >"$work/project/.claude/agents/code-reviewer.md"
 out=$("$plugin/scripts/doctor.sh" 2>&1)
 expect "doctor flags a project agent that shadows the plugin's" yes \
   "$(echo "$out" | grep -q "MISSING .claude/agents/code-reviewer.md shadows" && echo yes || echo no)"
-rm -r .claude/agents
-echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}' >.claude/settings.json
+rm -r "$work/project/.claude/agents"
+echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}' >"$work/project/.claude/settings.json"
 expect "doctor notes a project Stop hook" yes \
   "$("$plugin/scripts/doctor.sh" 2>&1 | grep -q "note    project Stop hooks" && echo yes || echo no)"
-rm .claude/settings.json
+rm "$work/project/.claude/settings.json"
 printf '{"checks": ["true"], "parallel": "yes", "affected": {"summary": "x"}}\n' >"$work/doctor.json"
 out=$(DEV_LOOP_CONFIG="$work/doctor.json" "$plugin/scripts/doctor.sh" 2>&1)
 expect "doctor flags a parallel that is not true or false" yes \
@@ -3298,8 +3445,8 @@ printf '%s\n' "$no_settings" | grep -q '^note    permissions: no .claude/setting
   pass "perm: the missing settings file is a note" || fail "perm: no note for a missing .claude/settings.json"
 
 # The merge keeps every existing rule and key, adds the loop's rules, and only adds.
-mkdir -p .claude
-cat >.claude/settings.json <<'EOF'
+mkdir -p "$mwork/project/.claude"
+cat >"$mwork/project/.claude/settings.json" <<'EOF'
 {
   "model": "custom",
   "permissions": {
@@ -3311,11 +3458,12 @@ cat >.claude/settings.json <<'EOF'
   "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]}
 }
 EOF
-printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >.claude/settings.local.json
-cp .claude/settings.json "$mwork/before.json"
-cp .claude/settings.local.json "$mwork/before-local.json"
+printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >"$mwork/project/.claude/settings.local.json"
+cp "$mwork/project/.claude/settings.json" "$mwork/before.json"
+cp "$mwork/project/.claude/settings.local.json" "$mwork/before-local.json"
 dry=$(mperm)
-cmp -s .claude/settings.json "$mwork/before.json" && cmp -s .claude/settings.local.json "$mwork/before-local.json" &&
+cmp -s "$mwork/project/.claude/settings.json" "$mwork/before.json" &&
+  cmp -s "$mwork/project/.claude/settings.local.json" "$mwork/before-local.json" &&
   pass "perm: permissions.sh without --apply changes nothing" || fail "perm: the dry run changed a settings file"
 printf '%s\n' "$dry" | grep -qF '.claude/settings.json: + allow Bash(make lint)' &&
   printf '%s\n' "$dry" | grep -qF ".claude/settings.local.json: + allow Bash($mscripts/gate-train.sh *)" &&
@@ -3323,43 +3471,48 @@ printf '%s\n' "$dry" | grep -qF '.claude/settings.json: + allow Bash(make lint)'
   fail "perm: the dry run does not list the rules ($dry)"
 for nojq in "" 1; do
   label=${nojq:+ (python3)}
-  cp "$mwork/before.json" .claude/settings.json
-  cp "$mwork/before-local.json" .claude/settings.local.json
+  cp "$mwork/before.json" "$mwork/project/.claude/settings.json"
+  cp "$mwork/before-local.json" "$mwork/project/.claude/settings.local.json"
   DEV_LOOP_NO_JQ=$nojq mperm --apply >/dev/null
   expect "perm: the merge keeps every existing allow rule first, in order$label" "Bash(npm test) WebFetch" \
-    "$(mrules .claude/settings.json allow | head -n 2 | paste -sd' ' -)"
+    "$(mrules "$mwork/project/.claude/settings.json" allow | head -n 2 | paste -sd' ' -)"
   expect "perm: the merge keeps the existing ask and deny rules$label" "Bash(git push origin main)|Bash(curl *) Bash(sudo:*)" \
-    "$(mrules .claude/settings.json ask | head -n 1)|$(mrules .claude/settings.json deny | head -n 2 | paste -sd' ' -)"
+    "$(mrules "$mwork/project/.claude/settings.json" ask | head -n 1)|$(mrules "$mwork/project/.claude/settings.json" deny |
+      head -n 2 | paste -sd' ' -)"
   expect "perm: the merge keeps the other keys$label" "custom default true" \
     "$(json_get_py() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["model"], d["permissions"]["defaultMode"], d["hooks"]["Stop"][0]["hooks"][0]["command"])' "$1"; }
-      json_get_py .claude/settings.json)"
-  expect "perm: no rule is duplicated (sudo deny stays once)$label" 1 "$(mrules .claude/settings.json deny | grep -cxF 'Bash(sudo:*)')"
+      json_get_py "$mwork/project/.claude/settings.json")"
+  expect "perm: no rule is duplicated (sudo deny stays once)$label" 1 \
+    "$(mrules "$mwork/project/.claude/settings.json" deny | grep -cxF 'Bash(sudo:*)')"
   missing_rules=""
   for list in allow ask deny; do
     while IFS= read -r rule; do
-      mrules .claude/settings.json "$list" | grep -qxF -- "$rule" || missing_rules="$missing_rules $list:$rule"
+      mrules "$mwork/project/.claude/settings.json" "$list" | grep -qxF -- "$rule" || missing_rules="$missing_rules $list:$rule"
     done < <(mrules "$plugin/templates/settings.json" "$list")
   done
   expect "perm: every template rule is in the merged settings$label" "" "$missing_rules"
   for rule in "Bash(test -x run.sh)" "Bash(make lint)" "Bash(make check)" "Bash(./e2e.sh --all)" "Bash(tee e2e.log)" \
     "Bash(git push -u origin HEAD)"; do
-    mrules .claude/settings.json allow | grep -qxF -- "$rule" && pass "perm: the project allow list has $rule$label" ||
+    mrules "$mwork/project/.claude/settings.json" allow | grep -qxF -- "$rule" &&
+      pass "perm: the project allow list has $rule$label" ||
       fail "perm: the project allow list lacks $rule$label"
   done
   expect "perm: the local file keeps its own rule first and gets the plugin scripts$label" \
-    "Bash(ls *) Bash($mscripts/gate-train.sh)" "$(mrules .claude/settings.local.json allow | head -n 2 | paste -sd' ' -)"
-  mrules .claude/settings.json allow | grep -qF "$mwork" && fail "perm: the shared settings file holds a machine path$label" ||
+    "Bash(ls *) Bash($mscripts/gate-train.sh)" \
+    "$(mrules "$mwork/project/.claude/settings.local.json" allow | head -n 2 | paste -sd' ' -)"
+  mrules "$mwork/project/.claude/settings.json" allow | grep -qF "$mwork" &&
+    fail "perm: the shared settings file holds a machine path$label" ||
     pass "perm: the shared settings file holds no machine path$label"
   expect "perm: a second run adds nothing$label" "permissions: complete" "$(DEV_LOOP_NO_JQ=$nojq mperm --apply | tail -n 1)"
 done
-git check-ignore -q .claude/settings.local.json && pass "perm: the local settings file is ignored by git" ||
+git -C "$mwork/project" check-ignore -q .claude/settings.local.json && pass "perm: the local settings file is ignored by git" ||
   fail "perm: .claude/settings.local.json is not ignored"
 printf '{"permissions": [' >"$mwork/broken.json"
-cp "$mwork/broken.json" .claude/settings.json
+cp "$mwork/broken.json" "$mwork/project/.claude/settings.json"
 mperm --apply >/dev/null
 expect "perm: an invalid settings file is refused and left untouched" "0" \
-  "$(cmp -s .claude/settings.json "$mwork/broken.json"; echo $?)"
-cp "$mwork/before.json" .claude/settings.json
+  "$(cmp -s "$mwork/project/.claude/settings.json" "$mwork/broken.json"; echo $?)"
+cp "$mwork/before.json" "$mwork/project/.claude/settings.json"
 mperm --apply >/dev/null
 
 # The decision for each command under the merged rules: the loop's commands are allowed, the dangerous ones
@@ -3441,35 +3594,35 @@ printf '%s\n' "$(mdoctor)" | grep -qF 'note    permissions: the allow list lacks
   pass "perm: doctor notes a fast_check missing from the allow list" || fail "perm: no note for a stale allow list"
 mconfig "test -x run.sh && make lint"
 # Missing loop rules: a plugin script rule removed.
-cp .claude/settings.local.json "$mwork/local-full.json"
-printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >.claude/settings.local.json
+cp "$mwork/project/.claude/settings.local.json" "$mwork/local-full.json"
+printf '{"permissions": {"allow": ["Bash(ls *)"]}}\n' >"$mwork/project/.claude/settings.local.json"
 printf '%s\n' "$(mdoctor)" | grep -qE '^note    permissions: the allow list lacks [0-9]+ of the loop.s rules' &&
   pass "perm: doctor notes missing loop rules" || fail "perm: no note for missing loop rules"
 # No allow list at all.
 printf '{"permissions": {"deny": ["Bash(sudo:*)"], "additionalDirectories": ["%s"]}}\n' "$mwork/state/project/notes" \
-  >.claude/settings.json
-rm .claude/settings.local.json
+  >"$mwork/project/.claude/settings.json"
+rm "$mwork/project/.claude/settings.local.json"
 out=$(mdoctor)
 printf '%s\n' "$out" | grep -qF 'note    permissions: no allow list' && pass "perm: doctor notes a missing allow list" ||
   fail "perm: no note for a missing allow list"
 expect "perm: a missing allow list adds no problem to the doctor's verdict" "$(printf '%s\n' "$complete_out" | tail -n 1)" \
   "$(printf '%s\n' "$out" | tail -n 1)"
 # A deny rule that blocks a loop command is MISSING, in either project file; the user's file is never read.
-cp "$mwork/before.json" .claude/settings.json
-cp "$mwork/local-full.json" .claude/settings.local.json
+cp "$mwork/before.json" "$mwork/project/.claude/settings.json"
+cp "$mwork/local-full.json" "$mwork/project/.claude/settings.local.json"
 mperm --apply >/dev/null
-printf '{"permissions": {"allow": [], "deny": ["Bash(gh pr:*)"]}}\n' >.claude/settings.local.json
+printf '{"permissions": {"allow": [], "deny": ["Bash(gh pr:*)"]}}\n' >"$mwork/project/.claude/settings.local.json"
 out=$(mdoctor)
 printf '%s\n' "$out" | grep -qF 'MISSING permissions: deny rule Bash(gh pr:*) in .claude/settings.local.json blocks "gh pr' &&
   pass "perm: doctor reports a deny on gh pr as MISSING" || fail "perm: no MISSING for a deny on gh pr"
 [ "$(printf '%s\n' "$out" | tail -n 1)" != "$(printf '%s\n' "$complete_out" | tail -n 1)" ] &&
   pass "perm: a blocking deny adds a problem to the doctor's verdict" || fail "perm: a blocking deny left the verdict unchanged"
-cp "$mwork/local-full.json" .claude/settings.local.json
+cp "$mwork/local-full.json" "$mwork/project/.claude/settings.local.json"
 python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["permissions"]["deny"].append("Bash(*/scripts/gate-train.sh*)"); json.dump(d, open(sys.argv[1], "w"))' \
-  .claude/settings.json
+  "$mwork/project/.claude/settings.json"
 printf '%s\n' "$(mdoctor)" | grep -qF 'MISSING permissions: deny rule Bash(*/scripts/gate-train.sh*) in .claude/settings.json blocks' &&
   pass "perm: doctor reports a deny on a plugin script as MISSING" || fail "perm: no MISSING for a deny on the plugin scripts"
-cp "$mwork/before.json" .claude/settings.json
+cp "$mwork/before.json" "$mwork/project/.claude/settings.json"
 mperm --apply >/dev/null
 expect "perm: the user's own settings are never read (their deny on gh pr is not reported)" "" \
   "$(mdoctor | grep 'permissions')"
@@ -3711,6 +3864,22 @@ git branch -q -D restored701 2>/dev/null
   pass "cleanup --apply: the notes of a deleted superseded branch move to notes/merged" ||
   fail "cleanup: the superseded notes file was not archived"
 [ -f "$(rnotes feat/702-other)" ] && pass "cleanup --apply: the notes of a kept original stay" || fail "cleanup moved kept notes"
+
+# A notes file that ends with the PR footer keeps it last: the Supersedes line goes before it (#76).
+git worktree add -q -b fix/730-footer "$work/repush-730" origin/main
+(cd "$work/repush-730" && echo f >f730.txt && git add f730.txt && git commit -q -m "fix: f (Refs #730)" &&
+  git push -q -u origin fix/730-footer)
+printf 'fix: footer (#730)\n\n## Summary\n- f\n\n\360\237\244\226 Generated with [Claude Code](https://claude.com/claude-code)\n' \
+  >"$(rnotes fix/730-footer)"
+repush "$work/repush-730" fix/730-footer
+expect "repush: a notes file with a footer is carried over" "0 fix/730-footer-v2" "$rc $(printf '%s\n' "$out" | tail -n 1)"
+expect "repush: the footer stays the last line, once, after the Supersedes line" \
+  "Supersedes|blank|footer|1" \
+  "$(tail -n 3 "$(rnotes fix/730-footer-v2)" | awk '/^Supersedes `fix\/730-footer` at / {print "Supersedes"; next}
+    /^$/ {print "blank"; next} /Generated with \[Claude Code\]/ {print "footer"; next} {print "other: " $0}' |
+    paste -sd'|' -)|$(grep -c 'Generated with' "$(rnotes fix/730-footer-v2)")"
+expect "repush: the body before the footer is kept" "- f" "$(sed -n 4p "$(rnotes fix/730-footer-v2)")"
+git worktree remove --force "$work/repush-730"
 
 # No skill or agent text tells anyone to force-push; the ones that rebase name repush.sh.
 forced=$(grep -rnE -- 'push --force|push -f|--force-with-lease|force-push|force push' "$plugin/skills" "$plugin/agents" |
@@ -4589,7 +4758,7 @@ done
 grep -qF "#64" "$plugin/CHANGELOG.md" && pass "marketplace: CHANGELOG has an entry for #64" ||
   fail "marketplace: no CHANGELOG #64 entry"
 grep -qE '^## .*\(#64\)' "$plugin/docs/DECISIONS.md" && pass "marketplace: the decisions log has #64" || fail "marketplace: no #64 decision"
-# Script help (#75): -h / --help print the usage and exit 0 without touching anything; an unknown option
+# 25b. Script help (#75): -h / --help print the usage and exit 0 without touching anything; an unknown option
 # of a script that takes branches is a usage error (exit 2), never a branch name.
 git init -q --bare "$work/help-origin.git"
 git clone -q "$work/help-origin.git" "$work/helpproj" 2>/dev/null
@@ -4618,6 +4787,10 @@ for hscript in gate-train merge-train repush open-pr; do
 done
 hout=$("$plugin/scripts/gate-train.sh" feat/x --bogus 2>&1)
 expect "help: gate-train.sh refuses an unknown option after a branch" 2 $?
+hout=$("$plugin/scripts/gate-train.sh" -- feat/x 2>&1)
+expect "help: gate-train.sh refuses a bare --" 2 $?
+printf '%s\n' "$hout" | grep -qF 'branch names never start with "-"' &&
+  pass "help: a bare -- is named as no branch (branch names never start with -)" || fail "help: bare -- message: $hout"
 [ ! -e "$hstate" ] && pass "help: an unknown option writes no state" || fail "help: --bogus wrote state"
 for hpath in "$plugin"/scripts/*.sh; do
   hscript=$(basename "$hpath")
@@ -4628,7 +4801,45 @@ for hpath in "$plugin"/scripts/*.sh; do
 done
 [ ! -e "$hstate" ] && pass "help: no script's --help writes state" || fail "help: a script's --help wrote $(ls "$hstate")"
 expect "help: no script's --help changes the repository" "$hrefs|" "$(git for-each-ref | git hash-object --stdin)|$(git status --porcelain)"
+# heavy.sh and as-role.sh pass -h / --help on to their command when it is not the first argument (#76).
+for hflag in -h --help; do
+  expect "help: heavy.sh passes a later $hflag to its command" "$hflag" \
+    "$("$plugin/scripts/heavy.sh" printf '%s\n' "$hflag" 2>/dev/null)"
+  expect "help: as-role.sh passes a later $hflag to its command" "$hflag" \
+    "$("$plugin/scripts/as-role.sh" implementer printf '%s\n' "$hflag" 2>/dev/null)"
+done
 grep -qF "#75" "$plugin/CHANGELOG.md" && pass "help: CHANGELOG has an entry for #75" || fail "help: no CHANGELOG #75 entry"
+# tests/smoke.sh runs chosen sections (#76): the shared setup, the sections they need, in a new work dir.
+hsmoke="$plugin/tests/smoke.sh"
+hout=$("$hsmoke" --help 2>&1)
+expect "smoke: --help exits 0" 0 $?
+printf '%s\n' "$hout" | head -n 1 | grep -q '^Usage: tests/smoke.sh' && pass "smoke: --help prints the usage" ||
+  fail "smoke: --help did not print the usage: $hout"
+hout=$("$hsmoke" --list 2>&1)
+expect "smoke: --list exits 0" 0 $?
+expect "smoke: --list names sections 1, 11, 20 and 25b" "1|11|20|25b" \
+  "$(printf '%s\n' "$hout" | awk '$1 == "1" || $1 == "11" || $1 == "20" || $1 == "25b" {print $1}' | paste -sd'|' -)"
+"$hsmoke" --section nope >/dev/null 2>&1
+expect "smoke: an unknown section is a usage error" 2 $?
+"$hsmoke" --section >/dev/null 2>&1
+expect "smoke: --section without a name is a usage error" 2 $?
+"$hsmoke" --bogus >/dev/null 2>&1
+expect "smoke: an unknown option is a usage error" 2 $?
+mkdir -p "$work/nested"
+hout=$(cd "$work/nested" && env -u DEV_LOOP_CONFIG TMPDIR="$work/nested" "$hsmoke" --section 2 2>&1)
+expect "smoke: --section 2 passes" 0 $?
+printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
+  printf '%s\n' "$hout" | grep -qxF 'PASS stop gate passes on a clean tree with a green fast check' &&
+  pass "smoke: --section 2 runs section 2 and the section it needs (1)" || fail "smoke: --section 2 output: $hout"
+printf '%s\n' "$hout" | grep -qF 'heavy.sh exports the slot port' && fail "smoke: --section 2 ran section 3" ||
+  pass "smoke: --section 2 runs no later section"
+printf '%s\n' "$hout" | tail -n 1 | grep -qF "(work dir $work/nested/dev-loop-smoke." &&
+  pass "smoke: a section run has its own work dir under TMPDIR" || fail "smoke: section run work dir: $(printf '%s\n' "$hout" | tail -n 1)"
+hout=$(cd "$work/nested" && env -u DEV_LOOP_CONFIG TMPDIR="$work/nested" "$hsmoke" --section 'Hooks without config' 2>&1)
+expect "smoke: a section chosen by name passes" 0 $?
+printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
+  ! printf '%s\n' "$hout" | grep -qF 'stop gate passes on a clean tree' &&
+  pass "smoke: a name selects the section whose comments contain it" || fail "smoke: --section by name output: $hout"
 
 # 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
 # <dir>/gate, one directory permissions.sh lists in permissions.additionalDirectories (auto mode edits
