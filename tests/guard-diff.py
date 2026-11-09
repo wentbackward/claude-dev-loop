@@ -128,6 +128,9 @@ def make_repo(work: str) -> str:
 
 def main() -> None:
     """Run every case through bash and the guard; report each push bash runs that the guard lets pass."""
+    if len(sys.argv) < 3:
+        print("usage: guard-diff.py GUARD_PY WORK_DIR [RANDOM_CASES [SEED]]", file=sys.stderr)
+        sys.exit(2)
     guard = load_guard(sys.argv[1])
     work = sys.argv[2]
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 300

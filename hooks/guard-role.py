@@ -858,8 +858,11 @@ COMPOUND = {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "
             "function", "coproc", "!", "[[", "]]"}
 ALL_SHELLS = SHELLS | {"ash", "mksh", "yash", "fish", "csh", "tcsh"}
 PLAIN_WRAPPERS = {name: WRAPPERS[name] for name in ("time", "nohup", "nice", "timeout", "stdbuf")}
+# Programs whose arguments are only text: none runs a program its options name (sort, tar, less and the
+# like are left out for that). The file writers (tee, cp, mv, ln, chmod, touch) can still build a script
+# that a later command runs, a documented limit of the guard.
 TEXT_PROGRAMS = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "cat", "ls", "head", "tail", "wc", "test", "[",
-                 "which", "type", "man", "true", "false", ":", "gh", "sort", "uniq", "cut", "tr", "diff", "cmp",
+                 "which", "type", "man", "true", "false", ":", "gh", "uniq", "cut", "tr", "diff", "cmp",
                  "basename", "dirname", "realpath", "readlink", "stat", "file", "du", "df", "mkdir", "touch", "rm",
                  "rmdir", "cp", "mv", "ln", "chmod", "tee", "jq", "pwd", "sleep", "date"}
 DIR_PROGRAMS = {"cd", "pushd", "popd"}
@@ -1569,15 +1572,31 @@ def check_git_stop_conditions(event: dict, config: dict, cwd: str) -> None:
         check()
 
 
+def read_event(raw: bytes) -> dict | None:
+    """The PreToolUse event, or None when it is not a JSON object. An unreadable event (truncated, not
+    UTF-8) is refused when its text names git and the project has .dev-loop.json: a hook that lets it pass
+    would let an unchecked git command run."""
+    try:
+        event = json.loads(raw.decode("utf-8"))
+    except ValueError:  # UnicodeDecodeError is one
+        event = None
+    if isinstance(event, dict):
+        return event
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    if text_names_git(raw.decode("utf-8", errors="replace")) and os.path.isfile(config_path(project)):
+        refuse("cannot read this tool call (the hook event is not valid JSON) and it names git;"
+               " ask the owner to run it")
+    return None
+
+
 def main() -> None:
     """Read the PreToolUse event and refuse what the scenario store and identity mode do not allow."""
     if sys.argv[1:2] == ["--scenarios-dir"]:
         cwd = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
         print(scenarios_dir(load_config(cwd), cwd))
         return
-    try:
-        event = json.load(sys.stdin)
-    except ValueError:
+    event = read_event(sys.stdin.buffer.read())
+    if event is None:
         return
     try:
         check_event(event, sys.argv[1:2] == ["--git-only"])
