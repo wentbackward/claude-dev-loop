@@ -6201,7 +6201,7 @@ kbranch feat/52-merging merged && git -C "$kwork/project" worktree add -q "$kwor
 kbranch feat/53-conflict merged && git -C "$kwork/project" worktree add -q "$kwork/wt53" feat/53-conflict &&
   git -C "$kwork/project" checkout -q -b side53 origin/main && echo other >"$kwork/project/k-53-conflict.txt" &&
   git -C "$kwork/project" add k-53-conflict.txt && git -C "$kwork/project" commit -q -m "chore: side" &&
-  git -C "$kwork/project" checkout -q feat/4-main
+  git -C "$kwork/project" checkout -q main
 git -C "$kwork/wt53" merge -q side53 >/dev/null 2>&1
 out=$(kenv "$plugin/scripts/cleanup.sh")
 case "$(kline "$kwork/wt52 ")" in keep*"merge/rebase/cherry-pick is in progress"*) pass "kwt: a worktree in a merge --no-commit is kept" ;;
@@ -6247,6 +6247,7 @@ ksplit() {
 cp -R "$plugin/scripts" "$kwork/nonote"
 sed 's/^skip_note() {$/skip_note() { return 0/' "$plugin/scripts/cleanup.sh" >"$kwork/nonote/cleanup.sh"
 cmp -s "$plugin/scripts/cleanup.sh" "$kwork/nonote/cleanup.sh" && fail "kwt: the copy without the note is unchanged"
+# Settle first: this --apply removes what earlier blocks left, so the compared runs below all start from one state.
 kenv "$plugin/scripts/cleanup.sh" --apply >/dev/null
 ksplit nldry "$plugin/scripts" && ksplit nlapply "$plugin/scripts" --apply
 ksplit nlrefdry "$kwork/nonote" && ksplit nlrefapply "$kwork/nonote" --apply
