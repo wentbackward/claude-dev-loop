@@ -2647,6 +2647,27 @@ out=$(python3 -I -c 'import json, sys; print(json.dumps({"tool_name": "Bash", "c
   CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>&1 >/dev/null)
 case $out in *"not a plain command line"*"Write it plainly"*"ask the owner"*) pass "git guard: a refusal of a non-plain command says to write it plainly" ;;
   *) fail "git guard: the non-plain refusal does not explain itself: $out" ;; esac
+# Review round 6: an unreadable hook event (truncated, not UTF-8) that names git is refused in a loop
+# project; programs whose options run a program (sort, tar) are not text programs; guard-diff's usage.
+expect "git guard: a truncated event naming git is refused" 2 \
+  "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "git push origin main"' "$gg/proj-1" |
+    CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+expect "git guard: an event with a byte that is not UTF-8 and names git is refused" 2 \
+  "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "echo \377; git push origin main"}}' "$gg/proj-1" |
+    CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+expect "git guard: a truncated event without git passes" 0 \
+  "$(printf '{"tool_name": "Bash", "cwd": "/nonexistent", "tool_input": {"command": "ls' |
+    CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+expect "git guard: a truncated event naming git passes in a project without .dev-loop.json" 0 \
+  "$(printf '{"tool_name": "Bash", "cwd": "%s", "tool_input": {"command": "git push origin main"' "$gg/plain" |
+    CLAUDE_PROJECT_DIR="$gg/plain" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
+grefused "$gg/proj-1" "echo '$p5' | sort" "sort --compress-program='sh -c \"$p5\"' x" \
+  "tar -xf a.tar --to-command='$p5'" "tar -cf a.tar --checkpoint-action=exec='$p5' x"
+gpassed "$gg/proj-1" "git log --oneline | sort" "sort x.txt && git status"
+out=$(python3 -I "$plugin/tests/guard-diff.py" 2>&1)
+status=$?
+case "$status $out" in "2 usage: guard-diff.py"*) pass "guard-diff: without arguments it prints its usage and exits 2" ;;
+  *) fail "guard-diff: without arguments: $status $out" ;; esac
 # Many refspecs and long commands: the text checks come first, refspecs are capped and the hook ends quickly.
 specs=$(awk 'BEGIN { for (i = 0; i < 6000; i++) printf "feat/r%d ", i }')
 start=$(date +%s)
