@@ -128,6 +128,22 @@ expect "guard: the main session may run the merge train" 0 "$(guard "" "$plugin/
 expect "guard: reading credentials is refused" 2 "$(guard "" 'cat ~/.config/dev-loop/owner/gate.pem')"
 expect "guard: gh auth token is refused" 2 "$(guard dev-loop:implementer 'gh auth token')"
 expect "guard: a push hidden in bash -c is refused" 2 "$(guard dev-loop:implementer "bash -c 'git push origin HEAD'")"
+expect "guard: an ANSI-C string does not hide a later push" 2 \
+  "$(guard dev-loop:code-reviewer "echo \$'a\\'b'
+$AS reviewer git push origin feat/1-x")"
+set_guard() { # set_guard VALUE|unset: the project's "guard" key
+  python3 -I -c 'import json, sys
+path = sys.argv[1]
+config = json.load(open(path))
+config.pop("guard", None) if sys.argv[2] == "unset" else config.update(guard=json.loads(sys.argv[2]))
+json.dump(config, open(path, "w"), indent=2)' "$work/project/.dev-loop.json" "$1"
+}
+set_guard false
+expect "guard: with the git check off, an unparsable git command is still refused" 2 \
+  "$(guard dev-loop:code-reviewer "echo 'x
+$AS reviewer git push origin feat/1-x")"
+expect "guard: with the git check off, an unparsable non-git command passes" 0 "$(guard dev-loop:code-reviewer "echo 'x")"
+set_guard unset
 expect "guard: read-only commands pass" 0 "$(guard dev-loop:implementer 'git status && gh pr view 3 && gh api repos/o/r/pulls')"
 expect "guard: gh api writes need a role" 2 "$(guard "" 'gh api -X POST repos/o/r/issues -f title=x')"
 expect "guard: applying rulesets is for the owner" 2 "$(guard "" "$plugin/scripts/github-protect.sh --apply")"

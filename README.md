@@ -139,7 +139,7 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | script | `repush.sh` | publish a rebased branch as `<branch>-vN` instead of force-pushing it (see Branch lifecycle) |
 | hook | format-on-edit | runs `format` on each edited file (PostToolUse) |
 | hook | stop gate | blocks the stop while `fast_check` is red or work is uncommitted (a modified tracked file, or an untracked file newer than the session); gives up after 5 blocks |
-| hook | role guard | with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
+| hook | role guard | in every loop project: refuses git commands that hit a stop condition (see Permission modes: the git guard; off with `"guard": false`); with scenarios on: keeps the scenario store from the coding agents; identity mode: GitHub writes only through `as-role.sh` with the agent's role (PreToolUse) |
 
 Every script under `scripts/` prints its usage for `-h` or `--help` as its first argument and exits 0
 without touching anything; the scripts that take branches (`gate-train.sh`, `merge-train.sh`, `repush.sh`,
@@ -828,6 +828,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `github.status_context` | `dev-loop/gate` | the commit status the gate posts (identity mode, or `github.post_status: true`) |
 | `github.feature_patterns` | `feat/* fix/* chore/* docs/*` | branches implementers may push (identity rulesets) |
 | `identities` | none (mode off) | per-role identities, see below |
+| `guard` | on | `"guard": false` turns off the role guard's git check (see Permission modes: the git guard); an object (`guard.agents`) keeps it on |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
 | `docs.aspects` | none (docs off; `doctor.sh` notes it) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
@@ -993,8 +994,9 @@ the owner that line and wait instead of editing the settings files.
 
 - `.claude/settings.json` (shared, committed) gets the rules of `templates/settings.json` and the project's
   own:
-  - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git rebase`, `git add`,
-    `git commit`; `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
+  - **allow:** the read-only git commands, `git fetch`, `git worktree`, `git add`, `git commit`; exactly
+    `git rebase <remote>/<base>`, `git rebase --continue`, `--abort` and `--skip` (any other rebase, such
+    as `--onto`, asks); `gh issue` and `gh pr` `view`, `list`, `create`, `comment`, `edit` (and `gh issue close`,
     `gh pr diff`, `gh pr checks`); exactly `git push -u <remote> HEAD`, the one push the loop makes (the
     implementer pushes its checked-out branch in this form); one exact rule for each command of
     `fast_check` and `checks` (a compound command `a && b` gets one rule per part).
@@ -1050,11 +1052,114 @@ A wildcard cannot exclude arguments: `git push -u origin feat/*` would also matc
 `git push -u origin feat/x:main` or `... --tags`. So the only push allowed is the exact one, and the ask
 and deny rules match dangerous arguments anywhere as a second line. The same limit applies to the other
 wildcard allow rules: `git diff`, `git log` and `git show` accept `--output=<file>` (they write a file),
-and `git fetch +<ref>:<ref>` force-updates a local branch; both stay inside the repository. Options that
-run a command (`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` or `-c`) ask instead. The `Read` and
+and `git fetch +<ref>:<ref>` force-updates a local branch. Options that run a command
+(`git rebase --exec`/`-x`, `git fetch`/`git pull` `--upload-pack` or `-c`) ask instead. Text rules miss
+other spellings of the same option, so the git guard below checks the parsed command as well. The `Read` and
 `Edit` deny rules on `.env` cover only those tools: a Bash command such as `cat .env` is not stopped by
 them (in the default mode it asks, since no allow rule matches it); the `CLAUDE.md` rule not to read
 `.env` files stays the guard.
+
+### The git guard
+
+The git guard is a tripwire, not the boundary. It stops an agent that slips into a git command a stop
+condition forbids, and it tells the agent why. It cannot stop an agent that sets out to get around it,
+for example with a script it writes and then runs. The real control for the base branch and the tags is
+the remote's branch and tag protection (`github-protect.sh`, or the host's own rules), so set that up.
+
+Git accepts many spellings of one option: a unique prefix (`--upl=<cmd>` is `--upload-pack`), bundled
+short flags (`-fx <cmd>` is `-f -x <cmd>`), quotes and backslashes (`'-f'`, `\-f`, `--fo\rce`). A text
+rule cannot see through them, and `git push -u <remote> HEAD` pushes the base branch when run from a
+checkout of it. So the role guard hook (PreToolUse) reads every Bash command in a loop project that names
+git. A command names git when it contains the text `git` in any case (so `GIT_*` variables count too) once
+quotes, backslashes, braces, commas and line continuations are removed and `$'...'` escapes are decoded,
+or when it has a glob that may match `git` (`gi?`, `g[i]t`).
+
+**It fails closed: only plain command lines pass.** A command that names git is checked only when it is
+a plain command line. That means literal words (quotes and backslashes are fine, and a leading `~` is the
+home directory) joined by `&&`, `||`, `;`, `|` or newlines, plain redirections (`>x`, `2>&1`, `<x`,
+`<<<word`), and here-documents whose body expands nothing: a quoted end word (`<<'EOF'`), or an unquoted
+one whose body has no `$`, backtick or backslash. Anything else that names git is refused with "write it
+plainly", even when nothing in it is dangerous. That covers:
+
+- a `$` outside single quotes or a backtick (variables, `$( )`, `${ }`, `$[ ]`, `$'...'`), a `{`, `}`, `(`
+  or `)` outside quotes (brace expansion, groups, subshells, functions), a lone `&`, an unbalanced quote, a
+  compound command (`if`, `for`, `while`, `case`, `!`, `[[`, ...) and a here-document without its end line;
+- a program that runs a command string: `alias`, `eval`, `builtin`, `command`, `exec`, `source`, `.`,
+  `trap`, `watch`, `script`, `flock`, `su`, `sudo`, `busybox`, `xargs`, `parallel`, a shell (`sh`, `bash`,
+  `zsh`, ...) given an option or no script file (`bash -c '...'`, `echo ... | bash`), `env -S`,
+  `find -exec`/`-ok`, `rg --pre`, `man -H`/`-P`/`--html`/`--pager` and `gh alias`;
+- text that reads as a git command (`git push ...`) handed to a program the guard does not know
+  (`python3 -c "... git push ..."`, `ssh host 'git push ...'`), as an argument, a here-document or through
+  a pipe. Only git, gh and programs that never run their arguments (`echo`, `printf`, `grep`, `cat`, `ls`,
+  `head`, ...) may take such text, so commit messages and PR bodies still pass;
+- a `cd`, `pushd` or `popd` the guard cannot follow (`cd -`, a glob, one in a pipeline such as
+  `cd x | git push`). `cd x & git push` is refused for its lone `&`. Both are refusals on the safe side.
+
+So a commit message goes in as `git commit -F - <<'EOF'` (a quoted end word), not as
+`git commit -m "$(cat <<'EOF' ...)"`, and a PR body as `gh pr create --body-file - <<'EOF'`. The loop's own
+commands are already plain. Commands that do not name git are not touched by this rule.
+
+**On a plain command line** the guard splits the simple commands and skips variable assignments and the
+wrappers `env` (whose `-C`/`--chdir` it follows), `time`, `nohup`, `nice`, `timeout`, `stdbuf`,
+`as-role.sh <role>` and `heavy.sh`. It follows `cd`, `pushd`, `popd` and `git -C <dir>`. A `cd` that may
+fail or be skipped (`cd x; git push`, `cd x || git push`) leaves the directory before it possible, so the
+push is checked in both. Under a program it does not know, every word `git` (or `git-<name>`) starts a git
+command, wherever it stands. The guard expands bundled short flags and resolves long-option prefixes
+against the options of `fetch`, `pull`, `rebase`, `diff`, `log`, `show`, `worktree remove` and `push` (a
+prefix that may mean a dangerous option counts as that option). It refuses the following, with exit 2, the
+command, the stop condition and "ask the owner":
+
+- `git -c <key>=<value>` or `--config-env` before any subcommand (config can run a command: aliases,
+  pagers, `core.sshCommand`), and `git --exec-path=<dir>`;
+- an assignment or `export` of `GIT_*` (`GIT_DIR`, `GIT_CONFIG_*`, ...), `PATH`, `HOME`, `CDPATH`,
+  `XDG_CONFIG_HOME`, `BASH_ENV`, `ENV` or `LD_PRELOAD`, as a prefix, on its own or through `env`;
+- `git config` that is not a read (`--get*`, `--list`/`-l`, `get`, `list`), since an alias or other config
+  can run any command;
+- `git submodule foreach`, `git bisect run` and `git filter-branch`, which run command strings;
+- `fetch` or `pull` with `--upload-pack`, and `push` with `--receive-pack` or `--exec`;
+- `rebase --exec`/`-x`, and a rebase whose rewritten branch is the base branch (the branch argument, else
+  the branch checked out where it runs; `--continue`, `--abort`, `--skip` and `--quit` pass);
+- `diff`, `log` or `show` with `--output`;
+- `worktree remove --force`/`-f`. The owner runs it with Claude Code's `!` prefix (in the session, as the owner)
+  (`! git worktree remove --force --force <path>`), as the setup skill's migration step says;
+- a push or rebase with `--git-dir` or `--work-tree` (another repository's branch, maybe the base);
+- a push that forces (`--force`, `--force-with-lease`, `--force-if-includes`, `-f`, `+<ref>`), deletes
+  (`--delete`, `-d`, `:<ref>`, `--prune`), tags (`--tags`, `--follow-tags`, `tag <name>`, `refs/tags/...`
+  or a tag name), pushes everything (`--all`, `--branches`, `--mirror`, a refspec with a glob), has more
+  than 50 refspecs, or whose source or destination is the base branch (`<base>`, `heads/<base>`,
+  `refs/heads/<base>` in any case, and `HEAD`, `@` or no refspec when the base is checked out in a
+  directory the push may run in, from `git rev-parse --abbrev-ref HEAD`).
+
+The text checks run on every refspec before any git process starts. The branch checked out and the local
+branches and tags (one `git show-ref`) are read once per directory, so even a 100 KB command is checked in
+well under a second.
+
+The base branch is `base_branch` from `.dev-loop.json` (default `main`). The check is on in every project
+with `.dev-loop.json` (not only with scenarios or identities) and off with `"guard": false`. Projects
+without `.dev-loop.json` are not checked. A crash of the guard on a command naming git refuses it, and
+so does a Bash event it cannot read (truncated, not UTF-8) whose text names git; a `tool_input` that is
+not an object is read as the command. A
+differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts through bash
+with a stub `git`, and fails when bash would push to the base branch and the guard lets it through. A Bash
+call that does not name git starts no git process. The ask and deny rules stay as a second layer. `gh`
+commands are outside the git guard: the permission rules (and, in identity mode, the role checks) cover
+gh writes such as `gh pr merge`, `gh api` and `gh release`.
+
+What the guard does not catch, by design or because it reads only the command text:
+
+- a command that builds the name git without spelling it (`a=g; b=it; $a$b push`, `$(printf ...)`): the
+  plain-line rule applies only to commands that name git;
+- a script or other file the agent writes (with the Write tool, or `echo ... > x.sh`) and then runs
+  (`bash x.sh`, `make`, a test runner), and commands a program reads from a file;
+- aliases and functions from the user's shell profile, git aliases, hooks and `push.default` or
+  `remote.<name>.push` already in the repository's config, and the session shell's `CDPATH`;
+- rewrites of the base branch that stay local: `git branch -f <base>`, `git update-ref refs/heads/<base>`
+  and `git reset --hard` on it pass on purpose, since nothing leaves the machine and a later push of the
+  base is refused.
+
+The identity and scenario checks use their own best-effort splitter. A command that names git but that
+splitter cannot split (an unbalanced quote) is refused there with "cannot be parsed; ask the owner", also
+with `"guard": false`. A command without git that cannot be split is not refused for that.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
 commit message or PR body that quotes such a command. Write those messages without the literal flag, or
@@ -1070,6 +1175,8 @@ broader rule. The rule syntax the plugin relies on is in `docs/DECISIONS.md`.
 - Agents never read `.env` or credential files, and never write secrets or personal identifiers (real user
   names, account numbers, emails, private hostnames) into the repository, commits, issues or PRs.
 - Merges happen only through `merge-train.sh` after a green gate, and never with `--admin`.
+- The role guard refuses git commands that hit a stop condition, however their options are spelled
+  (see Permission modes: the git guard); `"guard": false` turns that check off.
 - The plugin touches only the repository, its gate worktree, `~/.dev-loop/<repo>/`, the heavy-slot lock
   directory, and, in identity mode, `~/.config/dev-loop/`. `status.sh` only reads them.
 - The scripts never push to the base branch directly, and nothing in the loop force-pushes. The merge

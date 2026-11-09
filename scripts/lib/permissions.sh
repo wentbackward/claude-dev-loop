@@ -152,11 +152,13 @@ dl_perm_feature_patterns() {
 
 # dl_perm_project_rules: "<list><TAB><rule>" lines for the project's shared settings beyond the template: the
 # one exact push the loop makes (the checked-out branch to the remote; a wildcard would also allow any extra
-# argument), prompts for a push that names the base branch or deletes a loop branch, and one exact rule per
-# project command. No rule ends in ":*", which Claude Code reads as a trailing " *".
+# argument), the one exact rebase (onto the remote base), prompts for a push that names the base branch or
+# deletes a loop branch, and one exact rule per project command. No rule ends in ":*", which Claude Code
+# reads as a trailing " *".
 dl_perm_project_rules() {
   local pattern command
   printf 'allow\tBash(git push -u %s HEAD)\n' "$DL_REMOTE"
+  printf 'allow\tBash(git rebase %s/%s)\n' "$DL_REMOTE" "$DL_BASE"
   printf 'ask\tBash(*git*push* %s)\nask\tBash(*git*push* %s *)\n' "$DL_BASE" "$DL_BASE"
   printf 'ask\tBash(*git*push*:%s)\nask\tBash(*git*push*:%s *)\n' "$DL_BASE" "$DL_BASE"
   while IFS= read -r pattern; do

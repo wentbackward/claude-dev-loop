@@ -919,3 +919,109 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after the
   settle window); a `--worktree <path>` override (a forced removal by another name); archiving the
   ignored files or the submodules too (large, and a submodule's git dir is a repository of its own).
+
+## 2026-11-08 — The git guard checks the parsed command (#71)
+
+- **Decision:** the role guard's git check runs on every Bash call in a project with `.dev-loop.json`
+  (resolved like the scenario check: the cwd's main worktree, else `CLAUDE_PROJECT_DIR`), off only with
+  `"guard": false`; an object under `guard` keeps it on. Long options resolve against an explicit list per
+  subcommand: an exact listed name is itself, a `--no-` name is a negation (never dangerous), and any other
+  name means every listed option it is a prefix of, so an ambiguous prefix that may mean a dangerous option
+  is refused (git would reject it anyway). `-c` or `--config-env` before any git subcommand is refused,
+  not only before `fetch` and `pull` (config such as `alias.<x>=!<cmd>`, `core.pager` or
+  `core.sshCommand` runs a command). The shell grammar is best effort: wrappers are skipped with their own
+  options and values, reserved words at the head of a simple command are dropped, `bash -lc` and `eval`
+  and `env -S` strings and command substitutions (backticks, `$( )`) are checked, and comments and
+  here-document bodies are not (they are text), except the substitutions of an unquoted body. A
+  here-document starts only at an unquoted `<<` outside quotes, comments and arithmetic (one scan that
+  follows quotes across lines and `$( )` nesting); when in doubt the lines stay commands, and a body whose
+  end word never comes is checked as commands (a false refusal is acceptable, a hidden command is not).
+  An ANSI-C string (`$'...'`, a backslash escapes the next character) becomes a plain single-quoted word
+  before splitting. A command that cannot be split (an unbalanced quote: bash would reject it, but a
+  splitter that reads one quote differently from bash would otherwise see the rest as one long word) is
+  refused when it names git once quotes, backslashes and line continuations are removed, in the git check
+  and in the identity and scenario checks (also for an `env -S` string); a command without git falls back
+  to whitespace words as before, since there is no git command for the check to miss. Round 4: a
+  backslash-newline is removed by the quote-aware scan, outside single quotes and only when the backslash
+  is not itself escaped; `$'...'` is decoded as bash decodes it (`\xHH`, octal, `\u`, `\U`, `\cX`, the
+  simple escapes; a NUL ends it), and the fast path parses any command with `$'`; redirections before the
+  command word are skipped (`>&`, `<&` and `>|` stay one word, a here-document delimiter is text); a `#`
+  right after `$(( ))` or `$( )` is part of a word, not a comment; a backtick substitution is scanned as its
+  own command. Every unquoted word `git` (or a path to it) starts a git command wherever it stands in its
+  simple command, because the guard cannot always tell which word bash runs (a substitution or arithmetic
+  before it, an unknown wrapper such as `watch`); after `echo`, `printf`, `grep`, `rg`, `cat`, `ls`, `head`,
+  `tail`, `wc`, `test`, `which`, `type`, `man`, `true`, `false` or `:` the words are text. The price is a
+  false refusal of an unquoted mention such as `foo git push origin main`; quoted text (commit messages, PR
+  bodies) is one word and never counts. A crash of the guard on a Bash call naming git refuses it (a hook
+  that exits 1 lets the call run). The differential test `tests/guard-diff.py` uses bash as the oracle: a
+  fixed corpus and 300 seeded random texts, each followed by `git push origin main` after a newline and
+  after a space, run with a stub `git` on an otherwise empty PATH; every case runs in its own session with a
+  1 MB file-size limit, `TMPDIR` in the test's work dir, and its whole process group killed when it ends, and
+  the fragments contain no bare `(`, so no case can define a function that calls itself. A Bash call whose text has no `git` once quotes and backslashes are removed is not
+  parsed, and in a project without scenarios or identities it does not start git at all. A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
+  base). A push of a name that is a tag and not a branch is a tag push. The template allows only
+  `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
+  in `permissions.sh`, since the template does not know the remote and base. A stacked branch's
+  `git rebase --onto <remote>/<base> <old> <branch>` asks (it is rare and names three refs).
+- **Reason:** the stop conditions are about meaning, and git's grammar (prefixes, bundles, quoting) is
+  only visible after parsing; failing closed on what may be dangerous costs nothing for the loop's own
+  commands, which use exact options.
+- **Alternatives:** more text rules (cannot cover prefixes and bundles); calling git's own parser
+  (`git rev-parse --parseopt` needs each command's option spec and runs nothing safer); an allow rule for
+  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list); refusing every
+  command that cannot be split (a non-git syntax error has nothing the git check could miss, and bash
+  rejects it anyway); checking `git` only in command position (misses `` `` git push``, `$((1))x git push`
+  and unknown wrappers, which the differential test found); refusing every unquoted mention of git, also
+  after `echo` or `grep` (refuses `grep -n git README.md`).
+
+
+## 2026-11-09 — The git guard fails closed on anything that is not a plain command line (#71)
+
+- **Decision:** after five review rounds each found new ways to hide a git command in full shell syntax,
+  the git check stops trying to read all of bash. A Bash call names git when its text has `git` in any case
+  (so `GIT_*` names too) once quotes, backslashes, braces, commas and line continuations are removed and
+  `$'...'` escapes decoded, or a glob that may match `git`. Such a call passes only as a plain command
+  line: literal words (quotes, backslashes, a leading `~`) joined by `&&`, `||`, `;`, `|` or newlines,
+  plain redirections, and here-documents whose body expands nothing (a quoted end word, or an unquoted one
+  whose body has no `$`, backtick or backslash; the end line must come). Not plain, and refused with
+  "write it plainly": `$` outside single quotes, backticks, `{ } ( )` outside quotes, a lone `&`, compound
+  commands, an unbalanced quote; programs that run a command string (`alias`, `eval`, `builtin`,
+  `command`, `exec`, `source`, `.`, `trap`, `watch`, `script`, `flock`, `su`, `sudo`, `busybox`, `xargs`,
+  `parallel`, a shell with an option or no script file, `env -S`, `find -exec`, `rg --pre`, `man -H/-P`,
+  `gh alias`); and text that reads as a git command (`git` then a space) handed to a program the guard
+  does not know, as an argument, a here-document or down a pipe (only git, gh and programs that never run
+  their arguments may take it). On plain lines the earlier option checks stay, plus: `push <remote> tag
+  <name>`, assignments and `export` of `GIT_*`, `PATH`, `HOME`, `CDPATH`, `XDG_CONFIG_HOME`, `BASH_ENV`,
+  `ENV` and `LD_PRELOAD`, `git config` other than a read (`--get*`, `--list`/`-l`, `get`, `list`),
+  `--exec-path=`, `submodule foreach`, `bisect run`, `filter-branch`, `--git-dir`/`--work-tree` on a push
+  or rebase, and more than 50 refspecs. `cd`, `pushd`, `popd`, `env -C/--chdir` and `git -C` are followed;
+  a `cd` that may fail or be skipped (after `||`, before `;`, a newline or `||`) keeps the directory
+  before it possible, so the push is checked in both; a `cd` in a pipeline, `cd -` and a glob are refused.
+  Text checks run on every refspec before any subprocess; the checked-out branch and the local refs (one
+  `git show-ref`) are read once per directory. The guard is a tripwire, not the boundary: the remote's
+  branch and tag protection is the real control, and the README says so with the remaining limits (names
+  built from pieces, scripts the agent writes and runs, the user's shell aliases, the repository's own
+  config). `git branch -f <base>`, `git update-ref refs/heads/<base>` and `git reset --hard` on the base
+  pass on purpose: they stay local, and a push of the base is refused. The identity and scenario checks
+  keep their own splitter (unchanged by this entry). Round 6: a Bash hook event that is not a JSON object
+  (truncated, not UTF-8) is refused when its text, decoded with replacement characters, names git and the
+  project has `.dev-loop.json`; `sort` is not a text program (`--compress-program` runs one), and the
+  text programs' comment says the file writers among them can still build a script run later. Round 7: a
+  `tool_input` that is not an object is read as the command, and any exception while handling an event
+  ends in a refusal when the raw text may name git and the project has `.dev-loop.json` (a test that
+  cannot fail: a decoded substring check). Without identities, scenarios or `factory`, `guard-role.sh`
+  passes non-Bash events before Python, so these refusals apply to Bash events there. This replaces the shell-grammar parts of the entry
+  above: here-document scanning, `$'...'` decoding, substitution expansion and `bash -c` unpacking no longer
+  decide the git check.
+- **Reason:** a blocklist over shell syntax leaks wherever the guard and bash read a construct
+  differently, and every round found another one. Refusing what the guard cannot read closes the whole
+  class; the loop's own git commands are already plain, and an agent told "write it plainly" can always
+  do so. The price is a false refusal of some harmless commands that name git, such as
+  `git commit -m "$(cat <<'EOF' ...)"` (use `git commit -F - <<'EOF'`) and `command -v git` (use
+  `which git`).
+- **Alternatives:** another round of blocklist fixes (the pattern of five rounds says it will leak again);
+  allowing the common `"$(cat <<'EOF' ... EOF)"` commit form as a special case (bash 3.2 reads parentheses
+  in such a body differently, so it would need its own rules); refusing every unknown program that gets
+  any word with `git` in it (refuses paths such as `~/git/project` and branch names like `fix/1-git-x`);
+  checking HEAD only in the directory after the last `cd` (misses `cd x || git push` and `cd x; git push`
+  when the `cd` fails).

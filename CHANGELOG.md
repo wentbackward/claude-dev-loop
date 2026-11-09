@@ -96,6 +96,33 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `--list` lists the sections. The implementer and code-reviewer briefs point at such selectors instead of
   ad-hoc runners. Smoke sections 11 and 20 write and remove `.claude/` files only by absolute paths in
   their throwaway projects.
+- Git guard (#71): the role guard hook now checks git commands in every project with `.dev-loop.json`
+  (not only with scenarios or identities); `"guard": false` turns it off. It fails closed: a Bash command
+  that names git (any case, `GIT_*`, a glob that may match git) passes only as a plain command line:
+  literal words joined by `&&`, `||`, `;`, `|` or newlines, plain redirections and here-documents that
+  expand nothing. `$` and backtick expansions, braces, subshells, functions, compound commands, `alias`,
+  `eval`, `sudo`, `xargs`, shells given a command string, `find -exec`, `rg --pre`, `man -H`, and git text
+  handed to an unknown program are refused with "write it plainly". On plain lines it follows `cd`,
+  `pushd`, `popd`, `env -C` and `git -C` (a `cd` that may fail keeps the old directory in the check),
+  skips assignments and wrappers (`env`, `nice`, `timeout`, `stdbuf`, `time`, `nohup`, `as-role.sh`,
+  `heavy.sh`), expands bundled short flags and resolves long-option prefixes for `fetch`, `pull`,
+  `rebase`, `diff`, `log`, `show`, `worktree remove` and `push`. It refuses `-c`/`--config-env`,
+  `--exec-path=`, `GIT_*`/`PATH`/`HOME` assignments, `git config` writes, `submodule foreach`,
+  `bisect run`, `filter-branch`, `--upload-pack`, `--receive-pack`, `rebase --exec`/`-x`, a rebase of the
+  base branch, `--output`, `worktree remove --force`, and a push that forces, deletes, tags (`tag <name>`
+  included), pushes everything (a glob refspec included), has more than 50 refspecs, runs with
+  `--git-dir`/`--work-tree`, or whose source or destination is the base branch
+  (`git push -u <remote> HEAD` from a checkout of the base included), with the reason and "ask the
+  owner". Text checks run before any git process, and git is asked once per directory. A crash of the
+  guard on a command naming git refuses it, and so does a Bash hook event it cannot read (truncated, not
+  UTF-8) whose text names git. A differential test (`tests/guard-diff.py`, in `make check`)
+  holds the guard to bash's reading of a fixed corpus and seeded random shell texts. The identity and
+  scenario checks split commands on newlines too, and refuse a command naming git that they cannot parse.
+  Commit messages go in as `git commit -F - <<'EOF'` (the implementer and test-engineer briefs say so).
+  The README calls the guard a tripwire (the remote's branch and tag protection is the boundary) and lists
+  its limits; the setup skill has the owner run `! git worktree remove --force --force <path>`. The
+  template's `git rebase *` allow becomes `git rebase --continue`, `--abort` and `--skip`, and
+  `permissions.sh` adds the exact `git rebase <remote>/<base>`; any other rebase asks.
 
 ## 0.8.2 — 2026-11-08
 

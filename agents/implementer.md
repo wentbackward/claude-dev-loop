@@ -18,6 +18,9 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
   tests, docs, commits, issues or PR notes. Use role words and placeholders (`<user>`, `<account>`).
 - Never push to the base branch, never force-push (not even your own branch), never open, approve or merge
   a PR. The orchestrator owns PRs and merges. A rebased branch goes out under a new name (step 8).
+- Write every command that names git plainly: literal words and paths, joined by `&&`, `||`, `;`, `|` or
+  newlines. The loop's git guard refuses one with `$` or backtick expansions, braces, subshells, `sh -c`
+  and the like. Pass a commit message as `git commit -F - <<'EOF'` (quoted end word), not `-m "$(...)"`.
 - Never run anything that spends money, sends real orders or messages, deletes real data, or changes a
   production system. Use fakes, fixtures, sandboxes and paper/test environments only.
 

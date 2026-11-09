@@ -1,5 +1,5 @@
 {
-  "description": "dev-loop: keep the scenario store from the coding agents and guard GitHub writes in identity mode, format the edited file, and keep Claude from stopping on red fast checks or uncommitted work. All are no-ops in projects without .dev-loop.json.",
+  "description": "dev-loop: refuse git commands that hit a stop condition (unless \"guard\": false), keep the scenario store from the coding agents and guard GitHub writes in identity mode, format the edited file, and keep Claude from stopping on red fast checks or uncommitted work. All are no-ops in projects without .dev-loop.json.",
   "hooks": {
     "PreToolUse": [
       {

@@ -314,7 +314,8 @@ user's OK. Branches replaced by a merged `-vN` version are classified `supersede
 `cleanup.sh --apply`.
 
 Stacked branches: after the lower branch merges, have the upper one's implementer rebase it with
-`git rebase --onto <remote>/<base> <old lower head> <upper>` so it never carries foreign commits, then
+`git rebase --onto <remote>/<base> <old lower head> <upper>` so it never carries foreign commits (this form
+asks for permission: only `git rebase <remote>/<base>`, `--continue`, `--abort` and `--skip` are allowed), then
 publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh <upper>` (never a force push) and gate the
 `<upper>-vN` it reports.
 

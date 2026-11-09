@@ -83,7 +83,7 @@ running system against holdout scenarios". Skip any question whose answer you al
    runs it in the session as the owner), and wait until the owner has run it. Never edit
    `.claude/settings.json` or `.claude/settings.local.json` yourself, and never run `--apply`.
    `permissions.sh` only adds rules: the allow, ask and deny rules of `templates/settings.json`, the loop's
-   one push (`git push -u <remote> HEAD`), one exact rule per `fast_check` and `checks` command into
+   one push (`git push -u <remote> HEAD`) and rebase (`git rebase <remote>/<base>`), one exact rule per `fast_check` and `checks` command into
    `.claude/settings.json`; the plugin's scripts at this machine's plugin path into
    `.claude/settings.local.json` (added to `.gitignore`), with the absolute notes directory and
    `worktrees_dir` (and a gate worktree outside it) in its `permissions.additionalDirectories`. Run it again
@@ -115,8 +115,10 @@ The plugin replaces the copies; the project-specific knowledge in them stays.
      a procedure still reads (for example a deploy log used as a `find -newer` marker).
    - Memories that describe the old tooling: rewrite them to point at the plugin, or delete them.
    - Worktrees: only when no agent is running. Save the uncommitted changes of each one (`git diff HEAD`
-     and the untracked files) to the archive, keep every branch, then `git worktree remove --force --force`
-     (locked ones included) and `git worktree prune`.
+     and the untracked files) to the archive, keep every branch, then ask the user to run
+     `! git worktree remove --force --force <path>` for each one (locked ones included; the `!` prefix runs
+     it in the session as the owner, and the git guard refuses a forced worktree removal from the agent),
+     then run `git worktree prune`.
    - Branches: run `${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh` (a dry run), show the user the counts and
      the closed and stale lists, then `--apply` (with `--include closed` / `--include stale` as they
      agree). It saves every deleted tip to a bundle first.
