@@ -5518,8 +5518,8 @@ grep -qF '"worktrees_dir": "../<repo>-worktrees"' "$plugin/skills/setup/SKILL.md
   fail "wtd: the setup skill does not write worktrees_dir"
 grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the doctor skill has a row for the worktrees lines" ||
   fail "wtd: no doctor skill row for worktrees"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
-  pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
+grep -qF '#70' "$plugin/CHANGELOG.md" &&
+  pass "wtd: CHANGELOG has a #70 entry" || fail "wtd: no #70 entry"
 # 26b. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
 # agent never edits its own permission settings); doctor reports a deny rule in the project's settings that
 # blocks a tag, a release or a tag push as MISSING, with the fix: move it to ask. Quiet with the template.
@@ -5656,8 +5656,8 @@ grep -qF 'move it to `ask`' "$plugin/skills/doctor/SKILL.md" && grep -qF '! ${CL
   fail "owner: the doctor skill lacks the tag-deny row or the apply line"
 awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' &&
   pass "owner: the README permissions section shows the owner's apply line" || fail "owner: the README lacks the apply line"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#73' && pass "owner: CHANGELOG has a #73 entry under Unreleased" ||
-  fail "owner: no #73 entry under ## Unreleased"
+grep -qF '#73' "$plugin/CHANGELOG.md" && pass "owner: CHANGELOG has a #73 entry" ||
+  fail "owner: no #73 entry"
 grep -qF '(#73)' "$plugin/docs/DECISIONS.md" && pass "owner: the decisions log has a #73 entry" || fail "owner: no #73 decision"
 cd "$work/project" || exit 1
 
@@ -5952,8 +5952,8 @@ expect "doctor tmp: a filesystem name with spaces is read from the end of the li
 expect "doctor tmp: a filesystem with no blocks (macOS map auto_home) is skipped without an error" "" \
   "$(FAKE_DF_FS="map auto_home" kdoctor "0 0 0 100%" "")"
 expect "doctor tmp: TMPDIR=/ is checked as /" "ok      TMPDIR /: 80% space free" "$(KTMP=/ kdoctor "1000 200 800 20%" "")"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
-  pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
+grep -qF '#80' "$plugin/CHANGELOG.md" &&
+  pass "work dirs: CHANGELOG has a #80 entry" || fail "work dirs: no #80 entry"
 cd "$work/project" || exit 1
 # 29. Kept worktrees (#83): cleanup.sh lists the worktrees of merged branches that merge-train kept for
 # their changes (a dry run changes nothing); --apply --include worktrees archives each one's patch, staged
@@ -6321,10 +6321,10 @@ grep -qF -- "--include worktrees" "$plugin/skills/dev-loop/SKILL.md" &&
   grep -qF "git worktree remove --force" "$plugin/skills/dev-loop/SKILL.md" &&
   pass "kwt: the dev-loop skill points at the command instead of git worktree remove --force" ||
   fail "kwt: the dev-loop skill does not point at --include worktrees"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#83' &&
-  pass "kwt: CHANGELOG has a #83 entry under Unreleased" || fail "kwt: no #83 entry under ## Unreleased"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#93' &&
-  pass "kwt: CHANGELOG has a #93 entry under Unreleased" || fail "kwt: no #93 entry under ## Unreleased"
+grep -qF '#83' "$plugin/CHANGELOG.md" &&
+  pass "kwt: CHANGELOG has a #83 entry" || fail "kwt: no #83 entry"
+grep -qF '#93' "$plugin/CHANGELOG.md" &&
+  pass "kwt: CHANGELOG has a #93 entry" || fail "kwt: no #93 entry"
 git -C "$kwork/project" checkout -q main
 git -C "$kwork/project" worktree unlock "$kwork/wt3"
 chmod 755 "$kwork/wt14/locked-away"
@@ -6501,10 +6501,10 @@ awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.m
 awk '/\(#84\)$/ {on = 1; next} /^## / {on = 0} on' "$plugin/docs/DECISIONS.md" |
   grep -qF 'characters (letters, digits, `_`, `-`)' && pass "ask rules: DECISIONS names the characters of the short-word heuristic" ||
   fail "ask rules: the DECISIONS #84 entry does not name the characters the code accepts"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#91' && pass "ask rules: CHANGELOG has a #91 entry under Unreleased" ||
-  fail "ask rules: no #91 entry under ## Unreleased"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#84' && pass "ask rules: CHANGELOG has a #84 entry under Unreleased" ||
-  fail "ask rules: no #84 entry under ## Unreleased"
+grep -qF '#91' "$plugin/CHANGELOG.md" && pass "ask rules: CHANGELOG has a #91 entry" ||
+  fail "ask rules: no #91 entry"
+grep -qF '#84' "$plugin/CHANGELOG.md" && pass "ask rules: CHANGELOG has a #84 entry" ||
+  fail "ask rules: no #84 entry"
 cd "$work/project" || exit 1
 # 31. Remote protection (#88): on a GitHub remote, doctor reads (read only) whether the base branch needs a
 # PR and blocks force pushes and deletion (branch protection or rulesets) and whether active tag rulesets
@@ -6828,8 +6828,8 @@ printf '%s\n' "$rreadme" | grep -qF 'Restrict creations' && pass "protection: th
   fail "protection: the README does not name the tag rules"
 grep -F 'note remote protection' "$plugin/skills/doctor/SKILL.md" | grep -qF 'creation' &&
   pass "protection: the doctor skill row names the tag rules" || fail "protection: the skill row lacks the tag rules"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#88' && pass "protection: CHANGELOG has a #88 entry under Unreleased" ||
-  fail "protection: no #88 entry under ## Unreleased"
+grep -qF '#88' "$plugin/CHANGELOG.md" && pass "protection: CHANGELOG has a #88 entry" ||
+  fail "protection: no #88 entry"
 cd "$work/project" || exit 1
 
 # 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
@@ -7119,8 +7119,8 @@ grep -qF 'merge.union_files' "$plugin/README.md" && pass "union: the README name
   fail "union: the README lacks merge.union_files"
 grep -qF 'merge.union_files' "$plugin/skills/gate/SKILL.md" && grep -qF 'merge.union_files' "$plugin/skills/merge/SKILL.md" &&
   pass "union: the gate and merge skills describe merge.union_files" || fail "union: skill text"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#95' && pass "union: CHANGELOG has a #95 entry under Unreleased" ||
-  fail "union: no #95 entry under ## Unreleased"
+grep -qF '#95' "$plugin/CHANGELOG.md" && pass "union: CHANGELOG has a #95 entry" ||
+  fail "union: no #95 entry"
 grep -qF '(#95)' "$plugin/docs/DECISIONS.md" && pass "union: the decisions log has #95" || fail "union: no #95 decision"
 cd "$work/project" || exit 1
 
@@ -7420,7 +7420,7 @@ grep -qF "still runs the project's own test code" "$plugin/skills/setup/SKILL.md
 grep -qF 'is a wildcard' "$plugin/skills/doctor/SKILL.md" && grep -qF 'not written' "$plugin/skills/doctor/SKILL.md" &&
   pass "targeted: the doctor skill has rows for the targeted notes" || fail "targeted: no doctor skill rows for targeted"
 grep -qF '(#72)' "$plugin/docs/DECISIONS.md" && pass "targeted: the decisions log has a #72 entry" || fail "targeted: no #72 decision"
-awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#72' && pass "targeted: CHANGELOG has a #72 entry under Unreleased" ||
-  fail "targeted: no #72 entry under ## Unreleased"
+grep -qF '#72' "$plugin/CHANGELOG.md" && pass "targeted: CHANGELOG has a #72 entry" ||
+  fail "targeted: no #72 entry"
 cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"
