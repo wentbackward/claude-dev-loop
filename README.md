@@ -1161,7 +1161,7 @@ The identity and scenario checks use their own best-effort splitter. A command t
 splitter cannot split (an unbalanced quote) is refused there with "cannot be parsed; ask the owner", also
 with `"guard": false`. A command without git that cannot be split is not refused for that.
 
-The guard hook and these rules are tripwires on the agent's command line; no text match is complete
+The guard hook and the permission rules are tripwires on the agent's command line; no text match is complete
 against full shell syntax. The boundary is the remote's branch and tag protection, so `doctor.sh` reads it
 (read only, through `gh api` GETs on a github.com remote, each stopped after `DEV_LOOP_GH_TIMEOUT` seconds,
 default 10): one `ok` line when the base branch requires a pull request (or is locked) and blocks force
