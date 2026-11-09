@@ -6947,6 +6947,52 @@ printf 'h\r\nfeat/914-n\r\nshared\r\nfeat/915-o\r\nshared\r\n' >"$uwork/crlf.exp
 git show train-feat/915-o:docs/CRLF.md | cmp -s - "$uwork/crlf.expected" &&
   pass "union: CRLF entries stay whole with their CRs and no marker line" ||
   fail "union: CRLF result: $(git show train-feat/915-o:docs/CRLF.md | od -c | head -n 4)"
+# Only conflict hunks where both sides only added lines are kept whole: a branch that amends an existing
+# entry while the other prepends one next to it stops the train, as without the option.
+git checkout -q main && git merge -q --ff-only origin/main &&
+  awk '{ print } /^## Unreleased$/ { getline; print; print "- feat X: does x." }' CHANGELOG.md >CHANGELOG.tmp &&
+  mv CHANGELOG.tmp CHANGELOG.md && git commit -q -am "docs: feat X" && git push -q origin main
+git checkout -q -B feat/916-p origin/main &&
+  sed 's/^- feat X: does x\.$/- feat X: does x, fixed (#2)./' CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+  git commit -q -am "fix: feat X" && git push -q -u origin feat/916-p && git checkout -q main &&
+  printf 'fix: feat X\n\nCloses #1\n' >"$("$plugin/scripts/paths.sh" notes feat/916-p)"
+git checkout -q -B feat/917-q origin/main &&
+  awk '/^- feat X: does x\.$/ { print "- feat B" } { print }' CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+  git commit -q -am "feat: B" && git push -q -u origin feat/917-q && git checkout -q main &&
+  printf 'feat: B\n\nCloses #1\n' >"$("$plugin/scripts/paths.sh" notes feat/917-q)"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/916-p feat/917-q)
+expect "union: an amended entry next to a prepended one stops the train" "3 TRAIN rebase conflict at feat/917-q" \
+  "$? $(echo "$out" | tail -n 1)"
+expect "union: the amend-vs-prepend conflict names the changelog" "TRAIN conflict in: CHANGELOG.md" \
+  "$(echo "$out" | tail -n 2 | head -n 1)"
+# The driver itself: a delete against a modify is a conflict, and a failing awk never empties the result.
+udrv="$uwork/driver" && mkdir -p "$udrv/bin" "$udrv/tmp"
+udriver_files() { # udriver_files BASE OURS THEIRS: write the three sides
+  printf '%b' "$1" >"$udrv/base" && printf '%b' "$2" >"$udrv/ours" && printf '%b' "$3" >"$udrv/theirs"
+}
+udriver() { TMPDIR="$udrv/tmp" "$plugin/scripts/union-merge.sh" "$udrv/base" "$udrv/ours" "$udrv/theirs" 2>/dev/null; }
+udriver_files 'a\nb\nc\n' 'a\nc\n' 'a\nB\nc\n'
+udriver
+expect "union: the driver stops a delete against a modify, the file unchanged" "1|a|c" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+udriver
+expect "union: the driver keeps both sides of lines only added" "0|a|ours|theirs" "$?|$(paste -sd'|' - <"$udrv/ours")"
+real_awk=$(command -v awk)
+# awk fails when it reads stdin (keep_both), or when it is given files (marker_like).
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exec %s "$@"; done\nexit 2\n' "$real_awk" >"$udrv/bin/awk-stdin"
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exit 2; done\nexec %s "$@"\n' "$real_awk" >"$udrv/bin/awk-files"
+chmod +x "$udrv/bin/awk-stdin" "$udrv/bin/awk-files"
+for shim in awk-stdin awk-files; do
+  ln -sf "$udrv/bin/$shim" "$udrv/bin/awk"
+  udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+  PATH="$udrv/bin:$PATH" udriver
+  rc=$?
+  [ "$rc" -ne 0 ] && [ "$(paste -sd'|' - <"$udrv/ours")" = "a|ours" ] &&
+    pass "union: a failing awk ($shim) stops the driver, the file unchanged" ||
+    fail "union: with a failing awk ($shim) the driver gave $rc and: $(paste -sd'|' - <"$udrv/ours")"
+done
+expect "union: the driver removes its temporary files" "" "$(ls -A "$udrv/tmp")"
 out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
 expect "union: another conflict names its file" "TRAIN conflict in: src.txt" "$(echo "$out" | tail -n 2 | head -n 1)"
 # A wildcard entry is refused: entries are literal paths.
