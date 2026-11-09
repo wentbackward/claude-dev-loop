@@ -5040,6 +5040,18 @@ expect "work dirs: an unknown prefix is refused" 1 "$(kremove "$ktmp/not-a-suite
 expect "work dirs: a name that is not PREFIX.XXXXXX is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.x" dev-loop-smoke)"
 expect "work dirs: TMPDIR itself is refused" 1 "$(kremove "$ktmp" dev-loop-smoke)"
 expect "work dirs: a path ending in /.. is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.abc123/.." dev-loop-smoke)"
+# A symlink in TMPDIR that points out of it: `..` after it and a dir under it are both outside TMPDIR on disk.
+mkdir -p "$kwork/outside/inner" "$kwork/outside/dev-loop-smoke.abc123" "$kwork/outside/inner/dev-loop-smoke.abc123"
+ln -s "$kwork/outside/inner" "$ktmp/link"
+expect "work dirs: a path through a symlink and .. is refused" 1 "$(kremove "$ktmp/link/../dev-loop-smoke.abc123" dev-loop-smoke)"
+[ -d "$kwork/outside/dev-loop-smoke.abc123" ] && pass "work dirs: the dir outside TMPDIR behind symlink/.. stays" ||
+  fail "work dirs: removed a dir outside TMPDIR through symlink/.."
+expect "work dirs: a dir whose parent is a symlink out of TMPDIR is refused" 1 "$(kremove "$ktmp/link/dev-loop-smoke.abc123" dev-loop-smoke)"
+[ -d "$kwork/outside/inner/dev-loop-smoke.abc123" ] && pass "work dirs: the dir behind a symlinked parent stays" ||
+  fail "work dirs: removed a dir behind a symlinked parent"
+expect "work dirs: a path with a . component is refused" 1 "$(kremove "$ktmp/./dev-loop-identity.abc123" dev-loop-identity)"
+[ -d "$ktmp/dev-loop-identity.abc123" ] && pass "work dirs: the dir named through . stays" || fail "work dirs: removed a dir named through ."
+rm "$ktmp/link"
 expect "work dirs: an empty path is refused" 1 "$(kremove "" dev-loop-smoke)"
 expect "work dirs: a missing dir is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.zzz999" dev-loop-smoke)"
 expect "work dirs: the suite's own dir is removed" 0 "$(kremove "$ktmp/dev-loop-smoke.abc123" dev-loop-smoke)"
