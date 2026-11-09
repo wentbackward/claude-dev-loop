@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015,SC2016  # pass/fail never fail; single quotes are expanded by the inner shell
 # Smoke test of the plugin's hooks and scripts on a throwaway project with a local bare origin.
-# No network, no real GitHub: `gh` is tests/fake-gh. Each run makes a new work dir under TMPDIR.
+# No network, no real GitHub: `gh` is tests/fake-gh. Each run makes a new work dir under TMPDIR, removed at
+# the end of a green run unless DEV_LOOP_KEEP_WORK=1 (scripts/lib/workdirs.sh); a red run keeps and names it.
 #
 # Usage: tests/smoke.sh [--section <id or name>]... [--list]
 #   (none)            run every section
@@ -12,7 +13,7 @@
 #
 # A section starts at a line "# <n>. " or "# <n><letter>. " whose number is not below the previous
 # section's (so a numbered list inside a section is not one) and ends where the next starts; the summary
-# from the line 'echo "smoke: ' on is shared. A section that uses the state or helpers of earlier ones
+# from the line 'dl_suite_end smoke' on is shared. A section that uses the state or helpers of earlier ones
 # names them in smoke_needs.
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -44,7 +45,7 @@ smoke_needs() {
 # smoke_sections: one line per section, "<id> TAB <first line> TAB <last line> TAB <title>", in file order.
 smoke_sections() {
   awk 'BEGIN { OFS = "\t"; last = -1 }
-    /^echo "smoke: / { foot = NR; exit }
+    /^dl_suite_end smoke / { foot = NR; exit }
     match($0, /^# [0-9]+[a-z]?\. /) {
       id = substr($0, 3, RLENGTH - 4)
       if (id + 0 >= last) {
@@ -62,7 +63,7 @@ smoke_find() {
   smoke_sections | awk -F'\t' -v id="$1" '$1 == id { print id; found = 1; exit } END { exit !found }' && return 0
   [ -n "$1" ] || return 1
   lineno=$(awk -v name="$1" -v from="$(smoke_sections | head -n 1 | cut -f2)" \
-    'NR >= from && /^echo "smoke: / { exit } NR >= from && index($0, "# ") == 1 && index($0, name) { print NR; exit }' \
+    'NR >= from && /^dl_suite_end smoke / { exit } NR >= from && index($0, "# ") == 1 && index($0, name) { print NR; exit }' \
     "$smoke_file")
   [ -n "$lineno" ] || return 1
   smoke_sections | awk -F'\t' -v n="$lineno" '$2 <= n && n <= $3 { print $1; exit }'
@@ -97,7 +98,7 @@ smoke_code() {
       *) ran=no ;;
     esac
   done < <(smoke_sections)
-  sed -n '/^echo "smoke: /,$p' "$smoke_file"
+  sed -n '/^dl_suite_end smoke /,$p' "$smoke_file"
 }
 
 smoke_select=""
@@ -138,6 +139,8 @@ if [ -n "$smoke_list" ]; then
 fi
 [ -z "$smoke_select" ] || smoke_select=$(smoke_closure "$smoke_select")
 
+# shellcheck source=../scripts/lib/workdirs.sh
+. "$plugin/scripts/lib/workdirs.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
 export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
@@ -5039,7 +5042,7 @@ expect "work dirs: the suite's own dir is removed" 0 "$(kremove "$ktmp/dev-loop-
 [ ! -e "$ktmp/dev-loop-smoke.abc123" ] && pass "work dirs: the suite's own dir is gone" || fail "work dirs: the dir is still there"
 expect "work dirs: everything else in TMPDIR stays" \
   "dev-loop-identity.abc123 dev-loop-smoke.link12 dev-loop-smoke.x not-a-suite.abc123 other-dir other.txt sub" \
-  "$(cd "$ktmp" && ls | paste -sd' ' -)"
+  "$(cd "$ktmp" && for f in *; do echo "$f"; done | paste -sd' ' -)"
 [ -f "$ktmp/other-dir/file" ] && [ -d "$ktmp/sub/dev-loop-smoke.abc123" ] && pass "work dirs: other files keep their content" ||
   fail "work dirs: other files lost content"
 
@@ -5050,8 +5053,10 @@ ksuite() {
   shift
   mkdir -p "$dir"
   kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 27 2>&1 | tail -n 1)
-  kleft=$(cd "$dir" && ls -d dev-loop-smoke.* 2>/dev/null)
+  kleft=$(cd "$dir" && for d in dev-loop-smoke.*; do [ -d "$d" ] && echo "$d"; done)
 }
+# kexisting FILE: the dirs listed in FILE (one per line) that still exist.
+kexisting() { while IFS= read -r d; do [ -d "$d" ] && echo "$d"; done <"$1"; }
 ksuite green
 expect "work dirs: a green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" "$kout"
 expect "work dirs: a green suite leaves no dev-loop-smoke.* dir" "" "$kleft"
@@ -5092,9 +5097,9 @@ kgate "$kred"
 kgate "$kred"
 expect "work dirs: the red gate is red" "1 TRAIN RED" "$rc $(echo "$out" | tail -1)"
 expect "work dirs: the gate keeps only the newest red smoke dir" "$(tail -n 1 "$kwork/smoke.made")" \
-  "$(for d in $(cat "$kwork/smoke.made"); do [ -d "$d" ] && echo "$d"; done)"
+  "$(kexisting "$kwork/smoke.made")"
 expect "work dirs: the gate keeps only the newest red identity dir" "$(tail -n 1 "$kwork/identity.made")" \
-  "$(for d in $(cat "$kwork/identity.made"); do [ -d "$d" ] && echo "$d"; done)"
+  "$(kexisting "$kwork/identity.made")"
 [ -d "$gtmp/dev-loop-smoke.decoy1" ] && [ -d "$gtmp/dev-loop-identity.decoy1" ] && [ -f "$gtmp/other.txt" ] &&
   pass "work dirs: the gate leaves dirs its logs never named and other files alone" || fail "work dirs: the gate removed a decoy"
 [ -d "$kwork/gout/dev-loop-smoke.out123" ] && pass "work dirs: the gate leaves a named dir outside TMPDIR alone" ||
@@ -5103,7 +5108,7 @@ expect "work dirs: the gate keeps only the newest red identity dir" "$(tail -n 1
   fail "work dirs: the gate removed a symlink or its target"
 kgate '"echo \"smoke: 3 passed, 0 failed (work dir removed)\""'
 expect "work dirs: a green gate keeps the newest red dir" "0 $(tail -n 1 "$kwork/smoke.made")" \
-  "$rc $(for d in $(cat "$kwork/smoke.made"); do [ -d "$d" ] && echo "$d"; done)"
+  "$rc $(kexisting "$kwork/smoke.made")"
 rm -rf "$gtmp"/dev-loop-smoke.?????? "$gtmp"/dev-loop-identity.??????
 kgate '"true"'
 expect "work dirs: the record forgets dirs that are gone" "" "$(cat "$kwork/home/project/gate-work-dirs.txt" 2>/dev/null)"
@@ -5150,5 +5155,4 @@ expect "doctor tmp: a filesystem without inode counts (0) leaves the inode part 
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
 cd "$work/project" || exit 1
-echo "smoke: $passed passed, $failed failed (work dir $work)"
-[ "$failed" -eq 0 ]
+dl_suite_end smoke "$work" "$passed" "$failed"

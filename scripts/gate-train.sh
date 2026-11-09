@@ -48,6 +48,11 @@
 # green train still waiting to merge, and never touches other branches whose names start with train-. While it
 # runs, the train is recorded in train-running.txt, so cleanup.sh leaves its refs alone.
 #
+# After the checks, the test work dirs their logs name ("(work dir PATH)", as tests/smoke.sh and
+# tests/identity.sh print on a red run) are recorded in gate-work-dirs.txt in the state directory; of each
+# suite's (dev-loop-smoke.*, dev-loop-identity.*) only the newest recorded one is kept, the older ones are
+# removed (lib/workdirs.sh: only a suite's own mktemp dir in TMPDIR, owned by the user, never a symlink).
+#
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
 # (the output names the branch: drop it from the train, rebase it after the others merge).
 set -u
@@ -126,6 +131,8 @@ done
 
 # shellcheck source=lib/reasons.sh
 . "$scripts_dir/lib/reasons.sh"
+# shellcheck source=lib/workdirs.sh
+. "$scripts_dir/lib/workdirs.sh"
 
 # check_rules: a branch that changes its .dev-loop.json in any key but "architecture" (compared as normalized
 # JSON with the train ref below it, or the base) needs a reason under "## Config" in its notes: the gate reads
@@ -610,6 +617,9 @@ for ((i = 0; i < stages; i++)); do
   fi
 done
 printf '%s' "$summary" | sed '/^$/d'
+stage_logs=()
+for ((i = 0; i < stages; i++)); do stage_logs+=("$(log_of "$i")"); done
+dl_prune_work_dirs "$DL_STATE/gate-work-dirs.txt" "${stage_logs[@]}"
 
 git checkout -q --detach "$DL_REMOTE/$DL_BASE"
 if [ -n "$all_green" ]; then
