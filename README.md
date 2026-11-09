@@ -1095,15 +1095,24 @@ with `.dev-loop.json` (not only with scenarios or identities) and off with `"gua
 only what the stop conditions already forbid. Projects without `.dev-loop.json` are not checked. It is
 best effort like the rest of the guard: its shell grammar covers the common forms, not all of bash, and it
 reads the command line, not environment variables (`GIT_CONFIG_*`) or the scripts an agent writes.
-ANSI-C strings (`$'...'`, where `\'` does not end the string) are read as bash reads them. A command that
+ANSI-C strings (`$'...'`, where `\'` does not end the string) are decoded as bash decodes them, so
+`$'\x67it'` is git. A backslash-newline joins lines only after an even number of backslashes (`echo a\\`
+ends its line), redirections before the command word (`>x`, `2>&1`, `<<E`) are skipped, and every unquoted
+word `git` starts a git command wherever it stands (bash may run it after a substitution, arithmetic or an
+unknown wrapper), except after a program that never runs its arguments (`echo`, `printf`, `grep`, `cat`,
+`ls`, ...); quoted text never does. So `foo git push origin main` is refused, while `grep -n git README.md`
+and `git commit -m "... git push origin main ..."` pass. A crash of the guard on a command naming git
+refuses it. A differential test (`tests/guard-diff.py`) runs a fixed corpus and seeded random shell texts
+through bash with a stub `git`, and fails when bash would push to the base branch and the guard lets it
+through. A command that
 names `git` but that the guard cannot split (an unbalanced quote, which could hide every later command
 from it) is refused with "cannot be parsed; ask the owner", in the git check and in the identity and
 scenario checks; a command without `git` that cannot be split is not refused for that.
-Spellings without a literal `git` (a variable such as `$g push`, `$'\x67it'`, a glob such as
+Spellings without a literal `git` (a variable such as `$g push`, a glob such as
 `/usr/bin/gi*`) and commands fed to a shell on stdin (`sh <<E`, `bash <<< "..."`) are not checked; the
 template's allow rules all start with a literal command, so in the default mode such commands prompt. A
 Bash call whose text has no `git` (once line continuations, quotes and backslashes are removed, and with
-no `\u` escape in the event) starts no git process. The ask and deny rules stay as a
+no `\u` escape or `$'` in the event) starts no git process. The ask and deny rules stay as a
 second layer.
 
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a

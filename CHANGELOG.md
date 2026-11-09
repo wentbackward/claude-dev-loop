@@ -100,7 +100,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   (not only with scenarios or identities), on the parsed command: split on `&&`, `||`, `;`, `|`,
   newlines, `bash -c`/`-lc`, `eval`, `env -S`, backticks and `$( )`, comments and here-document bodies
   dropped (a here-document starts only at an unquoted `<<`), de-quoted (quotes,
-  backslashes and ANSI-C `$'...'` strings), reserved words and wrappers with their options skipped (`env -u`, `nice -n`,
+  backslashes and decoded ANSI-C `$'...'` strings; a backslash-newline joins lines only after an even number
+  of backslashes), redirections before the command word skipped, every unquoted word `git` checked as a
+  git command except after `echo`, `grep` and other programs that never run their arguments, reserved words and wrappers with their options skipped (`env -u`, `nice -n`,
   `timeout`, `stdbuf`, `time`), `cd` and `git -C <dir>` followed, bundled short flags
   expanded and long-option prefixes resolved for `fetch`, `pull`, `rebase`, `diff`, `log`, `show`,
   `worktree remove` and `push`. It refuses `-c`/`--config-env` before any subcommand, `--upload-pack`,
@@ -108,7 +110,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   `worktree remove --force`, and a push that forces, deletes, tags, pushes everything (a glob refspec included) or
   whose source or destination is the base branch (`git push -u <remote> HEAD` from a checkout of the base included), with
   the reason and "ask the owner"; a command naming git that it cannot parse is refused too (also with
-  `"guard": false`, by the identity and scenario checks). `"guard": false` turns it off. The guard also splits commands on
+  `"guard": false`, by the identity and scenario checks), and so is one on which the guard crashes. A
+  differential test (`tests/guard-diff.py`, in `make check`) holds the guard to bash's reading of a fixed
+  corpus and seeded random shell texts. `"guard": false` turns it off. The guard also splits commands on
   newlines now, and the identity and scenario checks share the new shell parsing. The template's `git rebase *` allow becomes `git rebase --continue`, `--abort` and
   `--skip`, and `permissions.sh` adds the exact `git rebase <remote>/<base>`; any other rebase asks.
 

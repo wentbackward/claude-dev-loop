@@ -941,7 +941,23 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   splitter that reads one quote differently from bash would otherwise see the rest as one long word) is
   refused when it names git once quotes, backslashes and line continuations are removed, in the git check
   and in the identity and scenario checks (also for an `env -S` string); a command without git falls back
-  to whitespace words as before, since there is no git command for the check to miss. A Bash call whose text has no `git` once quotes and backslashes are removed is not
+  to whitespace words as before, since there is no git command for the check to miss. Round 4: a
+  backslash-newline is removed by the quote-aware scan, outside single quotes and only when the backslash
+  is not itself escaped; `$'...'` is decoded as bash decodes it (`\xHH`, octal, `\u`, `\U`, `\cX`, the
+  simple escapes; a NUL ends it), and the fast path parses any command with `$'`; redirections before the
+  command word are skipped (`>&`, `<&` and `>|` stay one word, a here-document delimiter is text); a `#`
+  right after `$(( ))` or `$( )` is part of a word, not a comment; a backtick substitution is scanned as its
+  own command. Every unquoted word `git` (or a path to it) starts a git command wherever it stands in its
+  simple command, because the guard cannot always tell which word bash runs (a substitution or arithmetic
+  before it, an unknown wrapper such as `watch`); after `echo`, `printf`, `grep`, `rg`, `cat`, `ls`, `head`,
+  `tail`, `wc`, `test`, `which`, `type`, `man`, `true`, `false` or `:` the words are text. The price is a
+  false refusal of an unquoted mention such as `foo git push origin main`; quoted text (commit messages, PR
+  bodies) is one word and never counts. A crash of the guard on a Bash call naming git refuses it (a hook
+  that exits 1 lets the call run). The differential test `tests/guard-diff.py` uses bash as the oracle: a
+  fixed corpus and 300 seeded random texts, each followed by `git push origin main` after a newline and
+  after a space, run with a stub `git` on an otherwise empty PATH; every case runs in its own session with a
+  1 MB file-size limit, `TMPDIR` in the test's work dir, and its whole process group killed when it ends, and
+  the fragments contain no bare `(`, so no case can define a function that calls itself. A Bash call whose text has no `git` once quotes and backslashes are removed is not
   parsed, and in a project without scenarios or identities it does not start git at all. A push of `HEAD` from a directory whose branch cannot be read is refused (it may be the
   base). A push of a name that is a tag and not a branch is a tag push. The template allows only
   `git rebase --continue`, `--abort` and `--skip`; the exact `git rebase <remote>/<base>` is a project rule
@@ -952,7 +968,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   commands, which use exact options.
 - **Alternatives:** more text rules (cannot cover prefixes and bundles); calling git's own parser
   (`git rev-parse --parseopt` needs each command's option spec and runs nothing safer); an allow rule for
-  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list).; refusing every
+  `git rebase --onto <remote>/<base> *` (a wildcard tail would allow any extra option past the allow list); refusing every
   command that cannot be split (a non-git syntax error has nothing the git check could miss, and bash
-  rejects it anyway).
+  rejects it anyway); checking `git` only in command position (misses `` `` git push``, `$((1))x git push`
+  and unknown wrappers, which the differential test found); refusing every unquoted mention of git, also
+  after `echo` or `grep` (refuses `grep -n git README.md`).
 
