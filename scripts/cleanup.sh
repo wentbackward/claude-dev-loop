@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Classify every local and remote branch, and delete the leftovers of merged and abandoned work.
 #
-# Usage: cleanup.sh [--apply] [--include closed] [--include stale] [--verbose]
+# Usage: cleanup.sh [--apply] [--include closed] [--include stale] [--include worktrees] [--verbose]
 #
 # Merged is decided by the merge ledger of merge-train.sh, then by the PR list (gh); a squash merge leaves
 # no ancestry. Branches outside the loop (names not matching github.feature_patterns, default feat/* fix/*
@@ -33,6 +33,15 @@
 # directory).
 # Remote deletions run as the gate identity in identity mode. Needs git 2.9 or later.
 #
+# Worktrees of merged branches (the ledger or a merged PR at the tip; not "the base contains it") that
+# merge-train.sh kept for their changes are listed too: path, branch, modified and untracked files, and
+# "remove" or "keep" with the reason. --apply --include worktrees archives each "remove" one first, to
+# ~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/ (changes.patch from git diff --binary HEAD,
+# untracked.tar, manifest.txt) and checks the archive, then removes it and deletes its branch at the merged
+# tip (bundled like the others). Always kept: the main checkout, the gate worktree, a locked one, one
+# holding ignored files that are not build output (merge.rebuildable), one with a file changed in the last
+# 10 minutes (an agent may still work there).
+#
 # Exit: 0 done, 1 some deletions failed (listed), 2 usage/config.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -46,10 +55,13 @@ while [ $# -gt 0 ]; do
     --apply) apply=yes ;;
     --verbose) verbose=yes ;;
     --include)
-      case "${2:-}" in closed | stale) include+="$2 " ;; *) dl_die "--include takes closed or stale" ;; esac
+      case "${2:-}" in
+        closed | stale | worktrees) include+="$2 " ;;
+        *) dl_die "--include takes closed, stale or worktrees" ;;
+      esac
       shift
       ;;
-    *) dl_die "usage: cleanup.sh [--apply] [--include closed] [--include stale] [--verbose]" ;;
+    *) dl_die "usage: cleanup.sh [--apply] [--include closed] [--include stale] [--include worktrees] [--verbose]" ;;
   esac
   shift
 done
@@ -142,7 +154,8 @@ recorded_tips() {
   done
 }
 
-# classify SCOPE NAME TIP DATE: prints "<class>\t<scope>\t<name>\t<tip>\t<reason>".
+# classify SCOPE NAME TIP DATE [any]: prints "<class>\t<scope>\t<name>\t<tip>\t<reason>"; with "any",
+# as if no worktree had the branch checked out.
 classify() {
   local scope=$1 name=$2 tip=$3 date=$4 ref worktree number line days successor recorded
   local open="" merged="" closed="" moved=""
@@ -169,7 +182,7 @@ classify() {
   [[ "$live" == *" $name "* ]] && { out keep "in a live train"; return; }
   if [ "$scope" = local ]; then
     worktree=$(awk -F'\t' -v b="$name" '$1 == b {print $2; exit}' "$work/worktrees")
-    [ -n "$worktree" ] && { out keep "checked out in $worktree"; return; }
+    [ -n "$worktree" ] && [ -z "${5:-}" ] && { out keep "checked out in $worktree"; return; }
     if [[ "$name" == worktree-agent-* ]] && [ "$(git rev-list --count "$base..$tip")" = 0 ]; then
       out helper "agent worktree branch with no commits of its own"
       return
@@ -285,6 +298,56 @@ superseded_notes() {
   done
 }
 
+# --- Worktrees kept for changes ----------------------------------------------------------------------------
+settle_minutes=10
+main_dir=$(dl_normalize "$DL_ROOT")
+gate_dir=$(dl_normalize "$(dl_gate_dir)")
+
+# worktree_verdict PATH BRANCH: "remove", or "keep: <reason>", for the worktree of a merged BRANCH.
+worktree_verdict() {
+  local dir found
+  dir=$(dl_normalize "$1")
+  [ "$dir" != "$main_dir" ] || { echo "keep: the main checkout"; return; }
+  [ "$dir" != "$gate_dir" ] || { echo "keep: the gate worktree"; return; }
+  [ "$(dl_worktree_of "$2" | sed -n 2p)" != locked ] || { echo "keep: locked"; return; }
+  found=$(dl_unrebuildable_ignored "$1")
+  [ -z "$found" ] || { echo "keep: holds ignored files that are not build output ($found)"; return; }
+  found=$(find "$1" -name .git -prune -o -mmin -"$settle_minutes" -print 2>/dev/null | head -n 1)
+  [ -z "$found" ] || { echo "keep: changed in the last $settle_minutes minutes (an agent may still work there)"; return; }
+  echo remove
+}
+
+# worktree_contents PATH: "<n> modified, <m> untracked".
+worktree_contents() {
+  printf '%s modified, %s untracked\n' \
+    "$(git -C "$1" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')"
+}
+
+# merged_worktrees: "<branch>\t<tip>\t<path>\t<verdict>" for each worktree whose branch the ledger or a
+# merged PR has at its tip (containment alone is a fresh branch, never enough).
+merged_worktrees() {
+  local name path tip reason
+  while IFS=$'\t' read -r name path; do
+    [ -d "$path" ] || continue
+    tip=$(git rev-parse -q --verify "refs/heads/$name") || continue
+    reason=$(classify local "$name" "$tip" "$(git log -1 --format=%ct "$tip")" any | awk -F'\t' '$1 == "merged" {print $5}')
+    case "$reason" in "in the merge ledger" | "merged PR "*) ;; *) continue ;; esac
+    printf '%s\t%s\t%s\t%s\n' "$name" "$tip" "$path" "$(worktree_verdict "$path" "$name")"
+  done <"$work/worktrees"
+}
+
+merged_worktrees >"$work/kept-worktrees"
+if [ -s "$work/kept-worktrees" ]; then
+  echo "worktrees of merged branches ($(wc -l <"$work/kept-worktrees" | tr -d ' ')); --apply --include worktrees archives and removes the ones marked remove:"
+  while IFS=$'\t' read -r name _ path verdict; do
+    case "$verdict" in
+      remove) printf 'remove  %s  %s  (%s)\n' "$path" "$name" "$(worktree_contents "$path")" ;;
+      *) printf 'keep    %s  %s  (%s)  %s\n' "$path" "$name" "$(worktree_contents "$path")" "${verdict#keep: }" ;;
+    esac
+  done <"$work/kept-worktrees"
+fi
+
 if [ -z "$apply" ]; then
   if [ "$factory" = dark ]; then what="merged, helper, superseded, closed and stale"; else
     what="merged, helper and superseded; closed and stale need --include"
@@ -295,6 +358,58 @@ fi
 
 # --- Apply ------------------------------------------------------------------------------------------------
 failed=0
+
+# archive_worktree PATH BRANCH TIP DIR: write the uncommitted changes of the worktree at PATH to DIR
+# (changes.patch, untracked.tar, manifest.txt) and check that they hold them; fails when anything is off.
+archive_worktree() {
+  local path=$1 dir=$4
+  mkdir -p "$dir" || return 1
+  git -C "$path" diff --binary HEAD >"$dir/changes.patch" || return 1
+  git -C "$path" ls-files -z --others --exclude-standard >"$work/untracked.z" || return 1
+  (cd "$path" && tar -cf "$dir/untracked.tar" --null -T "$work/untracked.z") || return 1
+  {
+    printf 'worktree: %s\nbranch: %s\ntip: %s\narchived: %s\n' "$path" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'restore: git fetch <bundle> refs/heads/%s:refs/heads/%s, git worktree add <path> %s, then in it\n' "$2" "$2" "$2"
+    printf '  git apply --binary changes.patch and tar -xf untracked.tar\nmodified:\n'
+    git -C "$path" status --porcelain --untracked-files=no
+    printf 'untracked:\n'
+    tr '\0' '\n' <"$work/untracked.z"
+  } >"$dir/manifest.txt" || return 1
+  # The patch must reverse-apply to the worktree as it is, and the tar must list every untracked file.
+  [ ! -s "$dir/changes.patch" ] || git -C "$path" apply --check -R --binary "$dir/changes.patch" 2>/dev/null || return 1
+  tr '\0' '\n' <"$work/untracked.z" | LC_ALL=C sort >"$work/untracked.want"
+  tar -tf "$dir/untracked.tar" | LC_ALL=C sort >"$work/untracked.got" || return 1
+  cmp -s "$work/untracked.want" "$work/untracked.got"
+}
+
+# The worktrees marked remove: each still at the classified tip and verdict, archived and checked first.
+if [[ "$include" == *" worktrees "* ]] && grep -q $'\tremove$' "$work/kept-worktrees"; then
+  archive_dir=$DL_STATE/archive/worktrees-$(date +%Y%m%d-%H%M%S)
+  while IFS=$'\t' read -r name tip path verdict; do
+    [ "$verdict" = remove ] || continue
+    if [ "$(git rev-parse -q --verify "refs/heads/$name")" != "$tip" ] ||
+      [ "$(dl_worktree_of "$name" | head -n 1)" != "$path" ] || [ "$(worktree_verdict "$path" "$name")" != remove ]; then
+      echo "kept worktree $path: it changed since the classification"
+      continue
+    fi
+    if ! archive_worktree "$path" "$name" "$tip" "$archive_dir/${name//\//_}"; then
+      echo "kept worktree $path: its archive could not be written or checked"
+      failed=$((failed + 1))
+      continue
+    fi
+    echo "archived worktree $path to $archive_dir/${name//\//_}"
+    if ! git worktree remove --force "$path" >/dev/null 2>&1; then
+      echo "not removed: worktree $path"
+      failed=$((failed + 1))
+      continue
+    fi
+    # Its branch is merged at this tip now that no worktree has it: the deletions below take it.
+    awk -F'\t' -v OFS='\t' -v n="$name" -v t="$tip" '$1 == "keep" && $2 == "local" && $3 == n && $4 == t {
+        $1 = "merged"; $5 = "merged, its worktree archived and removed" } { print }' "$report" >"$work/report.new" &&
+      cat "$work/report.new" >"$report"
+  done <"$work/kept-worktrees"
+fi
+
 awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || $1 == "superseded" ||
   index(inc, " " $1 " ") {print}' "$report" >"$work/delete"
 if [ -s "$work/delete" ]; then

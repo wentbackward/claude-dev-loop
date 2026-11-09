@@ -5508,7 +5508,7 @@ git init -q --bare "$kwork/origin.git"
 git clone -q "$kwork/origin.git" "$kwork/project" 2>/dev/null
 cd "$kwork/project" || exit 1
 printf '{"base_branch": "main", "checks": ["true"]}\n' >.dev-loop.json
-printf 'one\n' >src.txt && printf '\001\002bin' >logo.bin
+printf 'one\n' >src.txt && printf 'a\000bin' >logo.bin
 git add . && git commit -q -m "chore: start" && git push -q -u origin main
 khome="$kwork/home"
 kenv() { (cd "$kwork/project" && DEV_LOOP_HOME="$khome" FAKE_GH_DIR="$kwork/gh" "$@" 2>&1); }
@@ -5528,7 +5528,7 @@ kold() { find "$1" -exec touch -t 202001010000 {} +; }
 # kwt NAME PATH: a worktree of NAME at PATH with an untracked file and a modified tracked (binary) file.
 kwt() {
   git -C "$kwork/project" worktree add -q "$2" "$1" && echo scratch >"$2/scratch.txt" &&
-    printf '\003\004changed' >"$2/logo.bin" && echo more >>"$2/src.txt"
+    printf 'b\000changed' >"$2/logo.bin" && echo more >>"$2/src.txt"
 }
 kbranch feat/1-untracked merged && kwt feat/1-untracked "$kwork/wt1"
 kbranch feat/2-unmerged && kwt feat/2-unmerged "$kwork/wt2"

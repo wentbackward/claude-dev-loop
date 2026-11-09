@@ -742,7 +742,8 @@ dl_unrebuildable_ignored() {
 # dl_remove_merged_local BRANCH HEAD...: after BRANCH merged, delete its local branch when its tip is one
 # of the merged HEADs, removing a clean worktree that has it checked out first. Removing a worktree removes
 # its ignored files too, so only one whose ignored files are all build output goes (merge.rebuildable);
-# one holding anything else (.env, keys, local data) is kept. Prints what it kept, and why.
+# one holding anything else (.env, keys, local data) is kept. Prints what it kept, and why; a worktree kept
+# for its changes names cleanup.sh --apply --include worktrees, which archives it first.
 dl_remove_merged_local() {
   local branch=$1 tip head accepted="" worktree
   shift
@@ -766,7 +767,9 @@ dl_remove_merged_local() {
       echo "kept local $branch: its worktree $path holds ignored files that are not build output ($(dl_unrebuildable_ignored "$path"))"
       return 0
     elif ! git -C "$DL_ROOT" worktree remove "$path" >/dev/null 2>&1; then
-      echo "kept local $branch: its worktree $path has changes"
+      local cleanup
+      cleanup="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/cleanup.sh"
+      echo "kept local $branch: its worktree $path has changes; to archive and remove it, run $cleanup (a dry run), then $cleanup --apply --include worktrees, never git worktree remove --force"
       return 0
     fi
   fi
