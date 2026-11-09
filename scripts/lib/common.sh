@@ -709,9 +709,9 @@ dl_in_cache() {
 # dl_union_attributes: write a temporary attributes file that gives each path of merge.union_files (a literal
 # path from the repository root) the merge driver dl-union (scripts/union-merge.sh: both sides of a conflict
 # where both only added lines kept whole, the base first; any other conflict stops), followed by the user's
-# own global attributes (core.attributesFile, else the XDG default), so a driver the user set still wins; print its path. Prints nothing when merge.union_files is
-# missing or empty. The repository's .gitattributes and info/attributes rank above any core.attributesFile,
-# so a merge driver they set for a listed file stays.
+# own global attributes (core.attributesFile, else the XDG default), so a driver the user set still wins;
+# print its path. Prints nothing when merge.union_files is missing or empty. The repository's .gitattributes
+# and info/attributes rank above any core.attributesFile, so a merge driver they set for a listed file stays.
 dl_union_attributes() {
   local count i path file user
   count=$(cfg_len merge.union_files)

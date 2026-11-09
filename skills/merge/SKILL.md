@@ -29,7 +29,7 @@ in `${CLAUDE_PLUGIN_ROOT}/scripts/paths.sh notes-dir`.
 | exit | meaning | what to do |
 |------|---------|------------|
 | 0 | all merged | read any "kept local" lines, comment on the issues, start the next tickets |
-| 3 | replay conflict (`MERGE conflict in: <files>` names them; in the `merge.union_files` only when a conflict hunk changes or deletes existing lines, a side has a line like a long conflict marker, the driver fails, or a merge driver set in the repository's or the user's attributes wins: otherwise (both sides only added lines) both hunks are kept as in the gate, and a base that gained an entry there is exit 4) | the base changed under the train: have the implementer rebase the branch and publish it with `repush.sh <branch>` (never a force push), review the change, gate the `<branch>-vN` it reports |
+| 3 | replay conflict (`MERGE conflict in: <files>` names them; in the `merge.union_files` only when a conflict hunk changes or deletes existing lines, a side has a line like a long conflict marker, an add/add, the driver fails (git older than 2.43 too), or a merge driver set in the repository's or the user's attributes wins: otherwise (both sides only added lines) both hunks are kept as in the gate, and a base that gained an entry there is exit 4) | the base changed under the train: have the implementer rebase the branch and publish it with `repush.sh <branch>` (never a force push), review the change, gate the `<branch>-vN` it reports |
 | 4 | tree differs from the gated one | the base moved since the gate: re-gate the remaining branches |
 | 5 | notes file missing | write it (ask the implementer), then re-run |
 | 6 | branch changed since the gate | someone pushed after the gate: review and re-gate |

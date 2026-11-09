@@ -1066,8 +1066,9 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   for a listed file wins. The repository's `.gitattributes` and `info/attributes` rank above any
   `core.attributesFile` in git, so a driver they set wins too. The file is removed when the script exits.
 - **Driver:** git calls a custom driver for every file both sides changed, conflicting or not, so
-  `scripts/union-merge.sh` first runs plain `git merge-file`; when that is clean its result is used, exactly
-  as without the option (a change both sides made the same way is kept once, but only when git merges the
+  `scripts/union-merge.sh` first runs plain `git merge-file --diff-algorithm=histogram`; when that is clean
+  its result is used, exactly as without the option (git's own merge in a rebase, merge-ort, diffs with
+  histogram; merge-file's default myers decides some merges the other way in both directions) (a change both sides made the same way is kept once, but only when git merges the
   file without a conflict; the same change next to each side's own entry is a conflict and stops). Only
   a merge with conflicts takes `git merge-file --diff3` (diff3 style keeps each conflict hunk whole: git
   does not refine it the way it refines `merge=union` hunks), and only when every conflict hunk's base
@@ -1075,7 +1076,12 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   (the branch). A hunk with a base part (a side changed or deleted existing lines: an amended entry next to
   a prepended one, a delete against a modify, overlapping edits) is a conflict (exit 1): keeping both
   parts would bring back lines one side removed or keep an old and an amended line side by side. Any
-  failure of the driver (awk, merge-file, mktemp) is a conflict too, and the file is left unchanged. The
+  failure of the driver (awk, merge-file, mktemp) is a conflict too, and the file is left unchanged:
+  merge-file takes `--diff-algorithm` from git 2.43 on, and an older git refusing it stops the merge
+  rather than fall back to myers (a different diff would break the "as without the option" promise). An
+  add/add (an empty base, both sides creating the file with different content) is a conflict, as no
+  existing entry anchors the order. The marker scan must print `clean` with status 0, so an awk failure
+  with any status stops. The
   guarantee: the output of each kept hunk is its ours part, then its theirs part; outside the hunks the
   result is git's diff3 merge. The line-count check of the first version is dropped: it
   stopped merges that git does cleanly (the same change to a line on both sides) and could still miss a

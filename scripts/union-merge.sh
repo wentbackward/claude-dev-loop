@@ -9,12 +9,12 @@
 # --diff-algorithm from git 2.43 on; an older git refuses the option, and the driver then stops (exit 1)
 # rather than diff another way. Only a merge with conflicts is resolved here, and only when the base is not
 # empty (an add/add, both sides creating the file differently, stops) and in every conflict hunk both sides
-# only added lines (the hunk's base part is empty): git merge-file in diff3 style, whose hunks are not refined the
-# way merge=union's are (merge=union would fold lines two entries share into one copy), each conflict hunk
-# kept whole, ours (in a rebase: the base being stacked on) first, then theirs (the branch). A conflict hunk
-# where a side changed or deleted existing lines, a line that starts with 32 of one of git's marker
-# characters (<, |, =, >) in any side, or any failure is a conflict (exit 1, OURS unchanged), so the train
-# stops as it would without the option. Lines of CRLF files keep their CR; the result of a merge with
+# only added lines (the hunk's base part is empty): git merge-file in diff3 style, whose hunks are not
+# refined the way merge=union's are (merge=union would fold lines two entries share into one copy), each
+# conflict hunk kept whole, ours (in a rebase: the base being stacked on) first, then theirs (the branch). A
+# conflict hunk where a side changed or deleted existing lines, a line that starts with 32 of one of git's
+# marker characters (<, |, =, >) in any side, or any failure is a conflict (exit 1, OURS unchanged), so the
+# train stops as it would without the option. Lines of CRLF files keep their CR; the result of a merge with
 # conflicts always ends with a newline, even when a side's last line has none.
 set -u
 [ $# -eq 3 ] || { echo "usage: union-merge.sh BASE OURS THEIRS" >&2; exit 2; }
