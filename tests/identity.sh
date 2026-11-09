@@ -7,7 +7,9 @@ set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../scripts/lib/workdirs.sh
 . "$plugin/scripts/lib/workdirs.sh"
-work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-identity.XXXXXX")
+dl_tmpdir_absolute
+# Without a work dir every path below would be under /: stop before any setup.
+work=$(dl_make_work_dir dev-loop-identity) || { echo "cannot make a work dir" >&2; exit 1; }
 # Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
 echo "started identity (work dir $work)"
 REAL_CURL=$(command -v curl)

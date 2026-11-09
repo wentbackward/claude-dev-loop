@@ -1,23 +1,48 @@
 # shellcheck shell=bash
 # The work dirs of the plugin's own test suites (tests/smoke.sh, tests/identity.sh): each run makes one with
 # `mktemp -d "$TMPDIR/<prefix>.XXXXXX"`. Removal only ever touches such a dir: a real directory (not a
-# symlink) owned by the user, directly in TMPDIR (default /tmp), named <prefix>.<6 letters or digits>.
-# Standalone: needs nothing else sourced.
+# symlink) owned by the user, named by an absolute path, directly in TMPDIR (default /tmp), named
+# <prefix>.<6 letters or digits>. The suites make a relative TMPDIR absolute first (dl_tmpdir_absolute), so
+# their dir is still removed. With TMPDIR=/ nothing is ever removed, on purpose: the resolved parent of a dir
+# in / is empty, which never equals /. Standalone: needs nothing else sourced.
 
 # The suites' name prefixes, the only ones dl_work_dir_ok accepts.
 DL_WORK_PREFIXES="dev-loop-smoke dev-loop-identity"
 
-# dl_tmp_dir: TMPDIR (default /tmp) with symlinks resolved; fails when it does not exist.
+# dl_tmp_dir: TMPDIR (default /tmp) with symlinks resolved; fails when it does not exist. Every cd here
+# clears CDPATH and ends options with --, so a relative or option-like name means a dir of that name here.
 dl_tmp_dir() {
-  (cd -P "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)
+  (CDPATH='' cd -P -- "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)
 }
 
-# dl_work_dir_ok PATH PREFIX: PATH is a suite's own mktemp dir: PREFIX is one of DL_WORK_PREFIXES, PATH has
-# no `.` or `..` component, is a directory and not a symlink, owned by the user, its name is PREFIX.XXXXXX,
-# and on disk (symlinks resolved) its parent is TMPDIR. Prints the resolved path.
+# dl_tmpdir_absolute: make a relative TMPDIR absolute (symlinks resolved), so the suite's work dir path stays
+# valid after a cd; TMPDIR stays as it is when it is unset, empty, absolute or does not exist.
+dl_tmpdir_absolute() {
+  local abs
+  case ${TMPDIR:-/} in /*) return 0 ;; esac
+  abs=$(CDPATH='' cd -P -- "$TMPDIR" 2>/dev/null && pwd -P) && TMPDIR=$abs
+  return 0
+}
+
+# dl_make_work_dir PREFIX: make a suite's work dir, mktemp -d "$TMPDIR/PREFIX.XXXXXX" (TMPDIR made absolute
+# first), and print it; fails, printing nothing, for a PREFIX not in DL_WORK_PREFIXES and unless mktemp gives
+# an absolute path other than /. Run in $(...), it cannot change the caller's TMPDIR, so the caller runs
+# dl_tmpdir_absolute too.
+dl_make_work_dir() {
+  local dir
+  case " $DL_WORK_PREFIXES " in *" $1 "*) ;; *) return 1 ;; esac
+  dl_tmpdir_absolute
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/$1.XXXXXX") || return 1
+  case $dir in /?*) printf '%s\n' "$dir" ;; *) return 1 ;; esac
+}
+
+# dl_work_dir_ok PATH PREFIX: PATH is a suite's own mktemp dir: PREFIX is one of DL_WORK_PREFIXES, PATH is
+# absolute, has no `.` or `..` component, is a directory and not a symlink, owned by the user, its name is
+# PREFIX.XXXXXX, and on disk (symlinks resolved) its parent is TMPDIR. Prints the resolved path.
 dl_work_dir_ok() {
   local path=$1 prefix=$2 name real tmp
   case " $DL_WORK_PREFIXES " in *" $prefix "*) ;; *) return 1 ;; esac
+  case $path in /*) ;; *) return 1 ;; esac
   path=${path%/}
   case /$path/ in */./* | */../*) return 1 ;; esac
   [ -n "$path" ] && [ -d "$path" ] && [ ! -L "$path" ] && [ -O "$path" ] || return 1
@@ -25,7 +50,7 @@ dl_work_dir_ok() {
   local x='[A-Za-z0-9]'
   # shellcheck disable=SC2254  # the pattern is meant to match
   case $name in "$prefix".$x$x$x$x$x$x) ;; *) return 1 ;; esac
-  real=$(cd -P "$path" 2>/dev/null && pwd -P) || return 1
+  real=$(CDPATH='' cd -P -- "$path" 2>/dev/null && pwd -P) || return 1
   [ "${real##*/}" = "$name" ] || return 1
   tmp=$(dl_tmp_dir) || return 1
   [ "${real%/*}" = "$tmp" ] || return 1
