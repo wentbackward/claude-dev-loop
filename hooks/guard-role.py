@@ -1581,6 +1581,9 @@ def read_event(raw: bytes) -> dict | None:
     except ValueError:  # UnicodeDecodeError is one
         event = None
     if isinstance(event, dict):
+        tool_input = event.get("tool_input")
+        if tool_input is not None and not isinstance(tool_input, dict):
+            event["tool_input"] = {"command": str(tool_input)}  # a string or list: read it as the command
         return event
     project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     if text_names_git(raw.decode("utf-8", errors="replace")) and os.path.isfile(config_path(project)):
@@ -1595,15 +1598,32 @@ def main() -> None:
         cwd = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
         print(scenarios_dir(load_config(cwd), cwd))
         return
-    event = read_event(sys.stdin.buffer.read())
-    if event is None:
-        return
+    raw = sys.stdin.buffer.read()
     try:
-        check_event(event, sys.argv[1:2] == ["--git-only"])
+        event = read_event(raw)
+        if event is not None:
+            check_event(event, sys.argv[1:2] == ["--git-only"])
     except Exception as error:  # fail closed: a crash (exit 1) would let a git command run unchecked
-        if not names_git(event):
-            raise
-        refuse(f"cannot check this git command ({type(error).__name__}); ask the owner to run it")
+        if raw_may_name_git(raw) and in_loop_project():
+            refuse(f"cannot check this git command ({type(error).__name__}); ask the owner to run it")
+        raise
+
+
+def raw_may_name_git(raw: bytes) -> bool:
+    """True when the raw event may name git: a plain text test that cannot fail on any input (a \\u escape
+    or an ANSI-C string may spell it, so they count)."""
+    text = raw.decode("utf-8", errors="replace").lower()
+    return "git" in text or "\\u" in text or "$'" in text
+
+
+def in_loop_project() -> bool:
+    """True when the session's project has a .dev-loop.json (or DEV_LOOP_CONFIG names one); True when that
+    cannot be told."""
+    try:
+        project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        return os.path.isfile(os.environ.get("DEV_LOOP_CONFIG") or os.path.join(project, ".dev-loop.json"))
+    except Exception:  # fail closed
+        return True
 
 
 def check_event(event: dict, git_only: bool) -> None:
