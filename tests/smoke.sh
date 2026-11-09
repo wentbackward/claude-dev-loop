@@ -6407,12 +6407,15 @@ rapi() {
 }
 # rreset: no canned answers, no calls logged, gh logged in.
 rreset() { rm -rf "$rwork/gh" && mkdir -p "$rwork/gh" && : >"$rwork/gh/logged-in"; }
-# rtagset ID BYPASS INCLUDE RULES [ENFORCEMENT]: the tag ruleset ID (rule types as a JSON list of names).
+# rbypass BYPASS: the current_user_can_bypass field with BYPASS, or nothing for "none".
+rbypass() { [ "$1" = none ] || printf '"current_user_can_bypass": "%s", ' "$1"; }
+# rtagset ID BYPASS INCLUDE RULES [ENFORCEMENT]: the tag ruleset ID (rule types as a JSON list of names;
+# BYPASS "none" leaves out current_user_can_bypass).
 rtagset() {
   local rules
   rules=$(printf '%s' "$4" | sed 's/"\([a-z_]*\)"/{"type": "\1"}/g')
   rapi "$rset/$1" "{\"id\": $1, \"name\": \"tags-$1\", \"target\": \"tag\", \"enforcement\": \"${5:-active}\",
-    \"current_user_can_bypass\": \"$2\", \"conditions\": {\"ref_name\": {\"include\": $3, \"exclude\": []}}, \"rules\": $rules}"
+    $(rbypass "$2")\"conditions\": {\"ref_name\": {\"include\": $3, \"exclude\": []}}, \"rules\": $rules}"
 }
 # rprotected: classic protection of main that includes admins (PR, no force push, no deletion) and an active
 # v* tag ruleset restricting creation, update and deletion that the current login cannot bypass.
@@ -6423,12 +6426,13 @@ rprotected() {
   rapi "$rlist" '[{"id": 7, "name": "tags-7", "target": "tag", "enforcement": "active"}]'
   rtagset 7 never '["refs/tags/v*"]' '["creation", "update", "deletion"]'
 }
-# rbaserules BYPASS: no classic protection; ruleset 5 on main (PR, no force push, no deletion) with BYPASS.
+# rbaserules BYPASS: no classic protection; ruleset 5 on main (PR, no force push, no deletion) with BYPASS
+# ("none" leaves the field out).
 rbaserules() {
   rapi "$rprot" '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
   rapi "$rrules" '[{"type": "pull_request", "ruleset_id": 5}, {"type": "non_fast_forward", "ruleset_id": 5},
     {"type": "deletion", "ruleset_id": 5}]'
-  rapi "$rset/5" "{\"id\": 5, \"name\": \"base\", \"target\": \"branch\", \"enforcement\": \"active\", \"current_user_can_bypass\": \"$1\"}"
+  rapi "$rset/5" "{$(rbypass "$1")\"id\": 5, \"name\": \"base\", \"target\": \"branch\", \"enforcement\": \"active\"}"
 }
 rnotes() { printf '%s\n' "$1" | grep -E '^(ok|note|MISSING) +remote protection'; }
 # rkinds OUTPUT: the kinds (ok, note, MISSING) of the protection lines, space separated.
@@ -6477,6 +6481,19 @@ for nojq in "" 1; do
   line=$(rnotes "$(rdoctor "$nojq")" | grep -F 'main')
   printf '%s\n' "$line" | grep -E '^note ' | grep -qF 'can bypass ruleset "base"' &&
     pass "protection: a base ruleset the current login can bypass is a note$label" || fail "protection: bypassable base ruleset counted$label ($line)"
+  # A base ruleset whose bypass is not stated, or unrecognised, could not be checked: no ok line.
+  for rvalue in none sometimes; do
+    rbaserules "$rvalue"
+    out=$(rdoctor "$nojq")
+    expect "protection: a base ruleset with bypass \"$rvalue\" gives no ok line$label" "note" "$(rkinds "$out")"
+    rnotes "$out" | grep -F 'main' | grep -F 'could not be checked' | grep -qF 'the bypass of ruleset "base" could not be read' &&
+      pass "protection: a base ruleset with bypass \"$rvalue\" could not be checked$label" || fail "protection: base bypass $rvalue counted$label ($out)"
+  done
+  # A base rule that names no ruleset could not be checked.
+  rbaserules never
+  rapi "$rrules" '[{"type": "pull_request"}, {"type": "non_fast_forward"}, {"type": "deletion"}]'
+  rnotes "$(rdoctor "$nojq")" | grep -F 'main' | grep -qF 'could not be checked' &&
+    pass "protection: a base rule without a ruleset_id could not be checked$label" || fail "protection: a rule without ruleset_id counted$label"
   # Unprotected: a note naming the three gaps and the owner step, and one for the tags.
   rreset
   rapi "$rprot" '{"message": "Branch not protected"}' 'Branch not protected (HTTP 404)'
@@ -6494,7 +6511,8 @@ for nojq in "" 1; do
   expect "protection: an unprotected remote is never MISSING$label" 0 "$(rnotes "$out" | grep -c '^MISSING')"
   expect "protection: an unprotected remote leaves doctor's verdict unchanged$label" "$rbase" "$(printf '%s\n' "$out" | tail -n 1)"
   # A base that blocks force pushes only: the note names just the other two.
-  rapi "$rrules" '[{"type": "non_fast_forward"}]'
+  rapi "$rrules" '[{"type": "non_fast_forward", "ruleset_id": 6}]'
+  rapi "$rset/6" '{"id": 6, "name": "no-force", "target": "branch", "enforcement": "active", "current_user_can_bypass": "never"}'
   line=$(rnotes "$(rdoctor "$nojq")" | grep -F 'main')
   printf '%s\n' "$line" | grep -F 'pull request' | grep -F 'deletion' | grep -qvF 'force push' &&
     pass "protection: the note names only what is missing$label" || fail "protection: wrong gaps$label ($line)"
@@ -6531,6 +6549,13 @@ for nojq in "" 1; do
   rtagset 7 always '["refs/tags/v*"]' '["creation", "update", "deletion"]'
   rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -qF 'can bypass ruleset "tags-7"' &&
     pass "protection: a tag ruleset the current login can bypass is a note$label" || fail "protection: bypassable tag ruleset counted$label"
+  for rvalue in none sometimes; do
+    rtagset 7 "$rvalue" '["refs/tags/v*"]' '["creation", "update", "deletion"]'
+    out=$(rdoctor "$nojq")
+    expect "protection: a tag ruleset with bypass \"$rvalue\" gives no ok line$label" "note" "$(rkinds "$out")"
+    rnotes "$out" | grep -F 'tag rulesets' | grep -F 'could not be checked' | grep -qF 'the bypass of ruleset "tags-7" could not be read' &&
+      pass "protection: a tag ruleset with bypass \"$rvalue\" could not be checked$label" || fail "protection: tag bypass $rvalue counted$label ($out)"
+  done
   # Pagination: the v* ruleset is the 35th of the list.
   rtagset 7 never '["refs/tags/v*"]' '["creation", "update", "deletion"]'
   rlong=$(for i in $(seq 100 133); do printf '{"id": %s, "target": "branch", "enforcement": "active"},' "$i"; done)
@@ -6568,7 +6593,7 @@ done
 # A hung call: doctor stops at the first timeout (DEV_LOOP_GH_TIMEOUT), reports the rest as not checked.
 rreset
 rprotected
-printf '5\n' >"$rwork/gh/api/$(printf '%s' "$rprot" | tr '/' '_').sleep"
+printf '6.5\n' >"$rwork/gh/api/$(printf '%s' "$rprot" | tr '/' '_').sleep"
 rstart=$SECONDS
 out=$(DEV_LOOP_GH_TIMEOUT=1 rdoctor)
 relapsed=$((SECONDS - rstart))
@@ -6578,15 +6603,31 @@ rnotes "$out" | grep -F 'main' | grep -F 'could not be checked' | grep -qF 'no a
 expect "protection: after a timeout no further call is made" 1 "$(grep -c 'gh api' "$rwork/gh/calls.log")"
 expect "protection: after a timeout the tags are noted as not checked" 1 \
   "$(rnotes "$out" | grep -F 'tag rulesets' | grep -cF 'could not be checked')"
+# rleftover PATTERN: the number of processes matching PATTERN, after giving a TERM up to 5 s to land.
+rleftover() {
+  local tries=0
+  while [ "$(pgrep -f "$1" | wc -l | tr -d ' ')" -gt 0 ] && [ "$tries" -lt 50 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  pgrep -f "$1" | wc -l | tr -d ' '
+}
+expect "protection: a killed hung fake gh leaves no sleep behind" 0 "$(rleftover 'sleep 6\.5$')"
+# Calls that answer in time leave no watchdog sleep behind.
+rreset
+rprotected
+DEV_LOOP_GH_TIMEOUT=37 rdoctor >/dev/null
+expect "protection: the watchdog leaves no sleep behind" 0 "$(rleftover 'sleep 37$')"
 
 # A fake gh value flag without a value ends (it used to loop forever).
 (FAKE_GH_DIR="$rwork/gh" "$plugin/tests/fake-gh" api -X >/dev/null 2>&1) &
 rpid=$!
-(sleep 5; kill "$rpid" 2>/dev/null) >/dev/null 2>&1 &
+(sleep 5 & s=$!; trap 'kill "$s" 2>/dev/null; exit 0' TERM; wait "$s" && kill "$rpid" 2>/dev/null) >/dev/null 2>&1 &
 rwatch=$!
 wait "$rpid"
 rrc=$?
 kill "$rwatch" 2>/dev/null
+wait "$rwatch" 2>/dev/null
 expect "protection: fake gh ends on a value flag without a value" 0 "$rrc"
 
 # GitHub Enterprise (github.api_url set elsewhere): a note, no call, no github.com link.
@@ -6598,6 +6639,10 @@ out=$(rconfig="$rwork/ghe.json" rdoctor)
 rnotes "$out" | grep -E '^note ' | grep -F 'github.api_url' | grep -qvF 'github.com' &&
   pass "protection: a GitHub Enterprise api_url is a note, without a github.com link" || fail "protection: no enterprise note ($out)"
 expect "protection: no gh api call for GitHub Enterprise" 0 "$(grep -c 'gh api' "$rwork/gh/calls.log")"
+
+# github.api_url https://api.github.com/ (a trailing slash) is github.com: checked.
+printf '{"base_branch": "main", "checks": ["make check"], "github": {"api_url": "https://api.github.com/"}}\n' >"$rwork/gh-slash.json"
+expect "protection: github.api_url with a trailing slash is still github.com" "ok" "$(rkinds "$(rconfig="$rwork/gh-slash.json" rdoctor)")"
 
 # gh not logged in: a note, and no API call.
 rreset

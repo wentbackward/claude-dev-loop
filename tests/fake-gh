@@ -113,7 +113,14 @@ case "${1:-} ${2:-}" in
       esac
     done
     canned="$dir/api/$(key "$path")"
-    [ ! -f "$canned.sleep" ] || sleep "$(cat "$canned.sleep")"
+    if [ -f "$canned.sleep" ]; then
+      # Killed while it waits, it takes its sleep with it.
+      sleep "$(cat "$canned.sleep")" &
+      nap=$!
+      trap 'kill "$nap" 2>/dev/null; exit 143' TERM
+      wait "$nap"
+      trap - TERM
+    fi
     [ -f "$canned" ] || exit 0
     cat "$canned"
     [ ! -f "$canned.fail" ] || { echo "gh: $(cat "$canned.fail")" >&2; exit 1; }
