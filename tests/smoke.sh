@@ -4851,6 +4851,36 @@ expect "smoke: a section chosen by name passes" 0 $?
 printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
   ! printf '%s\n' "$hout" | grep -qF 'stop gate passes on a clean tree' &&
   pass "smoke: a name selects the section whose comments contain it" || fail "smoke: --section by name output: $hout"
+# A section numbered below the previous one is an error (#85), not part of the one before it.
+expect "smoke: --list names every section header of the file" \
+  "$(awk '/^echo "smoke: / { exit } match($0, /^# [0-9]+[a-z]?\. /) { print substr($0, 3, RLENGTH - 4) }' "$hsmoke" | paste -sd' ' -)" \
+  "$("$hsmoke" --list | cut -f1 | paste -sd' ' -)"
+"$hsmoke" --list | cut -f1 | awk 'p == "22" { print; exit } { p = $1 }' | grep -qx 23 &&
+  pass "smoke: section 22's inner list is not taken for sections" || fail "smoke: section 22 is not followed by 23 in --list"
+horder="$work/order"
+mkdir -p "$horder/tests" "$horder/tmp"
+cp "$plugin/Makefile" "$horder/Makefile"
+{
+  sed -n '1,/^# 1\. /p' "$hsmoke" | sed '$d'
+  printf '%s\n' '# 26. Twenty-six' 'true' '# 28. Twenty-eight' 'true' '# 27. Twenty-seven' 'true'
+  sed -n '/^echo "smoke: /,$p' "$hsmoke"
+} >"$horder/tests/smoke.sh"
+chmod +x "$horder/tests/smoke.sh"
+hout=$("$horder/tests/smoke.sh" --list 2>&1)
+expect "smoke: --list on sections 26, 28, 27 exits 2" 2 $?
+printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && ! printf '%s\n' "$hout" | grep -q '^26' &&
+  pass "smoke: --list names the out-of-order header 27 and lists nothing" || fail "smoke: out-of-order --list output: $hout"
+hout=$(TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" --section 26 2>&1)
+expect "smoke: --section on an out-of-order file exits 2" 2 $?
+printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' && pass "smoke: --section names the out-of-order header" ||
+  fail "smoke: out-of-order --section output: $hout"
+TMPDIR="$horder/tmp" "$horder/tests/smoke.sh" >/dev/null 2>&1
+expect "smoke: a full run of an out-of-order file exits 2" 2 $?
+expect "smoke: an out-of-order file runs nothing (no work dir)" "" "$(ls -A "$horder/tmp")"
+hout=$(make -C "$horder" lint 2>&1)
+[ $? -ne 0 ] && printf '%s\n' "$hout" | grep -qF '# 27. Twenty-seven' &&
+  pass "smoke: make lint fails on an out-of-order smoke.sh" || fail "smoke: make lint on an out-of-order file: $hout"
+grep -qF "#85" "$plugin/CHANGELOG.md" && pass "smoke: CHANGELOG has an entry for #85" || fail "smoke: no CHANGELOG #85 entry"
 
 # 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
 # <dir>/gate, one directory permissions.sh lists in permissions.additionalDirectories (auto mode edits
