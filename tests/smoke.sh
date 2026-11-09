@@ -5052,7 +5052,10 @@ oadd_deny() {
 }
 for nojq in "" 1; do
   label=${nojq:+ (python3)}
-  for rule in "Bash(git tag:*)" "Bash(git tag *)" "Bash(*gh release *)" "Bash(*git*push*--tags*)"; do
+  for rule in "Bash(git tag:*)" "Bash(git tag *)" "Bash(*gh release *)" "Bash(*git*push*--tags*)" \
+    "Bash(git push --tags:*)" "Bash(git push --tags)" "Bash(git push --tags origin)" "Bash(git push --follow-tags:*)" \
+    "Bash(*--follow-tags*)" "Bash(git push origin refs/tags/*)" "Bash(git push origin tag *)" "Bash(git tag -s:*)" \
+    "Bash(git tag -m:*)"; do
     cp "$owork/shared-full.json" "$oclaude/settings.json"
     oadd_deny "$oclaude/settings.json" "$rule"
     out=$(odoctor "$nojq")
@@ -5060,6 +5063,15 @@ for nojq in "" 1; do
       pass "owner: doctor reports deny $rule as MISSING with the fix$label" ||
       fail "owner: no MISSING with the fix for deny $rule$label ($out)"
   done
+  # A broad deny that also blocks a loop command is reported once, by the loop-command check.
+  cp "$owork/shared-full.json" "$oclaude/settings.json"
+  oadd_deny "$oclaude/settings.json" "Bash(git push:*)"
+  out=$(odoctor "$nojq")
+  expect "owner: a deny on all pushes is reported once$label" "1" \
+    "$(printf '%s\n' "$out" | grep -cF 'deny rule Bash(git push:*) in .claude/settings.json')"
+  printf '%s\n' "$out" | grep -F 'deny rule Bash(git push:*) in .claude/settings.json' | grep -qF 'a command the loop runs' &&
+    pass "owner: the one report of a deny on all pushes is the loop-command one$label" ||
+    fail "owner: a deny on all pushes is not reported as blocking a loop command$label ($out)"
   cp "$owork/shared-full.json" "$oclaude/settings.json"
   oadd_deny "$oclaude/settings.local.json" "Bash(git push origin v*)"
   out=$(odoctor "$nojq")
@@ -5080,6 +5092,23 @@ odoctor | grep -qF 'MISSING permissions: deny rule Bash(git tag:*) in .claude/se
 printf '{"permissions": {"ask": ["Bash(git tag:*)"], "deny": ["Bash(curl *)"]}}\n' >"$oclaude/settings.local.json"
 expect "owner: an ask on tags and an unrelated deny are not reported" "" "$(odoctor | grep 'MISSING permissions')"
 rm -f "$oclaude/settings.local.json"
+
+# Doctor's notes on missing or empty permission settings name the owner's apply line, never a bare --apply.
+rm -f "$oclaude/settings.json" "$oclaude/settings.local.json"
+odoctor | grep -F 'permissions: no .claude/settings.json' | grep -qF -- "$oapply" &&
+  pass "owner: the no-settings note names the owner's apply line" || fail "owner: the no-settings note lacks \"$oapply\""
+printf '{}\n' >"$oclaude/settings.json"
+odoctor | grep -F 'permissions: no allow list' | grep -qF -- "$oapply" &&
+  pass "owner: the no-allow-list note names the owner's apply line" || fail "owner: the no-allow-list note lacks \"$oapply\""
+expect "owner: no doctor note says the setup skill runs --apply" "" "$(odoctor | grep -F 'permissions step')"
+rm -f "$oclaude/settings.json"
+# A plugin path with a space: the printed apply line quotes the path and still ends with --apply.
+mkdir -p "$owork/sp ace"
+cp -R "$plugin/scripts" "$plugin/templates" "$owork/sp ace/"
+out=$(oenv "$owork/sp ace/scripts/permissions.sh" | tail -n 1)
+ospace="! $(printf '%q' "$owork/sp ace/scripts/permissions.sh") --apply"
+printf '%s\n' "$out" | grep -qF -- "$ospace" && printf '%s\n' "$out" | grep -q '\-\-apply$' &&
+  pass "owner: the apply line quotes a plugin path with a space" || fail "owner: the apply line does not quote the path ($out)"
 
 # The docs: setup and doctor skills, README, CHANGELOG and decisions.
 osetup=$(awk '/^4\. \*\*Permissions\*\*/ { on = 1 } /^5\. / { on = 0 } on' "$plugin/skills/setup/SKILL.md")
