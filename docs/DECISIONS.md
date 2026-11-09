@@ -896,3 +896,12 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** accept containment as merged (deletes a fresh worktree's uncommitted work after 10
   idle minutes); a `--worktree <path>` override (a forced removal by another name); archiving the ignored
   files too (large, and the rule already keeps worktrees whose ignored files are not build output).
+- **Review follow-ups:** the settle window checks ctime as well as mtime; since a test cannot backdate a
+  ctime, `DEV_LOOP_WORKTREE_SETTLE_MINUTES` (default 10, 0 = off) sets it, like
+  `DEV_LOOP_GH_SETTLE_SECONDS`. Two branch names that map to one archive folder (`feat/1/a`, `feat/1_a`)
+  get `-2`, `-3` suffixes instead of sharing one. The patches come from `git diff-index` with explicit
+  prefixes and no external diff, textconv or color, after an index refresh, and the worktree is compared
+  with the archive (both patches and the untracked list) right before the removal; any difference keeps
+  it. A worktree holding another registered worktree, or with assume-unchanged or skip-worktree entries,
+  or a path `find` cannot read, is kept rather than archived, since the archive cannot hold what git or
+  find does not show.

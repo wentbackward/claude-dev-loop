@@ -34,13 +34,15 @@
 # Remote deletions run as the gate identity in identity mode. Needs git 2.9 or later.
 #
 # Worktrees of merged branches (the ledger or a merged PR at the tip; not "the base contains it") that
-# merge-train.sh kept for their changes are listed too: path, branch, modified and untracked files, and
-# "remove" or "keep" with the reason. --apply --include worktrees archives each "remove" one first, to
-# ~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/ (changes.patch from git diff --binary HEAD,
-# untracked.tar, manifest.txt) and checks the archive, then removes it and deletes its branch at the merged
-# tip (bundled like the others). Always kept: the main checkout, the gate worktree, a locked one, one
-# holding ignored files that are not build output (merge.rebuildable), one with a file changed in the last
-# 10 minutes (an agent may still work there).
+# merge-train.sh kept for their changes are listed too: path, branch, modified and untracked files (the
+# first names), and "remove" or "keep" with the reason. --apply --include worktrees archives each "remove"
+# one first, to a new ~/.dev-loop/<repo>/archive/worktrees-<time>/<branch>/ (changes.patch and
+# staged.patch against HEAD, untracked.tar, manifest.txt) and checks the archive, checks right before the
+# removal that the worktree still matches it, then removes it and deletes its branch at the merged tip
+# (bundled like the others). Always kept: the main checkout and the gate worktree (real paths), a locked
+# one, one holding another worktree, assume-unchanged or skip-worktree files, ignored files that are not
+# build output (merge.rebuildable) or a folder it cannot read, and one with a file changed (mtime or
+# ctime) in the last DEV_LOOP_WORKTREE_SETTLE_MINUTES (default 10; an agent may still work there).
 #
 # Exit: 0 done, 1 some deletions failed (listed), 2 usage/config.
 set -u
