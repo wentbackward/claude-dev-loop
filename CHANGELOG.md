@@ -4,6 +4,18 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Remote protection (#88): `doctor.sh` reads, read only, the base branch's protection and rules and the
+  tag rulesets of a github.com remote (`gh api` GETs, lists at 100 a page, each call stopped by a watchdog
+  after `DEV_LOOP_GH_TIMEOUT` seconds, default 10; after one timeout no further call): one `ok` line when
+  the base branch requires a pull request (or is locked) and blocks force pushes and deletion, and active
+  tag rulesets on `v*` restrict creation, update and deletion, none of it bypassable by the current gh
+  login (classic protection counts only when it includes administrators; a ruleset whose bypass it
+  cannot read does not count); otherwise a note naming what is
+  missing and the owner step (the repository's rules settings page, or the `gh api` call). No `gh`, not
+  logged in, a refusal (403, 404), an answer that is not JSON, no answer, a remote elsewhere or a
+  `github.api_url` (GitHub Enterprise): a note that it could not be checked, never `MISSING`. The README's
+  Permission modes section says why: the guard and the permission rules are tripwires, the remote's
+  protection is the boundary. `tests/fake-gh` answers `gh api` from canned files.
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,

@@ -1161,6 +1161,20 @@ The identity and scenario checks use their own best-effort splitter. A command t
 splitter cannot split (an unbalanced quote) is refused there with "cannot be parsed; ask the owner", also
 with `"guard": false`. A command without git that cannot be split is not refused for that.
 
+The guard hook and the permission rules are tripwires on the agent's command line; no text match is complete
+against full shell syntax. The boundary is the remote's branch and tag protection, so `doctor.sh` reads it
+(read only, through `gh api` GETs on a github.com remote, each stopped after `DEV_LOOP_GH_TIMEOUT` seconds,
+default 10): one `ok` line when the base branch requires a pull request (or is locked) and blocks force
+pushes and deletion, through branch protection that includes administrators or a ruleset, and active tag
+rulesets on `refs/tags/v*` restrict creating, updating and deleting release tags, with no bypass for the
+current gh login (in solo mode the agent runs as the owner, usually an admin); otherwise a note naming what
+is missing. The owner adds them in the repository's Settings > Rules > Rulesets (a branch ruleset for the
+base with "Require a pull request", "Block force pushes" and "Restrict deletions"; a tag ruleset for
+`refs/tags/v*` with "Restrict creations", "Restrict updates" and "Restrict deletions"; no bypass list), or
+with `gh api -X POST repos/<owner>/<repo>/rulesets --input <ruleset.json>`. Without `gh`, logged out,
+without the right to read it, with no answer or an answer that is not JSON, or on another host (also a
+`github.api_url` for GitHub Enterprise), the note says it could not be checked; it is never `MISSING`.
+
 The deny rules match text, not meaning: `*git*push*--force*` and `*gh pr merge*--admin*` also refuse a
 commit message or PR body that quotes such a command. Write those messages without the literal flag, or
 pass the text in a file (`git commit -F <file>`, `gh pr create --body-file <file>`).
