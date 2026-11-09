@@ -486,12 +486,17 @@ doctor_marketplace_older() {
 }
 
 # doctor_protection: read only, on a GitHub remote with a logged-in gh: one ok line when the base branch
-# needs a PR, blocks force pushes and deletion (branch protection or rulesets) and an active tag ruleset
-# covers release tags (v*); else a note per gap with the owner step. What cannot be checked (no gh, not
-# logged in, not GitHub, the API refusing) is a note too, never MISSING.
+# needs a PR (or blocks updates) and blocks force pushes and deletion, and active tag rulesets restrict
+# creating, updating and deleting release tags (v*), none of it bypassable by the current gh login; else a
+# note per gap with the owner step. What cannot be checked (no gh, not logged in, not GitHub, GitHub
+# Enterprise, the API refusing or not answering) is a note too, never MISSING.
 doctor_protection() {
-  local repo tmp base tags url api
+  local repo tmp base tags url api kind detail exempt
   git -C "$DL_ROOT" remote get-url "$DL_REMOTE" >/dev/null 2>&1 || return 0
+  if [ "$(dl_api_url)" != https://api.github.com ]; then
+    optional "remote protection: github.api_url is $(dl_api_url), so branch and tag protection is not checked (check the base branch and tag rules in the repository's settings)"
+    return 0
+  fi
   if ! repo=$(doctor_github_repo); then
     optional "remote protection: $DL_REMOTE is not a GitHub remote, so its branch and tag protection is not checked"
     return 0
@@ -507,18 +512,20 @@ doctor_protection() {
   tags=$(doctor_tag_protection "$repo" "$tmp")
   rm -rf "$tmp"
   if [ "$base" = ok ] && [ "$tags" = ok ]; then
-    ok "remote protection: $DL_BASE on $repo needs a pull request and blocks force pushes and deletion; a tag ruleset covers release tags (v*)"
+    ok "remote protection: $DL_BASE on $repo needs a pull request and blocks force pushes and deletion; tag rulesets restrict creating, updating and deleting release tags (v*)"
     return 0
   fi
-  case $base in
+  IFS=$'\t' read -r kind detail exempt <<<"$base"
+  case $kind in
     ok) ;;
-    unknown:*) optional "remote protection: $DL_BASE on $repo could not be checked (${base#unknown: }): check it at $url" ;;
-    *) optional "remote protection: $DL_BASE on $repo does not ${base#gaps: } (the owner adds a branch ruleset or branch protection at $url, or with $api)" ;;
+    unknown) optional "remote protection: $DL_BASE on $repo could not be checked ($detail): check it at $url" ;;
+    *) optional "remote protection: $DL_BASE on $repo does not $detail${exempt:+ for the current gh login ($exempt)} (the owner adds a branch ruleset without bypass, or branch protection that includes administrators, at $url, or with $api)" ;;
   esac
-  case $tags in
+  IFS=$'\t' read -r kind detail exempt <<<"$tags"
+  case $kind in
     ok) ;;
-    unknown:*) optional "remote protection: the tag rulesets of $repo could not be checked (${tags#unknown: }): check them at $url" ;;
-    *) optional "remote protection: no active tag ruleset on $repo covers release tags (v*) (the owner adds a tag ruleset for refs/tags/v* at $url, or with $api)" ;;
+    unknown) optional "remote protection: the tag rulesets of $repo could not be checked ($detail): check them at $url" ;;
+    *) optional "remote protection: release tags (v*) on $repo are not protected against $detail${exempt:+ for the current gh login ($exempt)} (the owner adds a tag ruleset for refs/tags/v* with the creation, update and deletion rules (Restrict creations, Restrict updates, Restrict deletions) and no bypass, at $url, or with $api)" ;;
   esac
 }
 
@@ -531,38 +538,94 @@ doctor_github_repo() {
   dl_github_repo
 }
 
-# doctor_gh_get PATH OUT: gh api PATH (a GET, at most 10 seconds where timeout exists) into OUT.body and
-# OUT.err; on failure prints the reason (gh's message) and fails.
+# doctor_gh_get PATH OUT KIND: gh api PATH (a GET) into OUT.body and OUT.err, stopped after
+# DEV_LOOP_GH_TIMEOUT seconds (default 10) by a watchdog; succeeds only for an answer that is a JSON KIND
+# (array or object). On failure prints the reason and fails; after one timeout no further call is made.
 doctor_gh_get() {
-  local rc reason
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 10 gh api "$1" >"$2.body" 2>"$2.err"
-  else
-    gh api "$1" >"$2.body" 2>"$2.err"
-  fi
+  local dir=${2%/*} limit=${DEV_LOOP_GH_TIMEOUT:-10} pid watch rc reason
+  case $limit in "" | *[!0-9]* | 0) limit=10 ;; esac
+  [ ! -f "$dir/hung" ] || { echo "not asked after an earlier call gave no answer"; return 1; }
+  gh api "$1" >"$2.body" 2>"$2.err" </dev/null &
+  pid=$!
+  (sleep "$limit" && : >"$2.timeout" && kill "$pid") >/dev/null 2>&1 </dev/null &
+  watch=$!
+  wait "$pid" 2>/dev/null
   rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  reason=$(sed 's/^gh: //' "$2.err" | tail -n 1)
-  [ "$rc" -ne 124 ] || reason="no answer from GitHub within 10 seconds"
-  printf '%s\n' "${reason:-gh api $1 failed}"
-  return 1
+  kill "$watch" 2>/dev/null
+  wait "$watch" 2>/dev/null
+  if [ -f "$2.timeout" ]; then
+    : >"$dir/hung"
+    echo "no answer from GitHub within $limit seconds"
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    reason=$(sed 's/^gh: //' "$2.err" | tail -n 1)
+    printf '%s\n' "${reason:-gh api $1 failed}"
+    return 1
+  fi
+  [ "$(doctor_json_kind "$2.body")" = "$3" ] || { echo "an answer from GitHub that is not a JSON $3"; return 1; }
+}
+
+# doctor_json_kind FILE: "array" or "object" for a file that holds one JSON array or object; else nothing.
+doctor_json_kind() {
+  case $(json_get "" <"$1") in
+    "["*) echo array ;;
+    "{"*) echo object ;;
+  esac
+}
+
+# doctor_ruleset REPO ID TMP: fetch ruleset ID once into TMP/ruleset-ID.body; prints the reason and fails
+# when it cannot be read.
+doctor_ruleset() {
+  [ ! -f "$3/ruleset-$2.ok" ] || return 0
+  doctor_gh_get "repos/$1/rulesets/$2" "$3/ruleset-$2" object && : >"$3/ruleset-$2.ok"
+}
+
+# doctor_can_bypass FILE: true when the current gh login may bypass the ruleset in FILE
+# (current_user_can_bypass "always" or "exempt"; "pull_requests_only" still goes through a PR).
+doctor_can_bypass() {
+  case $(json_get current_user_can_bypass <"$1") in always | exempt) return 0 ;; *) return 1 ;; esac
+}
+
+# doctor_add_exempt LIST TEXT: LIST with TEXT appended once, "; " between entries.
+doctor_add_exempt() {
+  case "; $1; " in *"; $2; "*) printf '%s\n' "$1" ;; *) printf '%s\n' "${1:+$1; }$2" ;; esac
 }
 
 # doctor_base_protection REPO TMP: "ok" when the base branch needs a PR (or blocks updates), blocks force
-# pushes and deletion through branch protection or rulesets; else "gaps: <what is missing>", or
-# "unknown: <reason>" when a source that might close the gaps could not be read.
+# pushes and deletion through branch protection that includes administrators or rulesets the current login
+# cannot bypass; else "gaps<TAB><what is missing><TAB><exemptions>", or "unknown<TAB><reason>" when a
+# source that might close the gaps could not be read.
 doctor_base_protection() {
-  local pr="" force="" del="" unknown="" reason n i gaps=""
-  if reason=$(doctor_gh_get "repos/$1/branches/$DL_BASE/protection" "$2/protection"); then
-    [ -n "$(json_get required_pull_request_reviews <"$2/protection.body")" ] && pr=yes
-    [ "$(json_get allow_force_pushes.enabled <"$2/protection.body")" = false ] && force=yes
-    [ "$(json_get allow_deletions.enabled <"$2/protection.body")" = false ] && del=yes
+  local pr="" force="" del="" unknown="" exempt="" reason n i id file gaps=""
+  file="$2/protection.body"
+  if reason=$(doctor_gh_get "repos/$1/branches/$DL_BASE/protection" "$2/protection" object); then
+    if [ "$(json_get enforce_admins.enabled <"$file")" = true ]; then
+      [ -n "$(json_get required_pull_request_reviews <"$file")" ] && pr=yes
+      [ "$(json_get lock_branch.enabled <"$file")" = true ] && pr=yes
+      [ "$(json_get allow_force_pushes.enabled <"$file")" = false ] && force=yes
+      [ "$(json_get allow_deletions.enabled <"$file")" = false ] && del=yes
+    else
+      exempt="admins can push past the branch protection: it does not include administrators"
+    fi
   elif ! grep -qF 'Branch not protected' "$2/protection.err"; then
     unknown=$reason
   fi
-  if reason=$(doctor_gh_get "repos/$1/rules/branches/$DL_BASE" "$2/rules"); then
+  if reason=$(doctor_gh_get "repos/$1/rules/branches/$DL_BASE?per_page=100" "$2/rules" array); then
     n=$(json_len "" <"$2/rules.body")
     for ((i = 0; i < n; i++)); do
+      id=$(json_get "$i.ruleset_id" <"$2/rules.body")
+      case $id in
+        "") ;;
+        *[!0-9]*) continue ;;
+        *)
+          reason=$(doctor_ruleset "$1" "$id" "$2") || { unknown=${unknown:-$reason}; continue; }
+          if doctor_can_bypass "$2/ruleset-$id.body"; then
+            exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$2/ruleset-$id.body")\"")
+            continue
+          fi
+          ;;
+      esac
       case $(json_get "$i.type" <"$2/rules.body") in
         pull_request | update) pr=yes ;;
         non_fast_forward) force=yes ;;
@@ -575,52 +638,69 @@ doctor_base_protection() {
   [ -n "$pr" ] || gaps="require a pull request"
   [ -n "$force" ] || gaps="${gaps:+$gaps, }block force pushes"
   [ -n "$del" ] || gaps="${gaps:+$gaps, }block deletion"
-  if [ -z "$gaps" ]; then echo ok; elif [ -n "$unknown" ]; then echo "unknown: $unknown"; else echo "gaps: $gaps"; fi
+  if [ -z "$gaps" ]; then echo ok; elif [ -n "$unknown" ]; then printf 'unknown\t%s\n' "$unknown"; else
+    printf 'gaps\t%s\t%s\n' "$gaps" "$exempt"
+  fi
 }
 
-# doctor_tag_protection REPO TMP: "ok" when an active tag ruleset with rules covers release tags (v*),
-# "unknown: <reason>" when the rulesets could not be read, else "missing".
+# doctor_tag_protection REPO TMP: "ok" when active tag rulesets that cover release tags (v*) and that the
+# current login cannot bypass restrict creation, update and deletion; else "gaps<TAB><rules missing><TAB>
+# <exemptions>", or "unknown<TAB><reason>" when a ruleset that might close the gaps could not be read.
 doctor_tag_protection() {
-  local reason n i id unknown=""
-  reason=$(doctor_gh_get "repos/$1/rulesets" "$2/rulesets") || { echo "unknown: $reason"; return 0; }
+  local reason n i j m id file unknown="" exempt="" creation="" update="" deletion="" gaps=""
+  reason=$(doctor_gh_get "repos/$1/rulesets?per_page=100" "$2/rulesets" array) || { printf 'unknown\t%s\n' "$reason"; return 0; }
   n=$(json_len "" <"$2/rulesets.body")
   for ((i = 0; i < n; i++)); do
     [ "$(json_get "$i.target" <"$2/rulesets.body")" = tag ] || continue
     [ "$(json_get "$i.enforcement" <"$2/rulesets.body")" = active ] || continue
     id=$(json_get "$i.id" <"$2/rulesets.body")
-    if ! reason=$(doctor_gh_get "repos/$1/rulesets/$id" "$2/ruleset"); then
-      unknown=$reason
+    case $id in "" | *[!0-9]*) continue ;; esac
+    reason=$(doctor_ruleset "$1" "$id" "$2") || { unknown=$reason; continue; }
+    file="$2/ruleset-$id.body"
+    doctor_covers_release_tags "$file" || continue
+    if doctor_can_bypass "$file"; then
+      exempt=$(doctor_add_exempt "$exempt" "it can bypass ruleset \"$(json_get name <"$file")\"")
       continue
     fi
-    doctor_covers_release_tags "$2/ruleset.body" && { echo ok; return 0; }
+    m=$(json_len rules <"$file")
+    for ((j = 0; j < m; j++)); do
+      case $(json_get "rules.$j.type" <"$file") in
+        creation) creation=yes ;;
+        update) update=yes ;;
+        deletion) deletion=yes ;;
+      esac
+    done
   done
-  if [ -n "$unknown" ]; then echo "unknown: $unknown"; else echo missing; fi
+  [ -n "$creation" ] || gaps="creation"
+  [ -n "$update" ] || gaps="${gaps:+$gaps, }update"
+  [ -n "$deletion" ] || gaps="${gaps:+$gaps, }deletion"
+  if [ -z "$gaps" ]; then echo ok; elif [ -n "$unknown" ]; then printf 'unknown\t%s\n' "$unknown"; else
+    printf 'gaps\t%s\t%s\n' "$gaps" "$exempt"
+  fi
 }
 
-# doctor_covers_release_tags FILE: true when the ruleset in FILE has rules and its ref conditions include,
-# and do not exclude, a release tag such as v1.0.0.
+# doctor_covers_release_tags FILE: true when the ref conditions of the ruleset in FILE include, and do not
+# exclude, a release tag such as v1.0.0.
 doctor_covers_release_tags() {
-  local n i pattern included=""
-  [ "$(json_len rules <"$1")" -gt 0 ] || return 1
+  local n i included=""
   n=$(json_len conditions.ref_name.include <"$1")
   for ((i = 0; i < n; i++)); do
-    pattern=$(json_get "conditions.ref_name.include.$i" <"$1")
-    doctor_ref_matches_release "$pattern" && included=yes
+    doctor_ref_matches_release "$(json_get "conditions.ref_name.include.$i" <"$1")" && included=yes
   done
   [ -n "$included" ] || return 1
   n=$(json_len conditions.ref_name.exclude <"$1")
   for ((i = 0; i < n; i++)); do
-    pattern=$(json_get "conditions.ref_name.exclude.$i" <"$1")
-    doctor_ref_matches_release "$pattern" && return 1
+    doctor_ref_matches_release "$(json_get "conditions.ref_name.exclude.$i" <"$1")" && return 1
   done
   return 0
 }
 
-# doctor_ref_matches_release PATTERN: true when the ruleset ref PATTERN (~ALL, refs/tags/<glob>) matches the
-# release tag v1.0.0.
+# doctor_ref_matches_release PATTERN: true when the ruleset ref PATTERN (~ALL, or refs/tags/<glob>) matches
+# the release tag v1.0.0.
 doctor_ref_matches_release() {
   local glob=${1#refs/tags/} tag=v1.0.0
   [ "$1" = "~ALL" ] && return 0
+  case $1 in refs/tags/*) ;; *) return 1 ;; esac
   # shellcheck disable=SC2254 # the pattern is a glob on purpose
   case $tag in $glob) return 0 ;; esac
   return 1
