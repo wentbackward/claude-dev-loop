@@ -1602,6 +1602,13 @@ CARGO_FMT_FLAGS = {"--check": NO, "--all": NO, "-p": VAL, "--package": VAL, "-q"
 MAKE_FLAGS = {"-j": OPT, "--jobs": OPT, "-k": NO, "--keep-going": NO, "-s": NO, "--silent": NO}
 RUFF_CHECK_FLAGS = {"--fix": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--statistics": NO, "--no-cache": NO}
 RUFF_FORMAT_FLAGS = {"--check": NO, "--diff": NO, "-q": NO, "--quiet": NO, "--no-cache": NO}
+# What a runner hands to the test binary after a separator: (separator, style, safe flags, plain words
+# allowed). Anything else after the separator is refused, as is "--" for the other runners.
+CARGO_HARNESS_FLAGS = {"--nocapture": NO, "--show-output": NO, "--test-threads": VAL, "--exact": NO,
+                       "--ignored": NO, "--include-ignored": NO, "-q": NO, "--quiet": NO}
+GO_ARGS_FLAGS = {"-test.v": NO, "-test.run": VAL, "-test.count": VAL}
+TEST_BINARY_ARGS = {("cargo", "test"): ("--", "gnu", CARGO_HARNESS_FLAGS, True),
+                    ("go", "test"): ("-args", "go", GO_ARGS_FLAGS, False)}
 TARGETED_FORMS = [
     (("go", "test"), "go", GO_TEST_FLAGS), (("go", "vet"), "go", GO_VET_FLAGS), (("gofmt",), "go", GOFMT_FLAGS),
     (("pytest",), "gnu", PYTEST_FLAGS), (("python", "-m", "pytest"), "gnu", PYTEST_FLAGS),
@@ -1681,6 +1688,8 @@ def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple
             return f"{text} is not on the safe list", index, []
         if eq:
             return None, index, [value]
+        if kind == VAL and index >= len(args):
+            return f"{text} needs a value", index, []
         if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
             return None, index + 1, [arg.text for arg in args[index : index + 1]]
         return None, index, []
@@ -1692,6 +1701,8 @@ def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple
         letters = letters[1:]
         if kind in {VAL, OPT} and letters:
             return None, index, [letters]
+        if kind == VAL and index >= len(args):
+            return f"{text} needs a value", index, []
         if kind == VAL or (kind == OPT and index < len(args) and args[index].text.isdigit()):
             return None, index + 1, [arg.text for arg in args[index : index + 1]]
         if kind == OPT:
@@ -1700,14 +1711,21 @@ def flag_problem(style: str, flags: dict, args: list[Word], index: int) -> tuple
 
 
 def arguments_problem(style: str, flags: dict, args: list[Word], dirs: set[str], root: str,
-                      max_positional: int = -1) -> str | None:
+                      max_positional: int = -1, tail: tuple | None = None) -> str | None:
     """Why the arguments after a runner form are refused (the first bad one), or None. max_positional caps
-    the plain words (-1: no cap)."""
-    index, positional = 0, 0
+    the plain words (-1: no cap); tail is the form's TEST_BINARY_ARGS entry: after its separator the test
+    binary's own safe list applies."""
+    index, positional, plain_ok = 0, 0, True
     while index < len(args):
         word = args[index]
         if word.glob:
             return f"{word.text} is a glob the shell expands"
+        if tail and word.text == tail[0]:
+            _, style, flags, plain_ok = tail
+            tail, index = None, index + 1
+            continue
+        if not plain_ok and not word.text.startswith("-"):
+            return f"{word.text} after the test binary's separator is not on the safe list"
         if word.text.startswith("-") and word.text != "-":
             problem, after, values = flag_problem(style, flags, args, index)
             if problem:
@@ -1864,20 +1882,31 @@ def command_problem(command: Simple, dirs: set[str], forms: list[tuple], configu
     if rest in configured:
         return True, None
     form, style, flags = found
-    return True, arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root, max_positional(form))
+    return True, arguments_problem(style, flags, words[len(form_words(form)) :], dirs, root, max_positional(form),
+                                   TEST_BINARY_ARGS.get(form))
+
+
+# Builtins that set a variable (or where a program name resolves) for the commands after them in the line.
+VARIABLE_SETTERS = {"read", "mapfile", "readarray", "getopts", "let", "hash"}
 
 
 def sets_variables(command: Simple) -> str | None:
     """What in a simple command may set a variable a later runner reads (export, declare, typeset,
-    readonly, local, set -a or -o allexport, a bare assignment), or None."""
+    readonly, local, read, mapfile, readarray, getopts, let, hash, printf -v, set -a or -o allexport, a
+    bare assignment), or what may run or change something the guard cannot follow (builtin, command, eval,
+    exec, source, ., and the other programs that run a command), or None."""
     texts = [word.text for word in command.words]
     if not texts:
         return None
     program = os.path.basename(texts[0])
-    if program in DECLARERS:
+    if program in DECLARERS | VARIABLE_SETTERS:
         return program
+    if program == "printf" and any(text.startswith("-v") for text in texts[1:]):
+        return "printf -v"
     if program == "set" and any(re.match(r"^[-+][A-Za-z]*a", text) or text == "allexport" for text in texts[1:]):
         return "set -a"
+    if program in RUNNERS:
+        return program
     if all(is_assignment(word) for word in command.words):
         return f"the assignment {texts[0]}"
     return None
@@ -1958,7 +1987,8 @@ def check_targeted(event: dict, cwd: str) -> None:
             previous = simple.op
             where.after(simple.op)
         if runs and setter:
-            targeted_refuse(command, f"{setter} in the same line can set a variable the runner reads", forms)
+            targeted_refuse(command, f"{setter} in the same line can set a variable the runner reads or change"
+                            " where it runs", forms)
     except NotPlain as error:
         targeted_refuse(command, f"it is not a plain command line ({error})", forms or TARGETED_FORMS)
     except Exception as error:  # fail closed: a crash (exit 1) would let the command run unchecked

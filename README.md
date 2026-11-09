@@ -1222,7 +1222,9 @@ anything: `make --eval=...`, `make -C ../other`, `make test CC=<cmd>`, `go test 
 `go env -w` (machine-wide), `pytest -p <plugin>`, `npm test --script-shell=<cmd>`, `npx <package>`,
 `python3 -c`. Ask rules cannot fix that: Claude Code's patterns cannot say "any option except these", and
 a runner accepts abbreviations (`make --ev`), bundles (`-kC..`), quoting (`'-o'`), tabs and options no list
-names. So the plugin pairs a narrow allow rule with the role guard, which sees the parsed argv.
+names. So the plugin pairs a narrow allow rule with the role guard, which sees the parsed argv. The guard
+backs up Claude Code's own per-subcommand permission check (each part of `a && b` must match a rule); it
+does not replace it.
 
 List the exact prefixes in `"targeted"` (`.dev-loop.json`). Each entry must start with an accepted runner
 form; `permissions.sh` writes `Bash(<prefix> *)` (or `Bash(<prefix>*)` when the prefix ends in `/`, so
@@ -1256,7 +1258,10 @@ Go flags take one or two dashes and `-flag=value`; the others take bundled short
 `-kEXPR`), `--long` and `--long=value`. A flag matches only as written in the table, so an abbreviation
 (`--ev`, `--basete`) or a flag the table leaves out (`-test.testlogfile=`, `-compiler`, `--basetemp`,
 `-p`, `--prefix`, `--target-dir`, `-Z`) is refused; so is `--`, which hands what follows to the runner or
-the test binary. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
+the test binary, except for the test harness: after `cargo test --` the harness options `--nocapture`,
+`--show-output`, `--test-threads=N`, `--exact`, `--ignored`, `--include-ignored`, `-q`/`--quiet` and plain
+filter words pass, and after `go test -args` only `-test.v`, `-test.run=X` and `-test.count=N`. A flag that
+takes a value needs one. A plain argument may not start with `-`, `+` or `@` (pytest expands `@file` into
 arguments, so a file the agent writes could carry any option; a flag value may not start with `@` either),
 hold `=` (`make` and `npm` read `VAR=value` as a setting), a blank or a control character, or be an
 unquoted glob (the shell expands it, maybe to a file named like an option). `make` takes one target: a
@@ -1266,9 +1271,12 @@ command runs in (`..` and symlinks resolved; `~` is the home directory, so `~/x`
 follows `cd`, `pushd` and `popd` like the git guard, and refuses a targeted command that may run outside
 the worktree (`cd ../other && make test`), an output redirection to a file outside it (`> /tmp/out`;
 `/dev/null` and `2>&1` pass), a variable set before the runner (`GOFLAGS=...`, `MAKEFLAGS=...`, through
-`env` too) or anywhere in the same line (`export`, `declare`, `typeset`, `readonly`, `local`, `set -a`,
-`set -o allexport`, a bare `MAKEFLAGS=...;`), a runner started through a program that runs commands (`xargs`, `command`, `exec`, `sudo`,
-`bash -c`, ...), and a command line naming a targeted runner that is not plain (a `$` or backtick
+`env` too) or anywhere in the same line (`export`, `declare`, `typeset`, `readonly`, `local`, `read`,
+`mapfile`/`readarray`, `getopts`, `let`, `hash`, `printf -v`, `set -a`, `set -o allexport`, a bare
+`MAKEFLAGS=...;`), any program in the line that runs a command or changes the shell in a way the guard
+cannot follow, whatever its arguments (`builtin`, `command`, `eval`, `exec`, also with only redirections,
+`source`, `.`, `xargs`, `sudo`, ...: so `builtin cd /tmp; make test` and `source ./env.sh; make test` are
+refused), a runner started through a shell (`bash -c`), and a command line naming a targeted runner that is not plain (a `$` or backtick
 expansion, braces, a subshell). A refusal names the argument and the runner forms and says to ask the
 owner. The project's exact `fast_check` and `checks` commands pass with their own arguments (they have their own
 exact rules), but the directory and redirection checks apply to them too (`cd /tmp && make lint` is

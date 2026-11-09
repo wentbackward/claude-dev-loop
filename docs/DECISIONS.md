@@ -1127,6 +1127,12 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   or make a bare assignment; the exact configured commands get the directory and redirection checks; the
   config is read from `DEV_LOOP_CONFIG` or the project directory first, so a project without `targeted`
   starts no git process, and one that holds `"targeted"` but does not parse checks every form.
+  Review round 3: in a line that runs a targeted runner, every program that runs a command or changes the
+  shell indirectly (the guard's RUNNERS: `builtin`, `command`, `eval`, `exec`, `source`, `.`, ...) is
+  refused whatever its arguments, and `read`, `mapfile`/`readarray`, `getopts`, `let`, `hash` and
+  `printf -v` count as variable setters. `--` stays refused except for a small test-harness list after
+  `cargo test --` (plain filter words too) and `go test -args` (`-test.v`, `-test.run`, `-test.count`, no
+  plain words); a flag that takes a value must get one.
 - **Reason:** review round 1 showed that ask rules over the command text cannot protect a runner
   wildcard: abbreviations, quoting, tabs and options no list names get through, as in #71. An allowlist
   checked on the parsed argv closes the class; small explicit lists keep it reviewable. Checking the whole

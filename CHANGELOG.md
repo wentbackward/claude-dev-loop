@@ -50,7 +50,9 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   every command of those runners: each must be a plain path, package or pattern inside the project, or a
   flag on that runner's safe list (with its value); anything else (`make --ev=...`, `go test -toolexec`,
   `pytest -p`, `npm test --script-shell`, `cargo test --config`, `VAR=value`, `@file`, a second make
-  target, a variable exported in the same line, a path or `cd` outside the project, a write outside it, a
+  target, a variable exported or set by a builtin in the same line, `builtin`/`command`/`eval`/`exec`/
+  `source` anywhere in the line, `--` (except the test harness's own options after `cargo test --` and
+  `go test -args`), a path or `cd` outside the project, a write outside it, a
   line that is not plain) is refused with the argument named and "ask the
   owner". `doctor.sh` notes each wildcard allow rule for a runner, an interpreter or a git subcommand with
   destructive options (`make *`, `go *`, `npm run *`, `npx *`, `python3 *`, `node *`, `uv run *`,
