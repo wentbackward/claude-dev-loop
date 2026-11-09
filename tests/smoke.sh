@@ -5011,7 +5011,7 @@ grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the
   fail "wtd: no doctor skill row for worktrees"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#70' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "wtd: CHANGELOG has a #70 entry under Unreleased" || fail "wtd: no #70 entry under ## Unreleased"
-# 28. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
+# 26b. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
 # agent never edits its own permission settings); doctor reports a deny rule in the project's settings that
 # blocks a tag, a release or a tag push as MISSING, with the fix: move it to ask. Quiet with the template.
 owork="$work/owner"
@@ -5095,6 +5095,9 @@ rm -f "$oclaude/settings.json"
 printf '{"permissions": {"deny": ["Bash(git push:*)"]}}\n' >"$oclaude/settings.local.json"
 expect "owner: a broad deny in the local file alone is reported exactly once" "1" \
   "$(odoctor | grep -c 'MISSING permissions: deny rule Bash(git push:\*) in .claude/settings.local.json')"
+odoctor | grep -F 'MISSING permissions: deny rule Bash(git push:*) in .claude/settings.local.json' |
+  grep -qF 'a command the loop runs' && pass "owner: the one report of a broad deny in the local file is the loop-command one" ||
+  fail "owner: a broad deny in the local file alone is not reported as blocking a loop command"
 # A remote other than origin: a deny on pushes of tags to the literal origin is still reported.
 printf '{"base_branch": "main", "remote": "origin2", "fast_check": "make lint", "checks": ["make check"]}\n' >"$owork/config2.json"
 printf '{"permissions": {"deny": ["Bash(git push origin v*)"]}}\n' >"$oclaude/settings.local.json"
@@ -5102,7 +5105,7 @@ printf '{"permissions": {"deny": ["Bash(git push origin v*)"]}}\n' >"$oclaude/se
   "$plugin/scripts/doctor.sh" 2>&1) | grep -qF 'MISSING permissions: deny rule Bash(git push origin v*) in .claude/settings.local.json' &&
   pass "owner: a deny on tag pushes to origin is reported when the remote is origin2" ||
   fail "owner: no MISSING for a deny on tag pushes to origin with the remote origin2"
-# Only the local file, no shared settings: the deny is still found.
+# Only the local file, no shared settings: a tag deny there is still reported.
 rm -f "$oclaude/settings.json"
 printf '{"permissions": {"deny": ["Bash(git tag:*)"]}}\n' >"$oclaude/settings.local.json"
 odoctor | grep -qF 'MISSING permissions: deny rule Bash(git tag:*) in .claude/settings.local.json blocks' &&
