@@ -1044,7 +1044,9 @@ line. A notes directory, a `worktrees_dir` or loop worktrees outside the project
 layout are a note once `worktrees_dir` is set. An ask rule that matches a command the loop runs or one
 `.dev-loop.json` configures (`fast_check`, `checks`, `affected`, `gate_setup`, `format`) is a note naming
 the file, the rule and the command: auto mode stops for confirmation on it every time, and since
-ask beats allow, the fix is to narrow the rule (e.g. to the paths it guards). For this check it also
+ask beats allow, the fix is to narrow the rule (e.g. to the paths it guards). The gate and the format hook
+run `gate_setup`, `affected` and `format` outside the Bash tool, so a rule that matches only those is
+worded for them: it stops only when an agent runs that command itself through the Bash tool. For this check it also
 reads the `permissions.ask` list of the user settings (`DEV_LOOP_CLAUDE_DIR`, default `CLAUDE_CONFIG_DIR`, else
 `~/.claude`), and nothing else there. The template's ask rules match none of these commands.
 
