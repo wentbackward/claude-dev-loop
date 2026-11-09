@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.9.0 — 2026-11-09
 
 - Targeted refusal hints (#105): for a bundled short flag the guard's hint names the flag letter
   (`pytest -vk -p` says `attach it, -k=...`; `pytest -vk` says `-vk needs a value for -k`), and a `go test`

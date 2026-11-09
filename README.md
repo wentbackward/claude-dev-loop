@@ -13,14 +13,14 @@ the spec leaves open go into a log, and the user hears results in plain language
 
 ## Install
 
-Pin the marketplace to a release tag (the latest is `v0.8.2`):
+Pin the marketplace to a release tag (the latest is `v0.9.0`):
 
 ```text
-/plugin marketplace add wentbackward/claude-dev-loop@v0.8.2
+/plugin marketplace add wentbackward/claude-dev-loop@v0.9.0
 /plugin install dev-loop@claude-dev-loop
 ```
 
-From a shell, the same is `claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.2`, then
+From a shell, the same is `claude plugin marketplace add wentbackward/claude-dev-loop@v0.9.0`, then
 `claude plugin install dev-loop@claude-dev-loop` (add `--scope project` to enable it for one project).
 
 **Settings that already name the marketplace.** When the user, managed or project settings declare it in
@@ -33,7 +33,7 @@ Error: Cannot add marketplace "claude-dev-loop": its source doesn't match its ex
 ```
 
 The fix is to add it from the entry's source: an entry with `"repo": "wentbackward/claude-dev-loop"` and
-`"ref": "v0.8.2"` is added with `claude plugin marketplace add wentbackward/claude-dev-loop@v0.8.2`; or
+`"ref": "v0.9.0"` is added with `claude plugin marketplace add wentbackward/claude-dev-loop@v0.9.0`; or
 change the entry's `"ref"` first and add it from that ref. `/dev-loop:doctor` prints the entries it finds
 and the exact command when they do not match the marketplace Claude Code configured.
 

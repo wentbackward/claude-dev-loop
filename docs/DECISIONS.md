@@ -1180,3 +1180,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Reason:** `-vk=...` is not a spelling pytest reads as `-k=...`, and `write ./+x` suggests a fix for a
   word that was never meant as a package. The checks and their results stay the same.
 - **Alternatives:** naming only the flag letter (`-k -p: ...`), which hides the word the agent wrote.
+
+## 2026-11-09 — This repository merges its own logs with the union driver
+
+- **Decision:** `.dev-loop.json` here sets `merge.union_files` to `CHANGELOG.md` and `docs/DECISIONS.md`
+  (released in 0.9.0, #95), on the user's OK.
+- **Reason:** almost every branch appends to both files at the same spot, and each such pair cost a
+  rebase-only review round.
+- **Alternatives:** keeping it off and rebasing by hand (the cost this removes).
