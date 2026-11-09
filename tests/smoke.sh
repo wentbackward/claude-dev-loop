@@ -7177,6 +7177,19 @@ trefused "make test deploy" "make test release" "make -j4 test deploy" "pytest @
   "set -a; MAKEFLAGS=x; make test" "set -o allexport; MAKEFLAGS=x; make test" "MAKEFLAGS=x; make test" \
   "typeset -x MAKEFLAGS=x; make test" "readonly MAKEFLAGS=x; make test" "cd /tmp && make lint" "make lint > /tmp/x"
 tpassed "set -e; make test" "set -euo pipefail; go test ./..." "npm run lint src"
+# Review round 3: wrapped or indirect cd, export and source, other builtins that set variables, exec with
+# redirections; the test harness options after cargo test -- and go test -args.
+trefused "builtin cd /tmp; make test" "command cd /tmp; make test" "eval cd /tmp; make test" "eval 'cd /tmp'; make test" \
+  "builtin pushd /tmp; make test" "builtin export MAKEFLAGS=x; make test" "command export MAKEFLAGS=x; make test" \
+  "builtin declare -x MAKEFLAGS=x; make test" "source ./env.sh; make test" ". ./env.sh; make test" \
+  "read PATH <<< ./bin; make test" "printf -v PATH %s ./bin; make test" "readarray -t PATH < f; make test" \
+  "mapfile -t PATH < f; make test" "let x=1; make test" "getopts ab PATH; make test" "exec > /tmp/x; make test" \
+  "exec 2>/dev/null; make test" "make test; builtin cd /tmp" "cargo test -- --logfile /tmp/x" "cargo test -- --format json" \
+  "cargo test -- -Z unstable-options" "cargo test -- --test-threads" "go test ./pkg -args -test.testlogfile=/tmp/x" \
+  "go test ./pkg -args -test.run" "go test ./pkg -args ./other"
+tpassed "printf '%s' x; make test" "echo x && make test" "cargo test -- --nocapture" \
+  "cargo test parser -- --test-threads=1 --exact" "cargo test -- --ignored" "cargo test -- --include-ignored --show-output" \
+  "cargo test -- parser" "go test ./pkg -args -test.v" "go test ./pkg -args -test.run=X -test.count=1"
 printf '{"targeted": ["make test"], broken\n' >"$twork/broken.json"
 out=$(tguard "make test --eval=x" "$twork/broken.json")
 case $out in *"ask the owner"*"status=2") pass "targeted guard: an unreadable config with targeted fails closed" ;;
@@ -7321,7 +7334,7 @@ grep -qE '^\| `targeted` \|' "$plugin/README.md" && pass "targeted: the README c
   fail "targeted: no targeted row in the README"
 tsection=$(awk '/^### Targeted commands/ {on = 1; next} /^##/ {on = 0} on' "$plugin/README.md")
 for word in "go test" "-run" "pytest" "-k" "make <target>" "-j" "npm run <script>" "cargo test" "ruff check" \
-  "still runs the project's own test code"; do
+  "still runs the project's own test code" "builtin" "source" "--nocapture" "-test.v" "per-subcommand"; do
   printf '%s\n' "$tsection" | grep -qF -- "$word" && pass "targeted: the README section names $word" ||
     fail "targeted: the README Targeted commands section lacks $word"
 done
