@@ -6893,6 +6893,54 @@ out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/906-f feat/907-g)
 expect "union: a merge driver in the user's global attributes wins over the listed files" \
   "3 TRAIN rebase conflict at feat/907-g" "$? $(echo "$out" | tail -n 1)"
 
+# Entries that share lines (a CHANGELOG entry prepended at the top, a decisions entry appended with a blank
+# separator) stay whole: git's own merge=union would fold the shared lines into one copy.
+printf '/user.log merge=union\n' >"$uwork/user-attributes"
+uentry() { # uentry NAME TICKET: a branch whose two entries share lines with the other branch's
+  git checkout -q -B "$1" origin/main &&
+    awk -v e="- $1" '{ print } /^## Unreleased$/ { getline; print; print e; print "  Shared detail." }' CHANGELOG.md \
+      >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+    printf '\n## %s\n\n- **Decision:** %s\n- **Alternatives:** none.\n' "$1" "$1" >>docs/DECISIONS.md &&
+    git commit -q -am "feat: $1" && git push -q -u origin "$1" && git checkout -q main &&
+    printf 'feat: %s (#%s)\n\nCloses #%s\n' "$1" "$2" "$2" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+uentry feat/910-j 910
+uentry feat/911-k 911
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/910-j feat/911-k)
+expect "union: entries that share lines gate green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+expect "union: prepended CHANGELOG entries that share a line stay whole, base first" \
+  "- feat/910-j|  Shared detail.|- feat/911-k|  Shared detail.|- base moved" \
+  "$(git show train-feat/911-k:CHANGELOG.md | awk '/^## Unreleased$/ { on = 1; getline; next } on' | head -n 5 | paste -sd'|' -)"
+expect "union: appended decisions entries with a blank separator stay whole, base first" \
+  "|## feat/910-j||- **Decision:** feat/910-j|- **Alternatives:** none.||## feat/911-k||- **Decision:** feat/911-k|- **Alternatives:** none." \
+  "$(git show train-feat/911-k:docs/DECISIONS.md | tail -n 10 | paste -sd'|' -)"
+# The same entry added by both, in files that differ elsewhere: one copy would lose a line, so it stops and
+# names the file. (Two identical files need no merge: git keeps one, with or without the option.)
+for b in feat/912-l feat/913-m; do
+  git checkout -q -B "$b" origin/main && printf '## same entry\n' >>docs/DECISIONS.md && echo "$b" >"f-${b#feat/}.txt" &&
+    { [ "$b" = feat/912-l ] || { awk 'NR == 1 { print; print "<!-- m -->"; next } { print }' docs/DECISIONS.md >d.tmp &&
+      mv d.tmp docs/DECISIONS.md; }; } &&
+    git add . && git commit -q -m "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$b" >"$("$plugin/scripts/paths.sh" notes "$b")"
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/912-l feat/913-m)
+expect "union: an entry both branches added stops the train, naming the file" \
+  "3 TRAIN conflict in: docs/DECISIONS.md|TRAIN rebase conflict at feat/913-m" "$? $(echo "$out" | tail -n 2 | paste -sd'|' -)"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
+expect "union: another conflict names its file" "TRAIN conflict in: src.txt" "$(echo "$out" | tail -n 2 | head -n 1)"
+# A wildcard entry is refused: entries are literal paths.
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}], "merge": {"union_files": ["*.md"]}}\n' \
+  >"$uwork/wild.json"
+out=$(DEV_LOOP_CONFIG="$uwork/wild.json" ugate feat/910-j feat/911-k 2>&1)
+echo "$out" | grep -qF "merge.union_files: skipping '*.md'" && pass "union: a wildcard entry is skipped with a warning" ||
+  fail "union: no warning for a wildcard entry: $out"
+# An inherited DL_UNION_ATTRIBUTES is never removed by the scripts.
+printf 'keep\n' >"$uwork/inherited"
+DL_UNION_ATTRIBUTES="$uwork/inherited" ugate feat/910-j >/dev/null
+DL_UNION_ATTRIBUTES="$uwork/inherited" umerge feat/no-such-branch >/dev/null
+[ -f "$uwork/inherited" ] && pass "union: an inherited DL_UNION_ATTRIBUTES path is not removed" ||
+  fail "union: the scripts removed an inherited DL_UNION_ATTRIBUTES path"
+
 expect "union: the user's and the repository's git config are unchanged" "$ugit_before" "$(ugit_snapshot)"
 expect "union: the gate's git config is unchanged" "" \
   "$(git -C "$("$plugin/scripts/paths.sh" gate)" config --list --local | grep -i attributes)"
