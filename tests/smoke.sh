@@ -3953,6 +3953,8 @@ rcheck "CRLF blank-padded" fix/740-crlf-blanks $'\r\n' $'fix: b (#740)\r\n\r\n- 
 rcheck "bare-CR, no footer" fix/737-cr $'\r\n' $'fix: r (#737)\r\n\r\nCloses #737\r' "" \
   $'fix: r (#737)\r\n\r\nCloses #737\r\n\r\n'
 rcheck "bare-CR footer" fix/738-cr-footer $'\r\n' $'fix: f (#738)\r\n\r\n- f\r\n\r\n' "$rfooter"$'\r'
+# A bare CR on a blank line after the footer is dropped with that line: the footer keeps its CRLF.
+rcheck "CR after the footer" fix/741-cr-after $'\r\n' $'fix: t (#741)\r\n\r\n' "$rfooter"$'\r\n\r' $'fix: t (#741)\r\n\r\n' "$rfooter"$'\r\n'
 # A final NUL byte is a last line without a newline: no newline is added after the Supersedes line.
 rbranch fix/739-nul && { printf 'fix: n (#739)\n\nCloses #739'; printf '\000'; } >"$(rnotes fix/739-nul)"
 repush "$work/repush" fix/739-nul
