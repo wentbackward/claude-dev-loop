@@ -34,11 +34,14 @@ doctor_tmp_free_inodes() {
 
 # doctor_tmp_space: free space and inodes of TMPDIR's filesystem (default /tmp), where the test suites' work
 # dirs and every agent's command output live: a note under 10% free, MISSING under 2%, with the count of
-# leftover dev-loop-smoke.* and dev-loop-identity.* dirs. Silent when df -P fails.
+# leftover dev-loop-smoke.* and dev-loop-identity.* dirs. Silent when df -P fails or reports no numbers.
 doctor_tmp_space() {
   local tmp=${TMPDIR:-/tmp} space inodes low=100 text leftovers=0 dir
   tmp=${tmp%/}
-  space=$(df -P "$tmp" 2>/dev/null | awk 'NR == 2 && $2 > 0 { print int($4 * 100 / $2) }')
+  [ -n "$tmp" ] || tmp=/
+  # Counted from the end of the line: a filesystem name may hold spaces (macOS "map auto_home").
+  space=$(df -P "$tmp" 2>/dev/null | awk 'NR == 2 && NF >= 6 { total = $(NF - 4); avail = $(NF - 2)
+      if (total ~ /^[0-9]+$/ && avail ~ /^[0-9]+$/ && total > 0) print int(avail * 100 / total) }')
   [ -n "$space" ] || return 0
   inodes=$(doctor_tmp_free_inodes "$tmp")
   text="TMPDIR $tmp: $space% space free"

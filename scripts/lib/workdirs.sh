@@ -69,5 +69,5 @@ dl_prune_work_dirs() {
     done <"$record"
     [ -z "$newest" ] || kept+="$newest"$'\n'
   done
-  printf '%s' "$kept" >"$record"
+  printf '%s' "$kept" >"$record.tmp.$$" && mv -f "$record.tmp.$$" "$record"
 }

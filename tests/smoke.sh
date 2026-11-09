@@ -142,6 +142,8 @@ fi
 # shellcheck source=../scripts/lib/workdirs.sh
 . "$plugin/scripts/lib/workdirs.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
+# Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
+echo "smoke: started (work dir $work)"
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
 export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
 # doctor reads Claude Code's settings: fake ones under $work, never the real ~/.claude or managed settings.
@@ -4837,8 +4839,10 @@ printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
   pass "smoke: --section 2 runs section 2 and the section it needs (1)" || fail "smoke: --section 2 output: $hout"
 printf '%s\n' "$hout" | grep -qF 'heavy.sh exports the slot port' && fail "smoke: --section 2 ran section 3" ||
   pass "smoke: --section 2 runs no later section"
-printf '%s\n' "$hout" | tail -n 1 | grep -qF "(work dir $work/nested/dev-loop-smoke." &&
-  pass "smoke: a section run has its own work dir under TMPDIR" || fail "smoke: section run work dir: $(printf '%s\n' "$hout" | tail -n 1)"
+printf '%s\n' "$hout" | head -n 1 | grep -qF "smoke: started (work dir $work/nested/dev-loop-smoke." &&
+  pass "smoke: a section run has its own work dir under TMPDIR" || fail "smoke: section run work dir: $(printf '%s\n' "$hout" | head -n 1)"
+expect "smoke: a green section run removes its work dir" "(work dir removed) " \
+  "$(printf '%s\n' "$hout" | tail -n 1 | grep -oF '(work dir removed)') $(cd "$work/nested" && for d in dev-loop-smoke.*; do [ -e "$d" ] && echo "$d"; done)"
 hout=$(cd "$work/nested" && env -u DEV_LOOP_CONFIG TMPDIR="$work/nested" "$hsmoke" --section 'Hooks without config' 2>&1)
 expect "smoke: a section chosen by name passes" 0 $?
 printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
@@ -5046,13 +5050,14 @@ expect "work dirs: everything else in TMPDIR stays" \
 [ -f "$ktmp/other-dir/file" ] && [ -d "$ktmp/sub/dev-loop-smoke.abc123" ] && pass "work dirs: other files keep their content" ||
   fail "work dirs: other files lost content"
 
-# A whole suite run (section 27) in its own TMPDIR: green removes its dir, red and DEV_LOOP_KEEP_WORK=1 keep it.
-# ksuite NAME [VAR=VALUE...]: run tests/smoke.sh --section 27 with TMPDIR=$kwork/NAME; sets kout and krc.
+# A whole suite run (section 27, by name) in its own TMPDIR: green removes its dir, red and DEV_LOOP_KEEP_WORK=1 keep it.
+# ksuite NAME [VAR=VALUE...]: run tests/smoke.sh --section 'Forced failure' with TMPDIR=$kwork/NAME; sets kout and
+# kleft (the dev-loop-smoke.* dirs left in it).
 ksuite() {
   local dir="$kwork/$1"
   shift
   mkdir -p "$dir"
-  kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 27 2>&1 | tail -n 1)
+  kout=$(env TMPDIR="$dir" DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$@" "$plugin/tests/smoke.sh" --section 'Forced failure' 2>&1 | tail -n 1)
   kleft=$(cd "$dir" && for d in dev-loop-smoke.*; do [ -d "$d" ] && echo "$d"; done)
 }
 # kexisting FILE: the dirs listed in FILE (one per line) that still exist.
@@ -5109,6 +5114,18 @@ expect "work dirs: the gate keeps only the newest red identity dir" "$(tail -n 1
 kgate '"echo \"smoke: 3 passed, 0 failed (work dir removed)\""'
 expect "work dirs: a green gate keeps the newest red dir" "0 $(tail -n 1 "$kwork/smoke.made")" \
   "$rc $(kexisting "$kwork/smoke.made")"
+# A run that dies before its summary (a crash, a signal, a stall) is recorded from its start line; a green run
+# that removed its own dir drops out of the record.
+kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"smoke: started (work dir $s)\"; echo $s >>\"$KWORK/smoke.made\"; kill -9 $$"'
+expect "work dirs: the gate keeps a crashed run's dir, named only by its start line, as the newest" \
+  "1 $(tail -n 1 "$kwork/smoke.made")" "$rc $(kexisting "$kwork/smoke.made")"
+kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"smoke: started (work dir $s)\"; rmdir \"$s\"; echo \"smoke: 1 passed, 0 failed (work dir removed)\""'
+expect "work dirs: a green run's own removed dir drops out, the newest red one stays" \
+  "0 $(tail -n 1 "$kwork/smoke.made")" "$rc $(kexisting "$kwork/smoke.made")"
+grep -c '/dev-loop-smoke\.[^/]*$' "$kwork/home/project/gate-work-dirs.txt" | grep -qx 1 &&
+  pass "work dirs: the record holds only the kept smoke dir" || fail "work dirs: record: $(cat "$kwork/home/project/gate-work-dirs.txt")"
+[ -z "$(find "$kwork/home/project" -name 'gate-work-dirs.txt.tmp.*')" ] && pass "work dirs: no temporary record file is left" ||
+  fail "work dirs: a gate-work-dirs.txt.tmp.* file is left"
 rm -rf "$gtmp"/dev-loop-smoke.?????? "$gtmp"/dev-loop-identity.??????
 kgate '"true"'
 expect "work dirs: the record forgets dirs that are gone" "" "$(cat "$kwork/home/project/gate-work-dirs.txt" 2>/dev/null)"
@@ -5127,14 +5144,15 @@ case " $* " in
     echo "tmpfs          ${FAKE_DF_INODES} /tmp" ;;
   *)
     echo "Filesystem     1024-blocks    Used Available Capacity Mounted on"
-    echo "tmpfs          ${FAKE_DF_SPACE} /tmp" ;;
+    echo "${FAKE_DF_FS:-tmpfs}          ${FAKE_DF_SPACE} /tmp" ;;
 esac
 DF
 chmod +x "$dwork/fakedf/df"
 # kdoctor SPACE INODES: doctor.sh's TMPDIR line with fake df fields (total used free use%); INODES empty: no df -i.
+# KTMP and FAKE_DF_FS (in the environment) override TMPDIR and the filesystem name; also prints awk errors.
 kdoctor() {
-  (cd "$dwork" && PATH="$dwork/fakedf:$PATH" TMPDIR="$dtmp" FAKE_DF_SPACE="$1" FAKE_DF_INODES="$2" \
-    "$plugin/scripts/doctor.sh" 2>&1 | grep 'TMPDIR')
+  (cd "$dwork" && PATH="$dwork/fakedf:$PATH" TMPDIR="${KTMP:-$dtmp}" FAKE_DF_SPACE="$1" FAKE_DF_INODES="$2" \
+    "$plugin/scripts/doctor.sh" 2>&1 | grep -E 'TMPDIR|awk|division')
 }
 expect "doctor tmp: plenty of space and inodes is ok, with the leftover count" \
   "ok      TMPDIR $dtmp: 80% space free, 90% inodes free; 3 leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)" \
@@ -5152,6 +5170,11 @@ rm -rf "$dtmp"/dev-loop-*
 expect "doctor tmp: no leftovers, no count" "ok      TMPDIR $dtmp: 80% space free" "$(kdoctor "1000 200 800 20%" "")"
 expect "doctor tmp: a filesystem without inode counts (0) leaves the inode part out" "ok      TMPDIR $dtmp: 80% space free" \
   "$(kdoctor "1000 200 800 20%" "0 0 0 -")"
+expect "doctor tmp: a filesystem name with spaces is read from the end of the line" "ok      TMPDIR $dtmp: 80% space free" \
+  "$(FAKE_DF_FS="map auto home" kdoctor "1000 200 800 20%" "")"
+expect "doctor tmp: a filesystem with no blocks (macOS map auto_home) is skipped without an error" "" \
+  "$(FAKE_DF_FS="map auto_home" kdoctor "0 0 0 100%" "")"
+expect "doctor tmp: TMPDIR=/ is checked as /" "ok      TMPDIR /: 80% space free" "$(KTMP=/ kdoctor "1000 200 800 20%" "")"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
 cd "$work/project" || exit 1

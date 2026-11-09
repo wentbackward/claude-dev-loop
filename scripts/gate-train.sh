@@ -49,7 +49,7 @@
 # runs, the train is recorded in train-running.txt, so cleanup.sh leaves its refs alone.
 #
 # After the checks, the test work dirs their logs name ("(work dir PATH)", as tests/smoke.sh and
-# tests/identity.sh print on a red run) are recorded in gate-work-dirs.txt in the state directory; of each
+# tests/identity.sh print when they start and at the end of a red run) are recorded in gate-work-dirs.txt in the state directory; of each
 # suite's (dev-loop-smoke.*, dev-loop-identity.*) only the newest recorded one is kept, the older ones are
 # removed (lib/workdirs.sh: only a suite's own mktemp dir in TMPDIR, owned by the user, never a symlink).
 #

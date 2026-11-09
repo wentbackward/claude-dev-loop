@@ -4,12 +4,12 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
-- Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` remove their work dir at the end of a
-  green run (the summary says `work dir removed`); a red run keeps it and names it as before, and
+- Test work dirs (#80): `tests/smoke.sh` and `tests/identity.sh` name their work dir on their first line
+  (`smoke: started (work dir PATH)`) and remove it at the end of a green run (the summary says `work dir removed`); a red run keeps it and names it as before, and
   `DEV_LOOP_KEEP_WORK=1` always keeps it. Removal (`scripts/lib/workdirs.sh`) only touches the suite's own
   `mktemp -d` dir: a real directory (not a symlink) owned by the user, directly in `TMPDIR`, named
   `dev-loop-smoke.XXXXXX` or `dev-loop-identity.XXXXXX`. After the checks, `gate-train.sh` records the work
-  dirs its check logs name (`(work dir PATH)`) in `gate-work-dirs.txt` in the state directory and keeps
+  dirs its check logs name (`(work dir PATH)`, so also a run that crashed or was stopped before its summary) in `gate-work-dirs.txt` in the state directory and keeps
   only the newest recorded one of each suite, removing the older ones under the same rule; dirs its logs
   never named are left alone. `doctor.sh` reports TMPDIR's free space (`df -P`) and free inodes (`df -i`,
   skipped where it does not work) with the count of leftover test work dirs: a note under 10% free,
