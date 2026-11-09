@@ -5265,6 +5265,13 @@ expect "work dirs: a path with a . component is refused" 1 "$(kremove "$ktmp/./d
 rm "$ktmp/link"
 expect "work dirs: an empty path is refused" 1 "$(kremove "" dev-loop-smoke)"
 expect "work dirs: a missing dir is refused" 1 "$(kremove "$ktmp/dev-loop-smoke.zzz999" dev-loop-smoke)"
+# A relative path is refused even where it names the suite's own dir from the current directory (#86).
+mkdir "$ktmp/dev-loop-smoke.rel123"
+expect "work dirs: a relative path is refused" 1 "$(cd "$kwork" && kremove tmp/dev-loop-smoke.rel123 dev-loop-smoke)"
+expect "work dirs: a bare dir name is refused" 1 "$(cd "$ktmp" && kremove dev-loop-smoke.rel123 dev-loop-smoke)"
+[ -d "$ktmp/dev-loop-smoke.rel123" ] && pass "work dirs: the dir named by a relative path stays" ||
+  fail "work dirs: removed a dir named by a relative path"
+rmdir "$ktmp/dev-loop-smoke.rel123"
 expect "work dirs: the suite's own dir is removed" 0 "$(kremove "$ktmp/dev-loop-smoke.abc123" dev-loop-smoke)"
 [ ! -e "$ktmp/dev-loop-smoke.abc123" ] && pass "work dirs: the suite's own dir is gone" || fail "work dirs: the dir is still there"
 expect "work dirs: everything else in TMPDIR stays" \
@@ -5294,6 +5301,17 @@ expect "work dirs: a red suite names its work dir" "smoke: 0 passed, 1 failed (w
 ksuite keep DEV_LOOP_KEEP_WORK=1
 [ -n "$kleft" ] && pass "work dirs: DEV_LOOP_KEEP_WORK=1 keeps a green suite's dir" || fail "work dirs: DEV_LOOP_KEEP_WORK=1 did not keep it"
 expect "work dirs: DEV_LOOP_KEEP_WORK=1 names the dir" "smoke: 1 passed, 0 failed (work dir $kwork/keep/$kleft)" "$kout"
+# A relative TMPDIR (#86): the suite makes it absolute before mktemp, so a green run still removes its dir.
+mkdir -p "$kwork/relrun/rel"
+kout=$(cd "$kwork/relrun" && env TMPDIR=rel DEV_LOOP_SMOKE_FORCE_FAIL= DEV_LOOP_KEEP_WORK= "$plugin/tests/smoke.sh" \
+  --section 'Forced failure' 2>&1)
+expect "work dirs: a relative TMPDIR names an absolute work dir" "started smoke (work dir $(cd -P "$kwork/relrun/rel" && pwd -P)/dev-loop-smoke." \
+  "$(printf '%s\n' "$kout" | head -n 1 | sed 's/dev-loop-smoke\.[A-Za-z0-9]*)$/dev-loop-smoke./')"
+expect "work dirs: a relative TMPDIR's green suite says its work dir is removed" "smoke: 1 passed, 0 failed (work dir removed)" \
+  "$(printf '%s\n' "$kout" | tail -n 1)"
+expect "work dirs: a relative TMPDIR's green suite leaves no dir" "" "$(cd "$kwork/relrun/rel" && for d in *; do [ -e "$d" ] && echo "$d"; done)"
+awk '/dl_tmpdir_absolute/ { a = NR } /mktemp -d/ { if (a && a < NR) ok = 1 } END { exit !ok }' "$plugin/tests/identity.sh" &&
+  pass "work dirs: identity.sh makes TMPDIR absolute before mktemp" || fail "work dirs: identity.sh does not make TMPDIR absolute before mktemp"
 grep -q 'dl_suite_end identity "\$work" "\$passed" "\$failed"' "$plugin/tests/identity.sh" &&
   pass "work dirs: identity.sh ends through dl_suite_end" || fail "work dirs: identity.sh does not end through dl_suite_end"
 
