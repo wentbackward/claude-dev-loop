@@ -1149,3 +1149,22 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   checking only commands that start with the configured prefix (depends on how Claude Code matches quoted
   text); a separate data file for the table read by bash and Python (two parsers of one format); honouring
   `"guard": false` for this check (it would leave the written wildcards unguarded).
+
+## 2026-11-09 — The guard fails closed on any exception, an interrupt before any input included (#96)
+
+- **Decision:** `hooks/guard-role.py` reads stdin inside its `try`, chunk by chunk, so an error while
+  reading keeps what was read. The handler passes `SystemExit` through and catches every other
+  `BaseException`. In a project with `.dev-loop.json` it refuses when the text read so far names git (the
+  existing raw test) or the program of a targeted runner form (the default forms, whether or not the
+  project configures `targeted`), and also when nothing was read yet: there is nothing to inspect, so
+  the guard cannot tell the call is harmless. A failure of that text test counts as naming them. Without
+  `.dev-loop.json`, or for text that names neither, the exception is re-raised as before (a
+  `KeyboardInterrupt` ends the process by SIGINT, which does not block the call). The smoke cases send
+  SIGINT to the guard while it waits on a stdin pipe held open, so production code has no test switch.
+- **Reason:** the guard promises to fail closed; an interrupt or another `BaseException` used to end
+  with a code that let the call run. Refusing on empty input only after an exception changes nothing for
+  normal calls.
+- **Alternatives:** letting an interrupt before any input pass (nothing to check, but the call it belongs
+  to is unchecked); refusing every exception in a loop project whatever the text (blocks calls the guard
+  would never refuse); an environment switch that raises inside the guard (a test hook in production
+  code).
