@@ -1264,8 +1264,8 @@ def git_invocations(commands: list[Simple], cwd: str) -> list[tuple[list[str], s
             if tainted:
                 raise NotPlain(f"text naming git is piped into {program}, which may run it")
             found += other_program(words, command.targets, dirs)
-        tainted = tainted or any(GIT_TEXT.search(word.text + " ") for word in command.words + command.targets
-                                 if word.quoted)
+        if not (program == "git" or program.startswith("git-")):
+            tainted = tainted or bool(GIT_TEXT.search(" ".join(w.text for w in command.words + command.targets) + " "))
         previous = command.op
         where.after(command.op)
     return found

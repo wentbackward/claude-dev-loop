@@ -2598,7 +2598,7 @@ for at in "$gg/proj" "$gg/proj-1"; do
   grefused "$at" "bash -euo pipefail -c '$p5'" "bash --norc -c '$p5'" "bash -o errexit -c '$p5'" \
     "bash -O extglob -c '$p5'" "bash +x -c '$p5'" "bash -c -- '$p5'" "echo '$p5' | bash" "bash <<'E'
 $p5
-E" "python3 -c \"import os; os.system('$p5')\"" "rg --pre git x push" "man -H'$p5 #' ls" "echo \${x//<<E/}
+E" "python3 -c \"import os; os.system('$p5')\"" "echo $p5 | python3 -" "printf '%s\\n' '$p5' | tee x | perl" "rg --pre git x push" "man -H'$p5 #' ls" "echo \${x//<<E/}
 $p5
 E/}" "echo \${x:-<<E}
 $p5
