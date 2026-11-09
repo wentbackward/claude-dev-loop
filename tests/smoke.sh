@@ -7241,6 +7241,23 @@ trefused "python -m pytest tests/ -k -p evil" "python -m pytest tests/ -k -pevil
 tpassed "pytest tests/ -k foo" "pytest tests/ -k=-slow" "pytest tests/ -kslow" "go test ./pkg -run=-x" \
   "go test ." "go test ./pkg/..." "go vet ./pkg" "go test ./pkg ./..." "cargo test -- --test-threads 4" \
   "cargo test -- --test-threads=256" "cargo test -p mycrate" "make -j 4 test"
+# #105: a bundled short flag's hint names the flag letter, not the bundle; a go package word starting with
+# - or + is refused as an option, not as an import path; .. is the parent of the worktree root, so it and
+# ../... are refused there, while .. from a subdirectory is the worktree root.
+thint() { # thint NAME COMMAND WANTED UNWANTED: the refusal of COMMAND holds WANTED and not UNWANTED
+  local out
+  out=$(tguard "$2")
+  case $out in *"$4"*) fail "targeted guard: $1 ($out)" ;;
+    *"$3"*"status=2") pass "targeted guard: $1" ;;
+    *) fail "targeted guard: $1 ($out)" ;; esac
+}
+thint "a bundled flag's hint names the flag letter" "pytest tests/ -vk -p" "attach it, -k=...)" "-vk=..."
+thint "a bundled flag without its value names the flag letter" "pytest tests/ -vk" "-vk needs a value for -k" "import path"
+thint "a go package starting with + is refused as an option" "go test +x" "+x is not on the safe list" "import path"
+thint "a go package - is refused as an option" "go test ./pkg -" "- is not on the safe list" "import path"
+trefused "go test .." "go test ../..." "go vet .."
+expect "targeted guard: go test .. from a subdirectory (the worktree root) passes" "status=0" \
+  "$(tguard "go test .." "" "$tproj/tests" | tail -n 1)"
 printf '{"targeted": ["make test"], broken\n' >"$twork/broken.json"
 out=$(tguard "make test --eval=x" "$twork/broken.json")
 case $out in *"ask the owner"*"status=2") pass "targeted guard: an unreadable config with targeted fails closed" ;;
