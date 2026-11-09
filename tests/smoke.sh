@@ -2680,6 +2680,7 @@ guard, project, text = sys.argv[1:4]
 signal.signal(signal.SIGINT, signal.SIG_DFL)  # a background shell ignores SIGINT; the child must not
 env = {key: value for key, value in os.environ.items() if key != "DEV_LOOP_CONFIG"}
 env["CLAUDE_PROJECT_DIR"] = project
+code = "unreached"  # printed when no try reached main(): the expect line fails instead of hanging
 for wait in (0.5, 1, 2, 4):  # retry when the signal came before the guard reached main()
     child = subprocess.Popen([sys.executable, "-I", guard], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
                              cwd=project, env=env)
@@ -2687,10 +2688,14 @@ for wait in (0.5, 1, 2, 4):  # retry when the signal came before the guard reach
     child.stdin.flush()
     time.sleep(wait)
     child.send_signal(signal.SIGINT)
-    err = child.stderr.read().decode(errors="replace")
-    code = child.wait(10)
-    child.stdin.close()
-    if code == 2 or ", in main" in err:
+    try:
+        err = child.communicate(timeout=10)[1].decode(errors="replace")
+    except subprocess.TimeoutExpired:  # a lost signal: the guard still waits on stdin
+        child.kill()
+        child.communicate()
+        continue
+    if child.returncode == 2 or ", in main" in err:
+        code = child.returncode
         break
 print(code)
 PY
