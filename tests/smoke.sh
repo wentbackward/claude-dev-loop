@@ -143,7 +143,7 @@ fi
 . "$plugin/scripts/lib/workdirs.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-smoke.XXXXXX")
 # Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
-echo "smoke: started (work dir $work)"
+echo "started smoke (work dir $work)"
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0 DEV_LOOP_STOP_GRACE_SECONDS=2
 export FAKE_GH_DIR="$work/gh" GIT_CONFIG_GLOBAL="$work/gitconfig" SMOKE_WORK="$work"
 # doctor reads Claude Code's settings: fake ones under $work, never the real ~/.claude or managed settings.
@@ -4839,7 +4839,7 @@ printf '%s\n' "$hout" | grep -qxF 'PASS format hook without config exits 0' &&
   pass "smoke: --section 2 runs section 2 and the section it needs (1)" || fail "smoke: --section 2 output: $hout"
 printf '%s\n' "$hout" | grep -qF 'heavy.sh exports the slot port' && fail "smoke: --section 2 ran section 3" ||
   pass "smoke: --section 2 runs no later section"
-printf '%s\n' "$hout" | head -n 1 | grep -qF "smoke: started (work dir $work/nested/dev-loop-smoke." &&
+printf '%s\n' "$hout" | head -n 1 | grep -qF "started smoke (work dir $work/nested/dev-loop-smoke." &&
   pass "smoke: a section run has its own work dir under TMPDIR" || fail "smoke: section run work dir: $(printf '%s\n' "$hout" | head -n 1)"
 expect "smoke: a green section run removes its work dir" "(work dir removed) " \
   "$(printf '%s\n' "$hout" | tail -n 1 | grep -oF '(work dir removed)') $(cd "$work/nested" && for d in dev-loop-smoke.*; do [ -e "$d" ] && echo "$d"; done)"
@@ -5088,11 +5088,16 @@ echo one >src.txt
 git add . && git commit -q -m "chore: start" && git push -q -u origin main
 git checkout -q -b feat/80-dirs
 echo two >>src.txt && git commit -q -am "feat: dirs (Refs #80)" && git push -q -u origin feat/80-dirs
-# kgate COMMAND: gate feat/80-dirs with one check running COMMAND, TMPDIR=$gtmp; sets out and rc.
+# kgate COMMAND: gate feat/80-dirs with one check running COMMAND (a JSON string), TMPDIR=$gtmp; sets out and rc.
+# KSETTLE (in the environment) sets DEV_LOOP_WORK_DIR_SETTLE_MINUTES, default 0 (no settle window).
 kgate() {
-  printf '{"base_branch": "main", "checks": [{"name": "suites", "heavy": false, "command": %s}]}\n' "$1" >"$kwork/gate.json"
+  kgate_with '"checks": [{"name": "suites", "heavy": false, "command": '"$1"'}]'
+}
+# kgate_with JSON_MEMBERS: gate feat/80-dirs with these config members, TMPDIR=$gtmp; sets out and rc.
+kgate_with() {
+  printf '{"base_branch": "main", %s}\n' "$1" >"$kwork/gate.json"
   out=$(TMPDIR="$gtmp" DEV_LOOP_HOME="$kwork/home" DEV_LOOP_LOCK_DIR="$kwork/locks" DEV_LOOP_CONFIG="$kwork/gate.json" \
-    KWORK="$kwork" "$plugin/scripts/gate-train.sh" feat/80-dirs 2>&1)
+    DEV_LOOP_WORK_DIR_SETTLE_MINUTES="${KSETTLE:-0}" KWORK="$kwork" "$plugin/scripts/gate-train.sh" feat/80-dirs 2>&1)
   rc=$?
 }
 kred='"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); i=$(mktemp -d \"$TMPDIR/dev-loop-identity.XXXXXX\"); echo \"smoke: 0 passed, 1 failed (work dir $s)\"; echo \"identity: 0 passed, 1 failed (work dir $i)\"; echo $s >>\"$KWORK/smoke.made\"; echo $i >>\"$KWORK/identity.made\"; exit 1"'
@@ -5116,10 +5121,10 @@ expect "work dirs: a green gate keeps the newest red dir" "0 $(tail -n 1 "$kwork
   "$rc $(kexisting "$kwork/smoke.made")"
 # A run that dies before its summary (a crash, a signal, a stall) is recorded from its start line; a green run
 # that removed its own dir drops out of the record.
-kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"smoke: started (work dir $s)\"; echo $s >>\"$KWORK/smoke.made\"; kill -9 $$"'
+kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"started smoke (work dir $s)\"; echo $s >>\"$KWORK/smoke.made\"; kill -9 $$"'
 expect "work dirs: the gate keeps a crashed run's dir, named only by its start line, as the newest" \
   "1 $(tail -n 1 "$kwork/smoke.made")" "$rc $(kexisting "$kwork/smoke.made")"
-kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"smoke: started (work dir $s)\"; rmdir \"$s\"; echo \"smoke: 1 passed, 0 failed (work dir removed)\""'
+kgate '"s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"started smoke (work dir $s)\"; rmdir \"$s\"; echo \"smoke: 1 passed, 0 failed (work dir removed)\""'
 expect "work dirs: a green run's own removed dir drops out, the newest red one stays" \
   "0 $(tail -n 1 "$kwork/smoke.made")" "$rc $(kexisting "$kwork/smoke.made")"
 grep -c '/dev-loop-smoke\.[^/]*$' "$kwork/home/project/gate-work-dirs.txt" | grep -qx 1 &&
@@ -5129,6 +5134,33 @@ grep -c '/dev-loop-smoke\.[^/]*$' "$kwork/home/project/gate-work-dirs.txt" | gre
 rm -rf "$gtmp"/dev-loop-smoke.?????? "$gtmp"/dev-loop-identity.??????
 kgate '"true"'
 expect "work dirs: the record forgets dirs that are gone" "" "$(cat "$kwork/home/project/gate-work-dirs.txt" 2>/dev/null)"
+
+# A skipped stage's log is left over from an earlier run: the dir it names must not cost this run's red dir.
+mkdir "$gtmp/dev-loop-smoke.stale1"
+printf 'smoke: 0 passed, 1 failed (work dir %s)\n' "$gtmp/dev-loop-smoke.stale1" >"$kwork/home/project/logs/train-two.log"
+kgate_with '"fail_fast": true, "checks": [
+  {"name": "one", "heavy": false, "command": "s=$(mktemp -d \"$TMPDIR/dev-loop-smoke.XXXXXX\"); echo \"started smoke (work dir $s)\"; echo $s >>\"$KWORK/smoke.made\"; exit 1"},
+  {"name": "two", "heavy": false, "command": "true"}]'
+expect "work dirs: a skipped stage's stale log does not cost this run's red dir" \
+  "1 $(tail -n 1 "$kwork/smoke.made")" "$rc $(kexisting "$kwork/smoke.made")"
+[ -d "$gtmp/dev-loop-smoke.stale1" ] && ! grep -qF stale1 "$kwork/home/project/gate-work-dirs.txt" &&
+  pass "work dirs: the dir named only by a skipped stage's log is neither recorded nor removed" ||
+  fail "work dirs: the skipped stage's dir was recorded or removed"
+rmdir "$gtmp/dev-loop-smoke.stale1"
+
+# The settle window (default 10 minutes): an older recorded dir that changed lately is kept for a later run.
+KSETTLE=10 kgate "$kred"
+expect "work dirs: a recorded dir that changed within the settle window is kept" 2 "$(kexisting "$kwork/smoke.made" | wc -l | tr -d ' ')"
+kgate "$kred"
+expect "work dirs: without the window the older dirs go on the next run" "$(tail -n 1 "$kwork/smoke.made")" "$(kexisting "$kwork/smoke.made")"
+
+# This project's summary pattern shows the suites' results and Validation, not the start lines.
+kgate_with '"checks": [{"name": "check", "heavy": false, "summary": "Validation (passed|failed)|^(smoke|identity): ",
+  "command": "echo Validation passed; echo \"started smoke (work dir $TMPDIR/dev-loop-smoke.gone01)\"; echo \"smoke: 3 passed, 0 failed (work dir removed)\"; echo \"started identity (work dir $TMPDIR/dev-loop-identity.gone01)\"; echo \"identity: 2 passed, 0 failed (work dir removed)\""}]'
+expect "work dirs: the gate summary shows Validation, smoke and identity, not the start lines" \
+  "0|Validation passed|smoke: 3 passed, 0 failed (work dir removed)|identity: 2 passed, 0 failed (work dir removed)|TRAIN GREEN" \
+  "$rc|$(echo "$out" | grep -E 'Validation|^(smoke|identity): |^started |^TRAIN' | paste -sd'|' -)"
+rm -rf "$gtmp"/dev-loop-smoke.?????? "$gtmp"/dev-loop-identity.??????
 
 # 27c. doctor's TMPDIR check (#80): free space and inodes of TMPDIR's filesystem (df -P, df -i), a note
 # under 10% free, MISSING under 2%, with the count of leftover test work dirs; no inode part where df -i fails.

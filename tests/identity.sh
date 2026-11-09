@@ -9,7 +9,7 @@ plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 . "$plugin/scripts/lib/workdirs.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-identity.XXXXXX")
 # Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
-echo "identity: started (work dir $work)"
+echo "started identity (work dir $work)"
 REAL_CURL=$(command -v curl)
 export REAL_CURL
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0

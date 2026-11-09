@@ -48,10 +48,12 @@
 # green train still waiting to merge, and never touches other branches whose names start with train-. While it
 # runs, the train is recorded in train-running.txt, so cleanup.sh leaves its refs alone.
 #
-# After the checks, the test work dirs their logs name ("(work dir PATH)", as tests/smoke.sh and
-# tests/identity.sh print when they start and at the end of a red run) are recorded in gate-work-dirs.txt in the state directory; of each
-# suite's (dev-loop-smoke.*, dev-loop-identity.*) only the newest recorded one is kept, the older ones are
-# removed (lib/workdirs.sh: only a suite's own mktemp dir in TMPDIR, owned by the user, never a symlink).
+# After the checks, the test work dirs named in the logs of the stages that ran ("(work dir PATH)", as
+# tests/smoke.sh and tests/identity.sh print when they start and at the end of a red run) are recorded in
+# gate-work-dirs.txt in the state directory; of each suite's (dev-loop-smoke.*, dev-loop-identity.*) only
+# the newest recorded one is kept, the older ones are removed unless something in them changed in the last
+# DEV_LOOP_WORK_DIR_SETTLE_MINUTES (default 10) (lib/workdirs.sh: only a suite's own mktemp dir in TMPDIR,
+# owned by the user, never a symlink).
 #
 # Exit: 0 TRAIN GREEN (recorded for merge-train.sh), 1 TRAIN RED, 2 usage/config, 3 rebase conflict
 # (the output names the branch: drop it from the train, rebase it after the others merge).
@@ -617,8 +619,11 @@ for ((i = 0; i < stages; i++)); do
   fi
 done
 printf '%s' "$summary" | sed '/^$/d'
+# Only the logs of stages that ran in this run: a skipped stage's log is left over from an earlier run.
 stage_logs=()
-for ((i = 0; i < stages; i++)); do stage_logs+=("$(log_of "$i")"); done
+for ((i = 0; i < stages; i++)); do
+  case "${results[i]}" in rc=* | stopped | stalled) stage_logs+=("$(log_of "$i")") ;; esac
+done
 dl_prune_work_dirs "$DL_STATE/gate-work-dirs.txt" "${stage_logs[@]}"
 
 git checkout -q --detach "$DL_REMOTE/$DL_BASE"

@@ -20,7 +20,9 @@ dl_work_dir_ok() {
   path=${path%/}
   [ -n "$path" ] && [ -d "$path" ] && [ ! -L "$path" ] && [ -O "$path" ] || return 1
   name=${path##*/}
-  case $name in "$prefix".[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) ;; *) return 1 ;; esac
+  local x='[A-Za-z0-9]'
+  # shellcheck disable=SC2254  # the pattern is meant to match
+  case $name in "$prefix".$x$x$x$x$x$x) ;; *) return 1 ;; esac
   case $path in */*) parent=${path%/*} ;; *) parent=. ;; esac
   parent=$(cd "${parent:-/}" 2>/dev/null && pwd -P) || return 1
   tmp=$(dl_tmp_dir) || return 1
@@ -42,16 +44,28 @@ dl_suite_end() {
   local where="work dir $2"
   if [ "$4" -eq 0 ] && [ "${DEV_LOOP_KEEP_WORK:-}" != 1 ]; then
     cd / || return 1
-    if dl_remove_work_dir "$2" "dev-loop-$1"; then where="work dir removed"; else where="$where, not removed"; fi
+    if dl_remove_work_dir "$2" "dev-loop-$1"; then
+      where="work dir removed"
+    else where="$where, not removed"; fi
   fi
   echo "$1: $3 passed, $4 failed ($where)"
   [ "$4" -eq 0 ]
 }
 
+# dl_work_dir_fresh PATH: something in PATH changed within DEV_LOOP_WORK_DIR_SETTLE_MINUTES (default 10;
+# 0 turns it off), as when a straggler of a stopped stage still writes there.
+dl_work_dir_fresh() {
+  local minutes=${DEV_LOOP_WORK_DIR_SETTLE_MINUTES:-10}
+  case $minutes in '' | *[!0-9]*) minutes=10 ;; esac
+  [ "$minutes" -gt 0 ] || return 1
+  [ -n "$(find "$1" -mmin "-$minutes" 2>/dev/null | head -n 1)" ]
+}
+
 # dl_prune_work_dirs RECORD LOG...: the gate's pruning. Add the work dirs the LOGs name ("(work dir PATH)"
 # or "(work dir PATH, ...)") to the RECORD file, then for each prefix keep only the newest recorded dir that
-# still exists and remove the older ones (dl_remove_work_dir, so only a suite's own dir); RECORD keeps the
-# dirs left. Nothing the logs do not name is touched.
+# still exists and remove the older ones (dl_remove_work_dir, so only a suite's own dir) unless they changed
+# lately (dl_work_dir_fresh); RECORD keeps the dirs left, in their order. Nothing the logs do not name is
+# touched.
 dl_prune_work_dirs() {
   local record=$1 path prefix newest kept=""
   shift
@@ -64,7 +78,8 @@ dl_prune_work_dirs() {
     newest=""
     while IFS= read -r path; do
       dl_work_dir_ok "$path" "$prefix" || continue
-      [ -z "$newest" ] || dl_remove_work_dir "$newest" "$prefix" || kept+="$newest"$'\n'
+      [ -z "$newest" ] || { ! dl_work_dir_fresh "$newest" && dl_remove_work_dir "$newest" "$prefix"; } ||
+        kept+="$newest"$'\n'
       newest=$path
     done <"$record"
     [ -z "$newest" ] || kept+="$newest"$'\n'
