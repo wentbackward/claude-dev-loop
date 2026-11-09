@@ -324,13 +324,15 @@ nested_worktree() {
   done
 }
 
-# recent_or_unreadable PATH: "recent <file>" for a file changed within the settle window, "unreadable
-# <error>" when find cannot read everything; nothing when neither.
+# recent_or_unreadable PATH [moved]: "recent <file>" for a file changed within the settle window, "unreadable
+# <error>" when find cannot read everything; nothing when neither. With "moved" the worktree's own folder is
+# left out of the time test: moving it aside set its ctime to now.
 recent_or_unreadable() {
-  local found
+  local found top=0
+  [ -z "${2:-}" ] || top=1
   if [ "$settle_minutes" -gt 0 ]; then
-    found=$(find "$1" -name .git -prune -o \( -mmin -"$settle_minutes" -o -cmin -"$settle_minutes" \) -print \
-      2>"$work/find.err" | head -n 1)
+    found=$(find "$1" -mindepth "$top" -name .git -prune -o \( -mmin -"$settle_minutes" -o -cmin -"$settle_minutes" \) \
+      -print 2>"$work/find.err" | head -n 1)
     [ -z "$found" ] || { printf 'recent %s\n' "$found"; return; }
   else
     find "$1" -name .git -prune -o -print >/dev/null 2>"$work/find.err"
@@ -347,7 +349,20 @@ has_submodules() {
   [ -d "$modules" ]
 }
 
-# worktree_verdict PATH BRANCH: "remove", or "keep: <reason>", for the worktree of a merged BRANCH.
+# operation_in_progress PATH: the worktree at PATH is in a merge, rebase, cherry-pick, revert or sequence, or
+# has unmerged index entries.
+operation_in_progress() {
+  local name state
+  for name in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-apply rebase-merge sequencer; do
+    state=$(git -C "$1" rev-parse --git-path "$name" 2>/dev/null) || return 0
+    case "$state" in /*) ;; *) state=$1/$state ;; esac
+    [ ! -e "$state" ] || return 0
+  done
+  [ -n "$(git -C "$1" ls-files -u 2>/dev/null | head -n 1)" ]
+}
+
+# worktree_verdict PATH BRANCH [moved]: "remove", or "keep: <reason>", for the worktree of a merged BRANCH;
+# "moved" when PATH is the worktree moved aside (see recent_or_unreadable).
 worktree_verdict() {
   local dir found
   dir=$(real_path "$1")
@@ -356,6 +371,7 @@ worktree_verdict() {
   [ "$(dl_worktree_of "$2" | sed -n 2p)" != locked ] || { echo "keep: locked"; return; }
   found=$(nested_worktree "$1")
   [ -z "$found" ] || { echo "keep: holds another worktree ($found)"; return; }
+  ! operation_in_progress "$1" || { echo "keep: a merge/rebase/cherry-pick is in progress"; return; }
   # A submodule's git dir and per-worktree refs live in the worktree's own git dir, which the removal deletes.
   ! has_submodules "$1" || { echo "keep: has submodules"; return; }
   found=$(git -C "$1" for-each-ref --format='%(refname)' refs/worktree refs/bisect 2>/dev/null | head -n 1)
@@ -365,7 +381,7 @@ worktree_verdict() {
   [ -z "$found" ] || { echo "keep: has assume-unchanged or skip-worktree files ($found)"; return; }
   found=$(dl_unrebuildable_ignored "$1")
   [ -z "$found" ] || { echo "keep: holds ignored files that are not build output ($found)"; return; }
-  found=$(recent_or_unreadable "$1")
+  found=$(recent_or_unreadable "$1" "${3:-}")
   case "$found" in
     recent*) echo "keep: changed in the last $settle_minutes minutes (an agent may still work there)" ;;
     unreadable*) echo "keep: a file or folder could not be read (${found#unreadable })" ;;
@@ -383,12 +399,23 @@ worktree_contents() {
     "$(git -C "$1" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')" "${names:+: $names}"
 }
 
+# aside_note PATH BRANCH: on stderr, a note when the registered worktree PATH is missing but a folder moved
+# aside from it (PATH.removing-<pid>) is there: a move aside that did not finish.
+aside_note() {
+  local sibling
+  for sibling in "$1".removing-*; do
+    [ -d "$sibling" ] || continue
+    printf 'note: worktree %s (%s) is missing, but %s is there (a move aside that did not finish); run git worktree repair %s and git worktree move %s %s\n' \
+      "$1" "$2" "$sibling" "$sibling" "$sibling" "$1" >&2
+  done
+}
+
 # merged_worktrees: "<branch>\t<tip>\t<path>\t<verdict>" for each worktree whose branch the ledger or a
 # merged PR has at its tip (containment alone is a fresh branch, never enough).
 merged_worktrees() {
   local name path tip reason
   while IFS=$'\t' read -r name path; do
-    [ -d "$path" ] || continue
+    [ -d "$path" ] || { aside_note "$path" "$name"; continue; }
     tip=$(git rev-parse -q --verify "refs/heads/$name") || continue
     reason=$(classify local "$name" "$tip" "$(git log -1 --format=%ct "$tip")" any | awk -F'\t' '$1 == "merged" {print $5}')
     case "$reason" in "in the merge ledger" | "merged PR "*) ;; *) continue ;; esac
@@ -472,22 +499,29 @@ archive_worktree() {
     cmp -s "$work/untracked.want" "$work/untracked.got"
 }
 
-# worktree_current PATH BRANCH TIP: the worktree at PATH is still removable, with BRANCH at TIP checked out.
+# worktree_current PATH BRANCH TIP [moved]: the worktree at PATH is still removable, with BRANCH at TIP
+# checked out.
 worktree_current() {
-  [ "$(worktree_verdict "$1" "$2")" = remove ] &&
+  [ "$(worktree_verdict "$1" "$2" "${4:-}")" = remove ] &&
     [ "$(git rev-parse -q --verify "refs/heads/$2")" = "$3" ] &&
     [ "$(git -C "$1" rev-parse -q --verify HEAD)" = "$3" ] &&
     [ "$(dl_worktree_of "$2" | head -n 1)" = "$1" ]
 }
 
-# worktree_as_archived PATH BRANCH TIP DIR: worktree_current, and the worktree's changes, index and
+# worktree_as_archived PATH BRANCH TIP DIR [moved]: worktree_current, and the worktree's changes, index and
 # untracked files are exactly those archived in DIR.
 worktree_as_archived() {
-  worktree_current "$1" "$2" "$3" || return 1
+  worktree_current "$1" "$2" "$3" "${5:-}" || return 1
   git -C "$1" update-index -q --refresh >/dev/null 2>&1
   worktree_diff "$1" | cmp -s - "$4/changes.patch" &&
     worktree_diff "$1" --cached | cmp -s - "$4/staged.patch" &&
     git -C "$1" ls-files -z --others --exclude-standard | cmp -s - "$4/untracked.z"
+}
+
+# drop_archive SLOT: remove the archive SLOT this run made for a worktree that is kept whole at its path (it
+# still holds everything, and an incomplete archive would only pile up).
+drop_archive() {
+  case "$1" in "$archive_dir"/?*) rm -rf -- "$1" ;; esac
 }
 
 # The worktrees marked remove: each checked again, archived and checked, checked once more, then removed.
@@ -495,38 +529,55 @@ if [[ "$include" == *" worktrees "* ]] && grep -q $'\tremove$' "$work/kept-workt
   archive_dir=$DL_STATE/archive/worktrees-$(date +%Y%m%d-%H%M%S)
   while IFS=$'\t' read -r name tip path verdict; do
     [ "$verdict" = remove ] || continue
+    slot=""
     if ! worktree_current "$path" "$name" "$tip"; then
       echo "kept worktree $path: it changed since the classification"
       continue
     fi
     if ! slot=$(archive_slot "$archive_dir/${name//\//_}") || ! archive_worktree "$path" "$name" "$tip" "$slot"; then
-      echo "kept worktree $path: its archive could not be written or checked"
+      echo "kept worktree $path: its archive could not be written or checked (removed)"
+      drop_archive "$slot"
       failed=$((failed + 1))
       continue
     fi
     echo "archived worktree $path to $slot"
     if ! worktree_as_archived "$path" "$name" "$tip" "$slot"; then
-      echo "kept worktree $path: it changed while it was archived (the archive in $slot is not complete)"
+      echo "kept worktree $path: it changed while it was archived (its incomplete archive $slot is removed)"
+      drop_archive "$slot"
       continue
     fi
-    # Moved aside, an agent still working there fails instead of writing into a folder about to go.
+    # Moved aside, a new tool call by an agent working there fails on the missing path. A process whose cwd
+    # is inside keeps writing into the moved folder by relative path, silently, and when the second check
+    # misses those writes they go with it: that window stays open.
     aside=$path.removing-$$
-    if [ -e "$aside" ] || ! git worktree move "$path" "$aside" >/dev/null 2>&1; then
-      echo "kept worktree $path: it could not be moved aside"
+    if [ -e "$aside" ]; then
+      echo "kept worktree $path: it could not be moved aside ($aside exists; its incomplete archive $slot is removed)"
+      drop_archive "$slot"
       failed=$((failed + 1))
       continue
     fi
-    if ! worktree_as_archived "$aside" "$name" "$tip" "$slot"; then
-      if git worktree move "$aside" "$path" >/dev/null 2>&1; then
-        echo "kept worktree $path: it changed after it was moved aside (the archive in $slot is not complete)"
+    if ! git worktree move "$path" "$aside" >/dev/null 2>&1; then
+      if [ -e "$aside" ]; then
+        echo "kept worktree $path: the move to $aside failed half-way; nothing was removed, check both paths (git worktree repair $aside), the archive $slot stays"
       else
-        echo "kept worktree $aside: it changed after it was moved aside from $path, and could not be moved back"
+        echo "kept worktree $path: it could not be moved aside (its incomplete archive $slot is removed)"
+        drop_archive "$slot"
+      fi
+      failed=$((failed + 1))
+      continue
+    fi
+    if ! worktree_as_archived "$aside" "$name" "$tip" "$slot" moved; then
+      if git worktree move "$aside" "$path" >/dev/null 2>&1; then
+        echo "kept worktree $path: it changed after it was moved aside (its incomplete archive $slot is removed)"
+        drop_archive "$slot"
+      else
+        echo "kept worktree $aside: it changed after it was moved aside from $path, and could not be moved back (the archive $slot stays)"
         failed=$((failed + 1))
       fi
       continue
     fi
     if ! git worktree remove --force "$aside" >/dev/null 2>&1; then
-      echo "not removed: worktree $aside (moved aside from $path)"
+      echo "not removed: worktree $aside (moved aside from $path; the archive $slot stays)"
       failed=$((failed + 1))
       continue
     fi
@@ -535,6 +586,7 @@ if [[ "$include" == *" worktrees "* ]] && grep -q $'\tremove$' "$work/kept-workt
         $1 = "merged"; $5 = "merged, its worktree archived and removed" } { print }' "$report" >"$work/report.new" &&
       cat "$work/report.new" >"$report"
   done <"$work/kept-worktrees"
+  rmdir "$archive_dir" 2>/dev/null
 fi
 
 awk -F'\t' -v inc="$include" '$1 == "merged" || $1 == "helper" || $1 == "superseded" ||
