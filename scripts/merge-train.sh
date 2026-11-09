@@ -5,10 +5,11 @@
 #                                                  ones not merged yet, same order)
 #
 # Refuses unless the last gate-train.sh run was GREEN for these branches. For each branch: replay its own
-# commits onto the current <remote>/<base> and verify the tree equals the gated train-<branch> tree. When
-# the branch already contains the base and has that tree, it merges as it is; otherwise a merge commit with
-# the gated tree and two parents (the branch head, the base) is pushed to the branch as a plain
-# fast-forward, never forced (the remote refuses it when the branch moved). Then: create the PR if missing
+# commits onto the current <remote>/<base> (with merge.union_files, keeping both sides of a conflict in those
+# files where both sides only added lines, as the gate does) and verify the tree equals the gated
+# train-<branch> tree. When the branch already contains the base and has that tree, it merges as it is;
+# otherwise a merge commit with the gated tree and two parents (the branch head, the base) is pushed to the
+# branch as a plain fast-forward, never forced (the remote refuses it when the branch moved). Then: create the PR if missing
 # (title and body from the notes file: first line title, a leading "#" is stripped, the rest is the body),
 # squash-merge exactly that head (--match-head-commit; its squash is the gated tree, since the head
 # contains the base), confirm the PR is MERGED and delete the remote branch.
@@ -54,7 +55,10 @@ dl_identities_enabled && identity_mode=yes
 post_status=$(cfg github.post_status "${identity_mode:+true}")
 
 as_role() { "$scripts_dir/as-role.sh" "$@"; }
-trap 'dl_event merge merge-ended rc="$?"' EXIT
+DL_UNION_ATTRIBUTES="" # set below; never an inherited path for the trap to remove
+trap 'rc=$?; rm -f "${DL_UNION_ATTRIBUTES:-}"; dl_event merge merge-ended rc="$rc"' EXIT
+DL_UNION_ATTRIBUTES=$(cd "$gate" && dl_union_attributes) ||
+  dl_die "cannot write the attributes file for merge.union_files"
 dl_event merge merge-started branches="$*"
 
 [ -f "$train_file" ] || { echo "MERGE refused: no green train recorded (run gate-train.sh)"; exit 8; }
@@ -109,7 +113,8 @@ for branch in "$@"; do
     from="train-$previous"
   fi
   git checkout -q -B "replay-$branch" "train-$branch"
-  if ! git rebase -q --onto "$DL_REMOTE/$DL_BASE" "$from" "replay-$branch" >/dev/null 2>&1; then
+  if ! dl_git_union rebase -q --onto "$DL_REMOTE/$DL_BASE" "$from" "replay-$branch" >/dev/null 2>&1; then
+    dl_conflict_files "MERGE"
     git rebase --abort >/dev/null 2>&1
     git checkout -q --detach "$DL_REMOTE/$DL_BASE"
     echo "MERGE replay conflict at $branch"

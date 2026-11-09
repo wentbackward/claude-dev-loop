@@ -22,6 +22,23 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the gate and the format hook run these outside the Bash tool, so the rule stops only an agent that runs
   the command itself through the Bash tool. The DECISIONS entry of #84 names the characters of the
   short-word remark (letters, digits, `_`, `-`).
+- Union logs (#95): `merge.union_files` (off by default) lists the append-only logs every branch adds to,
+  as literal paths, e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`. The gate's stacking (`gate-train.sh`)
+  and the merge replay (`merge-train.sh`) merge those files with the plugin's merge driver
+  `scripts/union-merge.sh`. What git merges without a conflict is git's own result, as without the option
+  (the driver diffs with histogram, as git's own merge does; it needs git 2.43 or later, and an older git
+  makes the merge a conflict). Only conflict hunks where both sides only added lines are kept whole, the
+  base side's first, then the branch's, with no lines merged inside them (unlike git's `merge=union`, which
+  folds shared lines into one copy); anything else stops the train as today: a hunk where a side changed or
+  deleted existing lines (an amended entry next to a new one), an add/add (both sides creating the file), a
+  file with a line like a long conflict marker (32 or more `<`, `|`, `=` or `>`), or a failing driver. CRLF
+  files keep their CRs. Two branches that each add an entry gate together and merge in order without a
+  rebase or a `-vN` push; a base that gained an entry after the gate is a re-gate
+  (exit 4), not a replay conflict. The driver and a temporary attributes file (followed by the user's own
+  global attributes) are passed to that one rebase with `git -c`; no git config or `.gitattributes` is
+  changed, and a merge driver the repository or the user set for a listed file wins. A conflict in any
+  other file stops the train as before, and a conflict now names its files (`TRAIN conflict in: ...`,
+  `MERGE conflict in: ...`). Entries with spaces, wildcards or a backslash are skipped with a warning.
 - Ask rules (#84): `doctor.sh` notes each ask rule of the project's `.claude/settings.json` and
   `.claude/settings.local.json`, and of the user settings (only their `permissions.ask`), that matches a
   command the loop runs or one `.dev-loop.json` configures (`fast_check`, `checks`, `affected`,

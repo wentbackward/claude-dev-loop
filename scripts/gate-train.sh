@@ -5,7 +5,12 @@
 #
 # In the gate worktree, stacks each <remote>/<branch> on the latest <remote>/<base> in order, keeping each
 # branch's rebased head as train-<branch>. A branch already stacked on the previous one in the train replays
-# only its own commits (rebase --onto), so no branch ever carries foreign commits. Then it runs every check
+# only its own commits (rebase --onto), so no branch ever carries foreign commits. With "merge":
+# {"union_files": [...]} (off by default) the rebase keeps both conflicting hunks of those files whole when
+# both sides only added lines (the base side first, then the branch; any other conflict hunk stops; what git
+# merges cleanly stays git's own result; scripts/union-merge.sh, passed with a temporary core.attributesFile
+# for that command only, see dl_union_attributes); a conflict in any other file stops the train as before,
+# and a conflict names its files. Then it runs every check
 # of .dev-loop.json "checks" once on the top of the stack; heavy checks run through heavy.sh, so the
 # machine-wide slot limit and memory cap apply.
 #
@@ -77,10 +82,11 @@ printf '%s %s\n' "$$" "$*" >"$running_file"
 # shellcheck disable=SC2329  # called from the EXIT trap
 train_ended() {
   local result=error
-  rm -f "$running_file"
+  rm -f "$running_file" "${DL_UNION_ATTRIBUTES:-}"
   case $1 in 0) result=green ;; 1) result=red ;; 3) result=conflict ;; esac
   dl_event gate train-ended rc="$1" result="$result"
 }
+DL_UNION_ATTRIBUTES="" # set below; never an inherited path for the trap to remove
 trap 'train_ended $?' EXIT
 dl_event gate train-started pid="$$" branches="$*"
 # The stages' heavy.sh jobs name this gate in their events, so status.sh can tell them from other jobs.
@@ -94,6 +100,7 @@ cd "$gate" || exit 2
 
 git fetch -q --prune "$DL_REMOTE" || dl_die "git fetch $DL_REMOTE failed"
 git rebase --abort >/dev/null 2>&1
+DL_UNION_ATTRIBUTES=$(dl_union_attributes) || dl_die "cannot write the attributes file for merge.union_files"
 git checkout -q --detach "$DL_REMOTE/$DL_BASE" || dl_die "cannot check out $DL_REMOTE/$DL_BASE"
 git for-each-ref --format='%(refname:strip=2)' refs/heads | while read -r ref; do # (a ref glob stops at "/")
   [[ "$ref" == train-* && "$keep_train" != *" ${ref#train-} "* ]] && dl_loop_branch "${ref#train-}" &&
@@ -119,7 +126,8 @@ for branch in "$@"; do
   source_head=$(git rev-parse "$DL_REMOTE/$branch")
   git branch -q -f "train-$branch" "$source_head"
   git checkout -q "train-$branch"
-  if ! git rebase -q --onto "$base_ref" "$(upstream_of "$branch")" >/dev/null 2>&1; then
+  if ! dl_git_union rebase -q --onto "$base_ref" "$(upstream_of "$branch")" >/dev/null 2>&1; then
+    dl_conflict_files "TRAIN"
     git rebase --abort >/dev/null 2>&1
     git checkout -q --detach "$DL_REMOTE/$DL_BASE"
     echo "TRAIN rebase conflict at $branch"

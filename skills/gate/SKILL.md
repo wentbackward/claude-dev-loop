@@ -167,11 +167,18 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   flake. Re-run once. If it is still red, bisect: gate the first half, then the second, until the culprit
   branch is found; send the failing output to its implementer; gate and merge the rest without it. Open an
   issue for a test that is genuinely flaky.
-- `TRAIN rebase conflict at <branch>` (exit 3): drop that branch, gate the others, and have its implementer
-  rebase it onto the new base after they merge (`git rebase --onto <remote>/<base> <old base> <branch>`
-  when it was stacked; that form is not in the allow list, so it asks for permission). Never force-push it: publish it with `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh
-  <branch>`, which pushes `<branch>-v2` (then `-v3`, ...) and carries the notes file over; review and
-  gate that new name. The old branch is left alone until `cleanup.sh` removes it as superseded.
+- `TRAIN rebase conflict at <branch>` (exit 3), after a `TRAIN conflict in: <files>` line: with
+  `merge.union_files` set (e.g. `["CHANGELOG.md", "docs/DECISIONS.md"]`), conflicts in those files get here
+  when a conflict hunk changes or deletes existing lines (an amended entry next to a new one), when a side
+  has a line like a long conflict marker, on an add/add, when the driver fails (git older than 2.43 too), or
+  when a merge driver set in the repository's or the user's attributes wins; otherwise (both sides only
+  added lines) the stacking keeps both conflicting hunks whole, the base first, then the branch. Any other
+  conflict gets here. Drop that branch, gate the others, and have its implementer rebase it onto the new
+  base after they merge (`git rebase --onto <remote>/<base> <old base> <branch>` when it was stacked; that
+  form is not in the allow list, so it asks for permission). Never force-push it: publish it with
+  `${CLAUDE_PLUGIN_ROOT}/scripts/repush.sh <branch>`, which pushes `<branch>-v2` (then `-v3`, ...) and
+  carries the notes file over; review and gate that new name. The old branch is left alone until
+  `cleanup.sh` removes it as superseded.
 - Exit 2: configuration problem; the message names it (often: no `checks` in `.dev-loop.json`).
 
 The gate runs in its own worktree (`gate_worktree`, default `<worktrees_dir>/gate` or `../<repo>-gate`), detached, so it never

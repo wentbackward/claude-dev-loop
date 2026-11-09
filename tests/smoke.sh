@@ -6789,4 +6789,296 @@ grep -F 'note remote protection' "$plugin/skills/doctor/SKILL.md" | grep -qF 'cr
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#88' && pass "protection: CHANGELOG has a #88 entry under Unreleased" ||
   fail "protection: no #88 entry under ## Unreleased"
 cd "$work/project" || exit 1
+
+# 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
+# the same spot gate together and merge in order with no rebase, both entries kept whole (base first, then
+# the branch; also with shared lines and CRLF), also in the merge replay; what git merges cleanly merges as
+# git does (a same change once); a conflict hunk that changes or deletes existing lines (amend vs prepend,
+# delete vs modify), a failing awk in the driver, a conflict in any other file, a listed file the repository's
+# .gitattributes gives another merge driver, and the option off still stop the train. The user's global
+# attributes still apply; the user's and the repository's git config are never changed.
+uwork="$work/union"
+git init -q --bare "$uwork/origin.git"
+git clone -q "$uwork/origin.git" "$uwork/unionproj" 2>/dev/null
+cd "$uwork/unionproj" || exit 1
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}]}\n' >.dev-loop.json
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}], "merge": {"union_files": ["CHANGELOG.md", "docs/DECISIONS.md", "docs/CRLF.md"]}}\n' \
+  >"$uwork/union.json"
+mkdir -p docs "$uwork/tmp"
+printf '# Changelog\n\n## Unreleased\n\n- start\n' >CHANGELOG.md
+printf '# Decisions\n\n## start\n' >docs/DECISIONS.md
+printf 'start\n' >user.log
+echo one >src.txt
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+export FAKE_GH_DIR="$uwork/gh"
+# The user's own global attributes (core.attributesFile) must still apply while the union ones are added.
+printf '/user.log merge=union\n' >"$uwork/user-attributes"
+cp "$GIT_CONFIG_GLOBAL" "$uwork/gitconfig"
+git config --file "$uwork/gitconfig" core.attributesFile "$uwork/user-attributes"
+ugit_snapshot() { # the user's global config, the repository's config and its info/attributes
+  GIT_CONFIG_GLOBAL="$uwork/gitconfig" git config --global --list
+  git config --local --list | grep -v "^branch\."   # (the test's own branches add upstreams)
+  cat "$(git rev-parse --git-common-dir)/info/attributes" 2>/dev/null
+  cat .gitattributes 2>/dev/null
+}
+ugit_before=$(ugit_snapshot)
+ubranch() { # ubranch NAME TICKET: from origin/main, a CHANGELOG entry at the top, a decisions entry, a file
+  git checkout -q -B "$1" origin/main &&
+    awk -v e="- $1" '{ print } /^## Unreleased$/ { getline; print; print e }' CHANGELOG.md >CHANGELOG.tmp &&
+    mv CHANGELOG.tmp CHANGELOG.md && printf '## %s\n' "$1" >>docs/DECISIONS.md &&
+    echo "$1" >"f-${1//\//_}.txt" && git add . && git commit -q -m "feat: $1" && git push -q -u origin "$1" &&
+    git checkout -q main && mkdir -p "$("$plugin/scripts/paths.sh" notes-dir)" &&
+    printf 'feat: %s (#%s)\n\nCloses #%s\n' "$1" "$2" "$2" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+ugate() { TMPDIR="$uwork/tmp" GIT_CONFIG_GLOBAL="$uwork/gitconfig" "$plugin/scripts/gate-train.sh" "$@" 2>&1; }
+umerge() { TMPDIR="$uwork/tmp" GIT_CONFIG_GLOBAL="$uwork/gitconfig" "$plugin/scripts/merge-train.sh" "$@" 2>&1; }
+
+ubranch feat/901-a 901
+ubranch feat/902-b 902
+out=$(ugate feat/901-a feat/902-b)
+expect "union: without merge.union_files two appended entries conflict as before" \
+  "3 TRAIN rebase conflict at feat/902-b" "$? $(echo "$out" | tail -n 1)"
+
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/901-a feat/902-b)
+expect "union: with merge.union_files the two branches gate green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+expect "union: the gated CHANGELOG keeps both entries once each, base first" \
+  "# Changelog||## Unreleased||- feat/901-a|- feat/902-b|- start" \
+  "$(git show train-feat/902-b:CHANGELOG.md | paste -sd'|' -)"
+expect "union: the gated decisions log keeps both entries once each, base first" \
+  "# Decisions||## start|## feat/901-a|## feat/902-b" "$(git show train-feat/902-b:docs/DECISIONS.md | paste -sd'|' -)"
+gated_tree=$(git rev-parse "train-feat/902-b^{tree}")
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" umerge feat/901-a feat/902-b)
+expect "union: the train merges in order with no rebase" 0 "$?"
+git fetch -q --prune origin
+expect "union: the base's tree is the gated tree" "$gated_tree" "$(git rev-parse 'origin/main^{tree}')"
+expect "union: both squash commits are on the base" "feat: feat/902-b (#902)|feat: feat/901-a (#901)" \
+  "$(git log --format=%s -2 origin/main | paste -sd'|' -)"
+expect "union: no -vN branch is created" "" "$(git ls-remote origin 'refs/heads/*-v*')"
+
+# The replay: the base gains an entry after the gate -> the tree differs (re-gate), not a replay conflict.
+git checkout -q main && git merge -q --ff-only origin/main
+ubranch feat/903-c 903
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/903-c)
+expect "union: a branch behind an appended base gates green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+awk '{ print } /^## Unreleased$/ { getline; print; print "- base moved" }' CHANGELOG.md >CHANGELOG.tmp &&
+  mv CHANGELOG.tmp CHANGELOG.md && git commit -q -am "docs: base entry" && git push -q origin main
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" umerge feat/903-c)
+expect "union: the replay keeps both sides and asks for a re-gate (exit 4), not a rebase" 4 "$?"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/903-c)
+expect "union: the re-gate is green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" umerge feat/903-c)
+expect "union: the re-gated branch merges" 0 "$?"
+git fetch -q origin
+expect "union: the merged CHANGELOG has every entry once" \
+  "- base moved|- feat/903-c|- feat/901-a|- feat/902-b|- start" "$(git show origin/main:CHANGELOG.md | grep '^- ' | paste -sd'|' -)"
+
+# Any other conflict still stops the train, even when the listed files merge.
+git checkout -q main && git merge -q --ff-only origin/main
+ubranch feat/904-d 904
+ubranch feat/905-e 905
+for b in feat/904-d feat/905-e; do
+  git checkout -q "$b" && echo "$b" >src.txt && git commit -q -am "feat: src ($b)" && git push -q origin "$b"
+done
+git checkout -q main
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
+expect "union: a conflict in another file still stops the train" "3 TRAIN rebase conflict at feat/905-e" \
+  "$? $(echo "$out" | tail -n 1)"
+
+# The user's global attributes still apply (user.log is union only through them), and win where they set a driver.
+for b in feat/906-f feat/907-g; do
+  ubranch "$b" "${b#feat/}" && git checkout -q "$b" && echo "$b" >>user.log && git commit -q -am "feat: log ($b)" &&
+    git push -q origin "$b" && git checkout -q main
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/906-f feat/907-g)
+expect "union: the user's global attributes still apply" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+printf '/user.log merge=union\n/CHANGELOG.md merge=binary\n' >"$uwork/user-attributes"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/906-f feat/907-g)
+expect "union: a merge driver in the user's global attributes wins over the listed files" \
+  "3 TRAIN rebase conflict at feat/907-g" "$? $(echo "$out" | tail -n 1)"
+
+# Entries that share lines (a CHANGELOG entry prepended at the top, a decisions entry appended with a blank
+# separator) stay whole: git's own merge=union would fold the shared lines into one copy.
+printf '/user.log merge=union\n' >"$uwork/user-attributes"
+uentry() { # uentry NAME TICKET: a branch whose two entries share lines with the other branch's
+  git checkout -q -B "$1" origin/main &&
+    awk -v e="- $1" '{ print } /^## Unreleased$/ { getline; print; print e; print "  Shared detail." }' CHANGELOG.md \
+      >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+    printf '\n## %s\n\n- **Decision:** %s\n- **Alternatives:** none.\n' "$1" "$1" >>docs/DECISIONS.md &&
+    git commit -q -am "feat: $1" && git push -q -u origin "$1" && git checkout -q main &&
+    printf 'feat: %s (#%s)\n\nCloses #%s\n' "$1" "$2" "$2" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+uentry feat/910-j 910
+uentry feat/911-k 911
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/910-j feat/911-k)
+expect "union: entries that share lines gate green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+expect "union: prepended CHANGELOG entries that share a line stay whole, base first" \
+  "- feat/910-j|  Shared detail.|- feat/911-k|  Shared detail.|- base moved" \
+  "$(git show train-feat/911-k:CHANGELOG.md | awk '/^## Unreleased$/ { on = 1; getline; next } on' | head -n 5 | paste -sd'|' -)"
+expect "union: appended decisions entries with a blank separator stay whole, base first" \
+  "|## feat/910-j||- **Decision:** feat/910-j|- **Alternatives:** none.||## feat/911-k||- **Decision:** feat/911-k|- **Alternatives:** none." \
+  "$(git show train-feat/911-k:docs/DECISIONS.md | tail -n 10 | paste -sd'|' -)"
+# Changes git merges cleanly without the option merge as git merges them: both branches make the same change
+# to a line (and add the same decisions entry) next to their own entries; it is green, each once.
+for b in feat/912-l feat/913-m; do
+  git checkout -q -B "$b" origin/main &&
+    awk -v e="- $b" '/^- start$/ { $0 = "- start, fixed" } { print } /^## Unreleased$/ { getline; print; print e }' \
+      CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md && printf '## same entry\n' >>docs/DECISIONS.md &&
+    { [ "$b" = feat/912-l ] || { awk 'NR == 1 { print; print "<!-- m -->"; next } { print }' docs/DECISIONS.md >d.tmp &&
+      mv d.tmp docs/DECISIONS.md; }; } &&
+    git commit -q -am "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$b" >"$("$plugin/scripts/paths.sh" notes "$b")"
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/912-l feat/913-m)
+expect "union: the same change on both sides next to their own entries gates green" "0 TRAIN GREEN" \
+  "$? $(echo "$out" | tail -n 1)"
+expect "union: the shared change is merged once, both entries kept" "- feat/912-l|- feat/913-m|1" \
+  "$(git show train-feat/913-m:CHANGELOG.md | grep -E '^- feat/91[23]' | paste -sd'|' -)|$(git show train-feat/913-m:CHANGELOG.md | grep -c '^- start, fixed$')"
+expect "union: the same decisions entry added by both is kept once, as git merges it without the option" "1" \
+  "$(git show train-feat/913-m:docs/DECISIONS.md | grep -c '^## same entry$')"
+# A CRLF log keeps its CRs and loses no conflict marker into the result.
+git checkout -q main && git merge -q --ff-only origin/main && printf 'h\r\n' >docs/CRLF.md && git add docs/CRLF.md &&
+  git commit -q -m "docs: crlf log" && git push -q origin main
+for b in feat/914-n feat/915-o; do
+  git checkout -q -B "$b" origin/main && printf '%s\r\nshared\r\n' "$b" >>docs/CRLF.md &&
+    git commit -q -am "feat: $b" && git push -q -u origin "$b" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$b" >"$("$plugin/scripts/paths.sh" notes "$b")"
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/914-n feat/915-o)
+expect "union: CRLF entries gate green" "0 TRAIN GREEN" "$? $(echo "$out" | tail -n 1)"
+printf 'h\r\nfeat/914-n\r\nshared\r\nfeat/915-o\r\nshared\r\n' >"$uwork/crlf.expected"
+git show train-feat/915-o:docs/CRLF.md | cmp -s - "$uwork/crlf.expected" &&
+  pass "union: CRLF entries stay whole with their CRs and no marker line" ||
+  fail "union: CRLF result: $(git show train-feat/915-o:docs/CRLF.md | od -c | head -n 4)"
+# Only conflict hunks where both sides only added lines are kept whole: a branch that amends an existing
+# entry while the other prepends one next to it stops the train, as without the option.
+git checkout -q main && git merge -q --ff-only origin/main &&
+  awk '{ print } /^## Unreleased$/ { getline; print; print "- feat X: does x." }' CHANGELOG.md >CHANGELOG.tmp &&
+  mv CHANGELOG.tmp CHANGELOG.md && git commit -q -am "docs: feat X" && git push -q origin main
+git checkout -q -B feat/916-p origin/main &&
+  sed 's/^- feat X: does x\.$/- feat X: does x, fixed (#2)./' CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+  git commit -q -am "fix: feat X" && git push -q -u origin feat/916-p && git checkout -q main &&
+  printf 'fix: feat X\n\nCloses #1\n' >"$("$plugin/scripts/paths.sh" notes feat/916-p)"
+git checkout -q -B feat/917-q origin/main &&
+  awk '/^- feat X: does x\.$/ { print "- feat B" } { print }' CHANGELOG.md >CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md &&
+  git commit -q -am "feat: B" && git push -q -u origin feat/917-q && git checkout -q main &&
+  printf 'feat: B\n\nCloses #1\n' >"$("$plugin/scripts/paths.sh" notes feat/917-q)"
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/916-p feat/917-q)
+expect "union: an amended entry next to a prepended one stops the train" "3 TRAIN rebase conflict at feat/917-q" \
+  "$? $(echo "$out" | tail -n 1)"
+expect "union: the amend-vs-prepend conflict names the changelog" "TRAIN conflict in: CHANGELOG.md" \
+  "$(echo "$out" | tail -n 2 | head -n 1)"
+# The driver itself: a delete against a modify is a conflict, and a failing awk never empties the result.
+udrv="$uwork/driver" && mkdir -p "$udrv/bin" "$udrv/tmp"
+udriver_files() { # udriver_files BASE OURS THEIRS: write the three sides
+  printf '%b' "$1" >"$udrv/base" && printf '%b' "$2" >"$udrv/ours" && printf '%b' "$3" >"$udrv/theirs"
+}
+udriver() { TMPDIR="$udrv/tmp" "$plugin/scripts/union-merge.sh" "$udrv/base" "$udrv/ours" "$udrv/theirs" 2>/dev/null; }
+udriver_files 'a\nb\nc\n' 'a\nc\n' 'a\nB\nc\n'
+udriver
+expect "union: the driver stops a delete against a modify, the file unchanged" "1|a|c" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+udriver
+expect "union: the driver keeps both sides of lines only added" "0|a|ours|theirs" "$?|$(paste -sd'|' - <"$udrv/ours")"
+real_awk=$(command -v awk)
+# awk fails when it reads stdin (keep_both), or when it is given files (marker_like; with status 2 or 1).
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exec %s "$@"; done\nexit 2\n' "$real_awk" >"$udrv/bin/awk-stdin"
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exit 2; done\nexec %s "$@"\n' "$real_awk" >"$udrv/bin/awk-files"
+printf '#!/bin/sh\nfor a; do [ -f "$a" ] && exit 1; done\nexec %s "$@"\n' "$real_awk" >"$udrv/bin/awk-files1"
+chmod +x "$udrv/bin/awk-stdin" "$udrv/bin/awk-files" "$udrv/bin/awk-files1"
+for shim in awk-stdin awk-files awk-files1; do
+  ln -sf "$udrv/bin/$shim" "$udrv/bin/awk"
+  udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+  PATH="$udrv/bin:$PATH" udriver
+  rc=$?
+  [ "$rc" -ne 0 ] && [ "$(paste -sd'|' - <"$udrv/ours")" = "a|ours" ] &&
+    pass "union: a failing awk ($shim) stops the driver, the file unchanged" ||
+    fail "union: with a failing awk ($shim) the driver gave $rc and: $(paste -sd'|' - <"$udrv/ours")"
+done
+# The driver diffs as git's own merge does (histogram): what merge-tree merges cleanly is clean, and what
+# stops a plain rebase stops the driver too (myers would decide both the other way).
+udriver_files 'x\na\na\n' 'b\na\nx\na\n}\n' 'x\nx\na\na\n'
+udriver
+expect "union: a merge git does cleanly (histogram) is clean in the driver, with git's result" "0|b|a|x|x|a|}" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files 'b\na\n}\nb\nb\nb\na\nb\n' 'a\n}\nb\na\nb\na\nb\n' 'b\na\nb\nb\nb\n}\na\nb\n'
+udriver
+expect "union: a merge that stops a plain rebase stops the driver, the file unchanged" "1|a|}|b|a|b|a|b" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+# A git whose merge-file lacks --diff-algorithm (before 2.43) makes the driver stop, never fall back.
+mkdir -p "$udrv/oldgit"
+printf '#!/bin/sh\nfor a; do case $a in --diff-algorithm*) echo "error: unknown option" >&2; exit 129 ;; esac; done\nexec %s "$@"\n' \
+  "$(command -v git)" >"$udrv/oldgit/git" && chmod +x "$udrv/oldgit/git"
+udriver_files 'a\n' 'a\nours\n' 'a\ntheirs\n'
+PATH="$udrv/oldgit:$PATH" udriver
+expect "union: a git without merge-file --diff-algorithm stops the driver, the file unchanged" "1|a|ours" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+# add/add: both sides created the file with different content (an empty base) is a conflict.
+udriver_files '' 'a\n' 'b\n'
+udriver
+expect "union: an add/add with different content stops the driver, the file unchanged" "1|a" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
+expect "union: the driver removes its temporary files" "" "$(ls -A "$udrv/tmp")"
+# Through the gate: a marker-like line in a listed file, an amended decision next to an appended one, and
+# overlapping edits each stop the train and name the file.
+ucase() { # ucase BRANCH FILE AWK-PROGRAM: a branch from origin/main whose FILE is rewritten by AWK-PROGRAM
+  git checkout -q -B "$1" origin/main && awk "$3" "$2" >"$2.tmp" && mv "$2.tmp" "$2" &&
+    git commit -q -am "feat: $1" && git push -q -u origin "$1" && git checkout -q main &&
+    printf 'feat: %s\n\nCloses #1\n' "$1" >"$("$plugin/scripts/paths.sh" notes "$1")"
+}
+ustops() { # ustops DESCRIPTION FILE BRANCH1 BRANCH2: the gate stops at BRANCH2 and names FILE
+  out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate "$3" "$4")
+  expect "$1" "3 TRAIN rebase conflict at $4|TRAIN conflict in: $2" \
+    "$? $(echo "$out" | tail -n 1)|$(echo "$out" | tail -n 2 | head -n 1)"
+}
+git checkout -q main && git merge -q --ff-only origin/main &&
+  printf '\n## X\n\n- **Alternatives:** none (X).\n' >>docs/DECISIONS.md && printf 'a\nb\nc\nd\n' >>CHANGELOG.md &&
+  git commit -q -am "docs: fixtures" && git push -q origin main
+ucase feat/918-r CHANGELOG.md '{ print } /^## Unreleased$/ { getline; print; print "- feat R"; print "================================" }'
+ucase feat/919-s CHANGELOG.md '{ print } /^## Unreleased$/ { getline; print; print "- feat S" }'
+ustops "union: a marker-like line in a listed file stops the train" CHANGELOG.md feat/918-r feat/919-s
+ucase feat/920-t docs/DECISIONS.md '/^- \*\*Alternatives:\*\* none \(X\)\.$/ { $0 = "- **Alternatives:** x." } { print }'
+ucase feat/921-u docs/DECISIONS.md '{ print } END { print ""; print "## U"; print ""; print "- **Alternatives:** none." }'
+ustops "union: an amended decision next to an appended one stops the train" docs/DECISIONS.md feat/920-t feat/921-u
+ucase feat/922-v CHANGELOG.md '/^b$/ { $0 = "B1" } /^c$/ { $0 = "C1" } { print }'
+ucase feat/923-w CHANGELOG.md '/^c$/ { $0 = "C2" } /^d$/ { $0 = "D2" } { print }'
+ustops "union: overlapping edits in a listed file stop the train" CHANGELOG.md feat/922-v feat/923-w
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/904-d feat/905-e)
+expect "union: another conflict names its file" "TRAIN conflict in: src.txt" "$(echo "$out" | tail -n 2 | head -n 1)"
+# A wildcard entry is refused: entries are literal paths.
+printf '{"base_branch": "main", "checks": [{"name": "unit", "command": "true", "heavy": false}], "merge": {"union_files": ["*.md"]}}\n' \
+  >"$uwork/wild.json"
+out=$(DEV_LOOP_CONFIG="$uwork/wild.json" ugate feat/910-j feat/911-k 2>&1)
+echo "$out" | grep -qF "merge.union_files: skipping '*.md'" && pass "union: a wildcard entry is skipped with a warning" ||
+  fail "union: no warning for a wildcard entry: $out"
+# An inherited DL_UNION_ATTRIBUTES is never removed by the scripts.
+printf 'keep\n' >"$uwork/inherited"
+DL_UNION_ATTRIBUTES="$uwork/inherited" ugate feat/910-j >/dev/null
+DL_UNION_ATTRIBUTES="$uwork/inherited" umerge feat/no-such-branch >/dev/null
+[ -f "$uwork/inherited" ] && pass "union: an inherited DL_UNION_ATTRIBUTES path is not removed" ||
+  fail "union: the scripts removed an inherited DL_UNION_ATTRIBUTES path"
+
+expect "union: the user's and the repository's git config are unchanged" "$ugit_before" "$(ugit_snapshot)"
+expect "union: the gate's git config is unchanged" "" \
+  "$(git -C "$("$plugin/scripts/paths.sh" gate)" config --list --local | grep -i attributes)"
+expect "union: the temporary attributes files are removed" "" "$(ls -A "$uwork/tmp")"
+
+# A listed file that the repository's .gitattributes gives another merge driver keeps it.
+printf '/CHANGELOG.md merge=binary\n' >.gitattributes
+git add .gitattributes && git commit -q -m "chore: changelog driver" && git push -q origin main
+ubranch feat/908-h 908
+ubranch feat/909-i 909
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/908-h feat/909-i)
+expect "union: the repository's own merge driver for a listed file wins" "3 TRAIN rebase conflict at feat/909-i" \
+  "$? $(echo "$out" | tail -n 1)"
+
+# The docs: README (gate, merge, key), the gate and merge skills, CHANGELOG and the decisions log.
+grep -qF 'merge.union_files' "$plugin/README.md" && pass "union: the README names merge.union_files" ||
+  fail "union: the README lacks merge.union_files"
+grep -qF 'merge.union_files' "$plugin/skills/gate/SKILL.md" && grep -qF 'merge.union_files' "$plugin/skills/merge/SKILL.md" &&
+  pass "union: the gate and merge skills describe merge.union_files" || fail "union: skill text"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#95' && pass "union: CHANGELOG has a #95 entry under Unreleased" ||
+  fail "union: no #95 entry under ## Unreleased"
+grep -qF '(#95)' "$plugin/docs/DECISIONS.md" && pass "union: the decisions log has #95" || fail "union: no #95 decision"
+cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"

@@ -1055,3 +1055,46 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** only rulesets (misses classic protection); MISSING for an unprotected remote (the loop
   works without it; it is the owner's choice); `--paginate` (concatenated pages need merging; 100 rulesets
   are plenty); querying a GitHub Enterprise host (links and API differ; left to a later ticket).
+
+## 2026-11-09 — Union merge for the append-only logs, off by default (#95)
+
+- **Decision:** `merge.union_files` (literal paths from the repository root) is off by default (`[]`); a
+  project lists its logs to turn it on. The gate's stacking and the merge replay run their rebase with
+  `git -c core.attributesFile=<temporary file> -c merge.dl-union.driver=...`; the file holds
+  `/<path> merge=dl-union` for each listed path, followed by the user's own global attributes file
+  (`core.attributesFile`, else the XDG default), so the user's attributes still apply and a driver they set
+  for a listed file wins. The repository's `.gitattributes` and `info/attributes` rank above any
+  `core.attributesFile` in git, so a driver they set wins too. The file is removed when the script exits.
+- **Driver:** git calls a custom driver for every file both sides changed, conflicting or not, so
+  `scripts/union-merge.sh` first runs plain `git merge-file --diff-algorithm=histogram`; when that is clean
+  its result is used, exactly as without the option (git's own merge in a rebase, merge-ort, diffs with
+  histogram; merge-file's default myers decides some merges the other way in both directions) (a change both sides made the same way is kept once, but only when git merges the
+  file without a conflict; the same change next to each side's own entry is a conflict and stops). Only
+  a merge with conflicts takes `git merge-file --diff3` (diff3 style keeps each conflict hunk whole: git
+  does not refine it the way it refines `merge=union` hunks), and only when every conflict hunk's base
+  part is empty (both sides only added lines) is it resolved, as ours (in a rebase: the base) then theirs
+  (the branch). A hunk with a base part (a side changed or deleted existing lines: an amended entry next to
+  a prepended one, a delete against a modify, overlapping edits) is a conflict (exit 1): keeping both
+  parts would bring back lines one side removed or keep an old and an amended line side by side. Any
+  failure of the driver (awk, merge-file, mktemp) is a conflict too, and the file is left unchanged:
+  merge-file takes `--diff-algorithm` from git 2.43 on, and an older git refusing it stops the merge
+  rather than fall back to myers (a different diff would break the "as without the option" promise). An
+  add/add (an empty base, both sides creating the file with different content) is a conflict, as no
+  existing entry anchors the order. The marker scan must print `clean` with status 0, so an awk failure
+  with any status stops. The
+  guarantee: the output of each kept hunk is its ours part, then its theirs part; outside the hunks the
+  result is git's diff3 merge. The line-count check of the first version is dropped: it
+  stopped merges that git does cleanly (the same change to a line on both sides) and could still miss a
+  fold. Files with a line starting with 32 of one marker character are a conflict (the driver could not
+  tell the markers apart); a CR before the line end is ignored when markers are matched, so CRLF files
+  work. In a merge with conflicts the result ends with a newline. Entries with spaces, wildcards, a
+  backslash or a leading `!` or `#` are skipped with a warning.
+- **Reason:** CLAUDE.md requires every option to be off or backwards compatible by default; a default list
+  would turn conflicts that stop the train today into merges in every existing project. git's own
+  `merge=union` uses zealous refinement and silently folds lines that two entries share (`- **Alternatives:**
+  none.`, blank separators), so it is not used. The merge replay uses the same driver, so the replayed tree
+  still equals the gated one.
+- **Alternatives:** the issue's default list when the files exist (changes behaviour without a key); git's
+  `merge=union` plus a line-count check afterwards (stops on most decisions entries, which share lines, and
+  on same-change merges git does cleanly);
+  writing `.git/info/attributes` or a driver into the git config (changes the repository's state).

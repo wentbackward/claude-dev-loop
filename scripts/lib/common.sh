@@ -706,6 +706,54 @@ dl_in_cache() {
   return 1
 }
 
+# dl_union_attributes: write a temporary attributes file that gives each path of merge.union_files (a literal
+# path from the repository root) the merge driver dl-union (scripts/union-merge.sh: both sides of a conflict
+# where both only added lines kept whole, the base first; any other conflict stops), followed by the user's
+# own global attributes (core.attributesFile, else the XDG default), so a driver the user set still wins;
+# print its path. Prints nothing when merge.union_files is missing or empty. The repository's .gitattributes
+# and info/attributes rank above any core.attributesFile, so a merge driver they set for a listed file stays.
+dl_union_attributes() {
+  local count i path file user
+  count=$(cfg_len merge.union_files)
+  [ "$count" -gt 0 ] || return 0
+  file=$(mktemp "${TMPDIR:-/tmp}/dev-loop-union.XXXXXX") || return 1
+  for ((i = 0; i < count; i++)); do
+    path=$(cfg "merge.union_files.$i")
+    case $path in
+      "" | *[[:space:]]* | '!'* | '#'* | *[*?[]* | *\\*)
+        dl_warn "merge.union_files: skipping '$path' (a literal path: no spaces, wildcards, backslash, leading ! or #)" ;;
+      *) printf '/%s merge=dl-union\n' "${path#/}" >>"$file" ;;
+    esac
+  done
+  user=$(git config --path core.attributesFile 2>/dev/null) ||
+    user=${XDG_CONFIG_HOME:-${HOME:-}/.config}/git/attributes
+  [ ! -f "$user" ] || cat "$user" >>"$file"
+  printf '%s\n' "$file"
+}
+
+# dl_conflict_files PREFIX: print "PREFIX conflict in: <files>" for the unmerged files of a stopped rebase.
+dl_conflict_files() {
+  local files
+  files=$(git diff --name-only --diff-filter=U 2>/dev/null | paste -sd' ' -)
+  [ -z "$files" ] || printf '%s conflict in: %s\n' "$1" "$files"
+}
+
+# dl_git_union ARGS...: git ARGS, with the attributes of dl_union_attributes (DL_UNION_ATTRIBUTES) and the
+# dl-union driver defined for this command only, when DL_UNION_ATTRIBUTES is set.
+dl_git_union() {
+  local driver
+  driver="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/union-merge.sh"
+  if [ -z "${DL_UNION_ATTRIBUTES:-}" ]; then
+    git "$@"
+  elif [[ "$driver" == *"'"* ]]; then
+    dl_warn "merge.union_files: the plugin path has a single quote; merging without the union driver"
+    git "$@"
+  else
+    git -c core.attributesFile="$DL_UNION_ATTRIBUTES" -c merge.dl-union.name="dev-loop: keep both sides" \
+      -c merge.dl-union.driver="'$driver' %O %A %B" "$@"
+  fi
+}
+
 # dl_cfg_words PATH DEFAULT: the array at PATH in the project config as " a b ... ", or DEFAULT.
 dl_cfg_words() {
   local count i words=" "
