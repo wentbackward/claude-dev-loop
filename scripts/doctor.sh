@@ -19,6 +19,44 @@ optional() { echo "note    $*"; }
 # shellcheck source=lib/docs.sh
 . "$scripts_dir/lib/docs.sh"
 
+# doctor_tmp_free_inodes DIR: the percentage of free inodes on DIR's filesystem (df -i, columns found by
+# name: IFree/ifree and IUsed/iused); prints nothing where df -i fails or reports no inode counts.
+doctor_tmp_free_inodes() {
+  df -i "$1" 2>/dev/null | awk '
+    NR == 1 { sub(/Mounted on$/, "Mounted_on"); for (i = 1; i <= NF; i++) { h = tolower($i)
+        if (h == "ifree") free = NF - i; if (h == "iused") used = NF - i } next }
+    { line = $0 } END {
+      if (free == "" || used == "") exit
+      n = split(line, f, " "); fr = f[n - free]; us = f[n - used]
+      if (fr !~ /^[0-9]+$/ || us !~ /^[0-9]+$/ || fr + us == 0) exit
+      print int(fr * 100 / (fr + us)) }'
+}
+
+# doctor_tmp_space: free space and inodes of TMPDIR's filesystem (default /tmp), where the test suites' work
+# dirs and every agent's command output live: a note under 10% free, MISSING under 2%, with the count of
+# leftover dev-loop-smoke.* and dev-loop-identity.* dirs. Silent when df -P fails or reports no numbers.
+doctor_tmp_space() {
+  local tmp=${TMPDIR:-/tmp} space inodes low=100 text leftovers=0 dir
+  tmp=${tmp%/}
+  [ -n "$tmp" ] || tmp=/
+  # Counted from the end of the line: a filesystem name may hold spaces (macOS "map auto_home").
+  space=$(df -P "$tmp" 2>/dev/null | awk 'NR == 2 && NF >= 6 { total = $(NF - 4); avail = $(NF - 2)
+      if (total ~ /^[0-9]+$/ && avail ~ /^[0-9]+$/ && total > 0) print int(avail * 100 / total) }')
+  [ -n "$space" ] || return 0
+  inodes=$(doctor_tmp_free_inodes "$tmp")
+  text="TMPDIR $tmp: $space% space free"
+  low=$space
+  if [ -n "$inodes" ]; then
+    text+=", $inodes% inodes free"
+    [ "$inodes" -lt "$low" ] && low=$inodes
+  fi
+  for dir in "$tmp"/dev-loop-smoke.* "$tmp"/dev-loop-identity.*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] && leftovers=$((leftovers + 1))
+  done
+  [ "$leftovers" -eq 0 ] || text+="; $leftovers leftover test work dirs (dev-loop-smoke.*, dev-loop-identity.*)"
+  if [ "$low" -lt 2 ]; then missing "$text"; elif [ "$low" -lt 10 ]; then optional "$text"; else ok "$text"; fi
+}
+
 # doctor_docs: print the current-state docs config; report missing paths, files over docs.max_lines,
 # planned rows that need care (docs.planned, docs.planned_max_days) and map rules that match no tracked file.
 doctor_docs() {
@@ -380,6 +418,7 @@ if command -v flock >/dev/null 2>&1; then ok "flock"; else optional "flock not f
 if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   ok "systemd user scopes (heavy.memory_max is enforced)"
 else optional "no systemd user manager: heavy.memory_max is not enforced"; fi
+doctor_tmp_space
 
 dl_load_config
 if [ -z "$DL_ROOT" ]; then

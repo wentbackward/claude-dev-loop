@@ -2,10 +2,14 @@
 # shellcheck disable=SC2015,SC2016  # pass/fail never fail; single quotes are expanded by the inner shell
 # Tests of identity mode with fakes (no network, no real GitHub): as-role.sh credentials, the guard hook,
 # github-protect.sh plans, setup-identities.sh (manifest flow) and merge-train.sh with role identities.
-# Run: tests/identity.sh   (TMPDIR picks the work dir)
+# Run: tests/identity.sh   (TMPDIR picks the work dir; a green run removes it unless DEV_LOOP_KEEP_WORK=1)
 set -u
 plugin=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../scripts/lib/workdirs.sh
+. "$plugin/scripts/lib/workdirs.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/dev-loop-identity.XXXXXX")
+# Named at once, so the gate records a run that never reaches its summary (a crash, a signal, a stall).
+echo "started identity (work dir $work)"
 REAL_CURL=$(command -v curl)
 export REAL_CURL
 export DEV_LOOP_HOME="$work/home" DEV_LOOP_LOCK_DIR="$work/locks" DEV_LOOP_GH_SETTLE_SECONDS=0
@@ -213,5 +217,4 @@ expect "the merged head is a fast-forward of the gated head, pushed as the gate"
 grep -q "^\[token-gate\] gh api -X POST repos/owner/project/statuses/$(cat "$FAKE_GH_DIR/feat_1-x.head") " "$FAKE_GH_DIR/calls.log" &&
   pass "the gate status is posted on the head that merges" || fail "gate status on the merged head"
 
-echo "identity: $passed passed, $failed failed (work dir $work)"
-[ "$failed" -eq 0 ]
+dl_suite_end identity "$work" "$passed" "$failed"

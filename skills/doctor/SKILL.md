@@ -76,6 +76,7 @@ Leave out the `ok` lines unless the user asks for them. Common fixes:
 | `note marketplace <name> is pinned to <ref>, older than the installed plugin <version>` | move the entry's `ref` to the tag the note names, add the marketplace from it, then `claude plugin update dev-loop@claude-dev-loop` (the README's Install section) |
 | `marketplace <scope> settings: <source>`, `configured: ...`, `installed: ...` | information: the entries found, the marketplace Claude Code configured, the installed version; nothing without entries |
 | `note jq`, `flock` or `systemd` | optional: install it, or accept the fallback the note names |
+| `note TMPDIR ...` or `MISSING TMPDIR ...` | under 10% (note) or 2% (MISSING) free space or inodes on TMPDIR's filesystem (default `/tmp`; agents stop when it is full): free space; leftover `dev-loop-smoke.*` / `dev-loop-identity.*` dirs of red test runs can go once no test runs |
 
 Fix only what the user asks you to. Anything that deletes files, worktrees or memories needs the user's
 OK first. After a fix, run the doctor again and report the new verdict.

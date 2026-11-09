@@ -1043,7 +1043,9 @@ tree check, a branch that moved, a conflict, the gate options (affected, paralle
 `status.sh` with the event log. `tests/identity.sh` adds fake GitHub API, browser and `gh` stand-ins. It covers
 `as-role.sh`, app JWTs and tokens, the guard, the ruleset plan, the manifest flow and identity-mode merges.
 
-Each run makes its own work dir under `TMPDIR`. To run part of the smoke test, name sections:
+Each run makes its own work dir under `TMPDIR` and removes it when every test passed; a red run keeps it
+and prints its path, and `DEV_LOOP_KEEP_WORK=1` keeps it always. The gate keeps only the newest red work
+dir of each suite. To run part of the smoke test, name sections:
 
 ```bash
 tests/smoke.sh --list                    # each section's id, the sections it needs, its title
