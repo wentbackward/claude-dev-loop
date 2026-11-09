@@ -6523,10 +6523,10 @@ for nojq in "" 1; do
     pass "protection: a tag ruleset that excludes v* does not cover release tags$label" || fail "protection: excluded v* counted$label"
   # Rules matter: deletion only, creation only; and a ruleset the current login can bypass.
   rtagset 7 never '["refs/tags/v*"]' '["deletion"]'
-  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -F 'creation, update' | grep -qvF 'deletion' &&
+  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -qF 'protected against creation, update (' &&
     pass "protection: a deletion-only tag ruleset is a note naming creation and update$label" || fail "protection: deletion-only counted$label"
   rtagset 7 never '["refs/tags/v*"]' '["creation"]'
-  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -F 'update, deletion' | grep -qvF 'creation' &&
+  rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -qF 'protected against update, deletion (' &&
     pass "protection: a creation-only tag ruleset is a note naming update and deletion$label" || fail "protection: creation-only counted$label"
   rtagset 7 always '["refs/tags/v*"]' '["creation", "update", "deletion"]'
   rnotes "$(rdoctor "$nojq")" | grep -F 'release tags (v*)' | grep -qF 'can bypass ruleset "tags-7"' &&
