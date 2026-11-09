@@ -5364,4 +5364,122 @@ expect "doctor tmp: TMPDIR=/ is checked as /" "ok      TMPDIR /: 80% space free"
 awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#80' && head -n 8 "$plugin/CHANGELOG.md" | grep -q '^## Unreleased' &&
   pass "work dirs: CHANGELOG has a #80 entry under Unreleased" || fail "work dirs: no #80 entry under ## Unreleased"
 cd "$work/project" || exit 1
+
+# 30. Ask rules (#84): doctor tests each ask rule of the project's settings and of the user settings
+# (DEV_LOOP_CLAUDE_DIR; only permissions.ask) against the loop's commands and the configured ones (fast_check,
+# checks, affected, gate_setup, format). A match stalls auto mode, so it is a note with the rule, the file, the
+# command and the fix; the template's ask rules match nothing. Doctor never edits a settings file.
+qwork="$work/askrules"
+git init -q --bare "$qwork/origin.git"
+git clone -q "$qwork/origin.git" "$qwork/project" 2>/dev/null
+cd "$qwork/project" || exit 1
+printf '# Project\n' >"$qwork/project/CLAUDE.md"
+cat >"$qwork/config.json" <<'JSON'
+{"base_branch": "main", "fast_check": "make lint", "format": "gofmt -w {file}", "gate_setup": "npm ci",
+ "affected": {"command": "scripts/affected.sh"},
+ "checks": ["make check", {"name": "build", "command": "go build -o bin/app ./..."}, "npm test", "cargo test"]}
+JSON
+git -C "$qwork/project" add . && git -C "$qwork/project" commit -q -m "chore: start" &&
+  git -C "$qwork/project" push -q -u origin main
+qclaude="$qwork/project/.claude"
+quser="$qwork/claude"
+mkdir -p "$quser"
+# qenv COMMAND...: run COMMAND in the project with the section's config, state and user settings folder.
+qenv() {
+  (cd "$qwork/project" && HOME="$qwork/home" DEV_LOOP_HOME="$qwork/state" DEV_LOOP_CONFIG="$qwork/config.json" \
+    DEV_LOOP_CLAUDE_DIR="$quser" "$@" 2>&1)
+}
+# qdoctor [NOJQ]: doctor's output without the live TMPDIR line.
+qdoctor() { DEV_LOOP_NO_JQ=${1:-} qenv "$plugin/scripts/doctor.sh" | grep -v 'TMPDIR'; }
+# qadd_ask FILE RULE: append RULE to permissions.ask of FILE (created when missing).
+qadd_ask() {
+  python3 -I -c 'import json,os,sys
+d=json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
+d.setdefault("permissions", {}).setdefault("ask", []).append(sys.argv[2]); json.dump(d, open(sys.argv[1], "w"))' "$1" "$2"
+}
+qenv "$plugin/scripts/permissions.sh" --apply >/dev/null
+cp "$qclaude/settings.json" "$qwork/shared-full.json"
+cp "$qclaude/settings.local.json" "$qwork/local-full.json"
+# The template's ask rules and the project's own: no note, also against make check, go build -o, npm and cargo.
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  expect "ask rules: the template's ask rules produce no note$label" "" "$(qdoctor "$nojq" | grep -F 'ask rule')"
+done
+qclean=$(qdoctor | tail -n 1)
+qtemplate=$(DEV_LOOP_NO_JQ='' bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/permissions.sh"
+  dl_perm_rules "$1/templates/settings.json" ask' _ "$plugin")
+[ -n "$qtemplate" ] && pass "ask rules: the template has ask rules to test" || fail "ask rules: no template ask rules read"
+qhits=$(bash -c '. "$1/scripts/lib/common.sh"; . "$1/scripts/lib/permissions.sh"
+  while IFS= read -r rule; do
+    for cmd in "make check" "make lint" "go build -o bin/app ./..." "go test ./..." "npm test" "npm run build" \
+      "cargo test" "cargo build --release" "pytest -q" "uv run pytest"; do
+      dl_perm_match "$rule" "$cmd" && echo "$rule ~ $cmd"
+    done
+  done' _ "$plugin" <<<"$qtemplate")
+expect "ask rules: no template ask rule matches a typical project command" "" "$qhits"
+
+# A project ask rule that matches a configured check is a note with the rule, the file, the command and the fix.
+for nojq in "" 1; do
+  label=${nojq:+ (python3)}
+  cp "$qwork/shared-full.json" "$qclaude/settings.json"
+  qadd_ask "$qclaude/settings.json" "Bash(*go * -o*)"
+  out=$(qdoctor "$nojq")
+  line=$(printf '%s\n' "$out" | grep -F 'ask rule Bash(*go * -o*)')
+  printf '%s\n' "$line" | grep -qF 'note    permissions: ask rule Bash(*go * -o*) in .claude/settings.json stops "go build -o bin/app ./..."' &&
+    pass "ask rules: a project ask rule matching a check is noted with the file and the command$label" ||
+    fail "ask rules: no note for Bash(*go * -o*) stopping the build check$label ($out)"
+  printf '%s\n' "$line" | grep -qF 'narrow it' && printf '%s\n' "$line" | grep -qF 'ask beats allow' &&
+    pass "ask rules: the note names the fix$label" || fail "ask rules: the note lacks the fix$label ($line)"
+  printf '%s\n' "$line" | grep -qF 'matches inside other words' &&
+    pass "ask rules: a leading * with a short token is said to match inside other words$label" ||
+    fail "ask rules: no 'matches inside other words' for Bash(*go * -o*)$label ($line)"
+  expect "ask rules: one rule is noted once$label" 1 "$(printf '%s\n' "$out" | grep -cF 'ask rule Bash(*go * -o*)')"
+  expect "ask rules: a matching ask rule is a note, not a problem$label" "$qclean" "$(printf '%s\n' "$out" | tail -n 1)"
+done
+cp "$qwork/shared-full.json" "$qclaude/settings.json"
+
+# The local file, the configured gate_setup, affected and format commands, and the user settings.
+qadd_ask "$qclaude/settings.local.json" "Bash(npm ci*)"
+qadd_ask "$qclaude/settings.local.json" "Bash(scripts/affected.sh)"
+qadd_ask "$qclaude/settings.local.json" "Bash(gofmt *)"
+printf '{"permissions": {"ask": ["Bash(make lint)"], "deny": ["Bash(make check)"], "allow": ["Bash(npm test)"]}}\n' \
+  >"$quser/settings.json"
+out=$(qdoctor)
+printf '%s\n' "$out" | grep -qF 'ask rule Bash(npm ci*) in .claude/settings.local.json stops "npm ci"' &&
+  pass "ask rules: an ask rule in the local file matching gate_setup is noted" || fail "ask rules: no note for gate_setup ($out)"
+printf '%s\n' "$out" | grep -qF 'ask rule Bash(scripts/affected.sh) in .claude/settings.local.json stops "scripts/affected.sh"' &&
+  pass "ask rules: an ask rule matching the affected command is noted" || fail "ask rules: no note for affected ($out)"
+printf '%s\n' "$out" | grep -F 'ask rule Bash(gofmt *) in .claude/settings.local.json stops "gofmt -w ' | grep -qF 'narrow it' &&
+  pass "ask rules: an ask rule matching the format command is noted" || fail "ask rules: no note for format ($out)"
+printf '%s\n' "$out" | grep -qF "ask rule Bash(make lint) in the user settings ($quser/settings.json) stops \"make lint\"" &&
+  pass "ask rules: an ask rule in the user settings is noted, naming the file" || fail "ask rules: no note for the user ask rule ($out)"
+expect "ask rules: the user settings' deny and allow rules are not read" "" \
+  "$(printf '%s\n' "$out" | grep -F 'make check' | grep -F 'user settings')"
+expect "ask rules: a rule without a wildcard prefix is not said to match inside other words" "" \
+  "$(printf '%s\n' "$out" | grep -F 'Bash(npm ci*)' | grep -F 'inside other words')"
+# A narrow ask rule (the paths it guards) and another tool's rule are not noted.
+rm -f "$quser/settings.json"
+cp "$qwork/local-full.json" "$qclaude/settings.local.json"
+qadd_ask "$qclaude/settings.json" "Bash(go build -o /*)"
+qadd_ask "$qclaude/settings.json" "Read(./secrets/**)"
+expect "ask rules: a narrow ask rule and another tool's rule are not noted" "" "$(qdoctor | grep -F 'ask rule')"
+
+# Read only: doctor never edits the project or user settings.
+qadd_ask "$qclaude/settings.json" "Bash(*go * -o*)"
+qadd_ask "$qclaude/settings.local.json" "Bash(npm ci*)"
+printf '{"permissions": {"ask": ["Bash(make lint)"]}}\n' >"$quser/settings.json"
+qsum() { cksum "$qclaude/settings.json" "$qclaude/settings.local.json" "$quser/settings.json"; }
+qbefore=$(qsum)
+qdoctor >/dev/null
+qdoctor 1 >/dev/null
+expect "ask rules: doctor leaves the settings files unchanged" "$qbefore" "$(qsum)"
+
+# The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
+grep -qF 'note permissions: ask rule' "$plugin/skills/doctor/SKILL.md" && pass "ask rules: the doctor skill has the ask-rule row" ||
+  fail "ask rules: the doctor skill lacks the ask-rule row"
+awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF 'ask rule' &&
+  pass "ask rules: the README permissions section describes the ask-rule check" || fail "ask rules: the README lacks the ask-rule check"
+awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#84' && pass "ask rules: CHANGELOG has a #84 entry under Unreleased" ||
+  fail "ask rules: no #84 entry under ## Unreleased"
+cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"
