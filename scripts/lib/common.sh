@@ -720,7 +720,7 @@ dl_union_attributes() {
   for ((i = 0; i < count; i++)); do
     path=$(cfg "merge.union_files.$i")
     case $path in
-      "" | *[[:space:]]* | '!'* | '#'* | *[*?[]* | *'\'*)
+      "" | *[[:space:]]* | '!'* | '#'* | *[*?[]* | *\\*)
         dl_warn "merge.union_files: skipping '$path' (a literal path: no spaces, wildcards, backslash, leading ! or #)" ;;
       *) printf '/%s merge=dl-union\n' "${path#/}" >>"$file" ;;
     esac
