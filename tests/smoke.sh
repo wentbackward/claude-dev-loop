@@ -5735,6 +5735,9 @@ echo "$out" | grep -qF "kept worktree $kwork/wt23: it changed after it was moved
   [ -z "$(ls -d "$kwork/wt23.removing-"* 2>/dev/null)" ] && [ "$(git -C "$kwork/project" worktree list --porcelain | grep -c "^worktree $kwork/wt23$")" = 1 ] &&
   [ -n "$(git -C "$kwork/project" branch --list feat/23-aside)" ] &&
   pass "kwt: a worktree that changes after it was moved aside is moved back and kept" || fail "kwt: wt23: $out"
+[ -z "$(find "$khome/project/archive" -name 'feat_2[0-3]-*' 2>/dev/null)" ] &&
+  pass "kwt: a worktree kept during the run leaves no archive folder behind" ||
+  fail "kwt: archive folders left: $(find "$khome/project/archive" -name 'feat_2[0-3]-*' 2>/dev/null)"
 rm -rf "$kwork/wt22/$(printf 'a\nb')"
 chmod 555 "$khome/project/archive"
 out=$(kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
@@ -5742,6 +5745,70 @@ chmod 755 "$khome/project/archive"
 echo "$out" | grep -qF "kept worktree $kwork/wt22: its archive could not be written or checked" && [ -d "$kwork/wt22" ] &&
   [ -n "$(git -C "$kwork/project" branch --list feat/22-newline)" ] &&
   pass "kwt: an archive directory that cannot be written keeps the worktree and its branch" || fail "kwt: unwritable: $out"
+
+# The settle window above 0 after the move: renaming the worktree sets its own folder's ctime to now, which
+# must not count as a change. A find shim turns -mmin/-cmin into -newer/-cnewer against a file touched after
+# the setup, so only a later change is recent.
+kbranch feat/50-settle merged && kwt feat/50-settle "$kwork/wt50"
+: >"$kwork/settle.ref" && sleep 1
+mkdir -p "$kwork/shim2"
+cat >"$kwork/shim2/find" <<SHIM
+#!/usr/bin/env bash
+case "\$1" in "$kwork/wt50"*) ;; *) exec "$(type -P find)" "\$@" ;; esac
+args=()
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -mmin) args+=(-newer "$kwork/settle.ref"); shift ;;
+    -cmin) args+=(-cnewer "$kwork/settle.ref"); shift ;;
+    *) args+=("\$1") ;;
+  esac
+  shift
+done
+exec "$(type -P find)" "\${args[@]}"
+SHIM
+chmod +x "$kwork/shim2/find"
+out=$(PATH="$kwork/shim2:$PATH" KSETTLE=10 kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+[ ! -d "$kwork/wt50" ] && [ -z "$(ls -d "$kwork/wt50.removing-"* 2>/dev/null)" ] &&
+  [ -z "$(git -C "$kwork/project" branch --list feat/50-settle)" ] && ! echo "$out" | grep -qF "moved aside" &&
+  [ -n "$(find "$khome/project/archive" -name feat_50-settle 2>/dev/null)" ] &&
+  pass "kwt: with a settle window, the move aside does not count as a change: the worktree is removed" ||
+  fail "kwt: wt50 under a settle window: $out"
+
+# A move aside that fails half-way (a git shim renames the folder and fails) names both paths and removes
+# nothing; the next dry run notes the folder. A merge in progress (with --no-commit, or with a conflict) keeps
+# its worktree.
+kbranch feat/51-halfmove merged && kwt feat/51-halfmove "$kwork/wt51"
+kbranch feat/52-merging merged && git -C "$kwork/project" worktree add -q "$kwork/wt52" feat/52-merging &&
+  git -C "$kwork/wt52" merge -q --no-commit --no-ff feat/2-unmerged >/dev/null 2>&1
+kbranch feat/53-conflict merged && git -C "$kwork/project" worktree add -q "$kwork/wt53" feat/53-conflict &&
+  git -C "$kwork/project" checkout -q -b side53 origin/main && echo other >"$kwork/project/k-53-conflict.txt" &&
+  git -C "$kwork/project" add k-53-conflict.txt && git -C "$kwork/project" commit -q -m "chore: side" &&
+  git -C "$kwork/project" checkout -q feat/4-main
+git -C "$kwork/wt53" merge -q side53 >/dev/null 2>&1
+out=$(kenv "$plugin/scripts/cleanup.sh")
+case "$(kline "$kwork/wt52 ")" in keep*"merge/rebase/cherry-pick is in progress"*) pass "kwt: a worktree in a merge --no-commit is kept" ;;
+  *) fail "kwt: wt52: $out" ;; esac
+case "$(kline "$kwork/wt53 ")" in keep*"merge/rebase/cherry-pick is in progress"*) pass "kwt: a worktree in a conflicted merge is kept" ;;
+  *) fail "kwt: wt53: $out" ;; esac
+mkdir -p "$kwork/shim3"
+cat >"$kwork/shim3/git" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1 \$2 \$3" = "worktree move $kwork/wt51" ]; then mv "\$3" "\$4"; exit 1; fi
+exec "$(type -P git)" "\$@"
+SHIM
+chmod +x "$kwork/shim3/git"
+out=$(PATH="$kwork/shim3:$PATH" kenv "$plugin/scripts/cleanup.sh" --apply --include worktrees)
+kaside=$(ls -d "$kwork/wt51.removing-"* 2>/dev/null | head -n 1)
+echo "$out" | grep -F "kept worktree $kwork/wt51:" | grep -qF "$kaside" && [ -n "$kaside" ] &&
+  [ -f "$kaside/scratch.txt" ] && [ -n "$(git -C "$kwork/project" branch --list feat/51-halfmove)" ] &&
+  pass "kwt: a move aside that fails half-way names both paths and removes nothing" || fail "kwt: wt51: $out"
+[ -f "$kwork/wt52/.git" ] && git -C "$kwork/wt52" rev-parse -q --verify MERGE_HEAD >/dev/null &&
+  [ -n "$(git -C "$kwork/wt53" ls-files -u)" ] &&
+  pass "kwt: worktrees with a merge in progress stay, with the merge" || fail "kwt: wt52/wt53 went: $out"
+out=$(kenv "$plugin/scripts/cleanup.sh")
+echo "$out" | grep -F "$kwork/wt51 " | grep -qF "$kaside" &&
+  pass "kwt: the next dry run notes a missing worktree whose folder was moved aside" || fail "kwt: no note for wt51: $out"
+[ -z "$kaside" ] || mv "$kaside" "$kwork/wt51"
 
 # merge-train's kept line names the command; the dev-loop skill and the CHANGELOG point at it.
 kept=$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_remove_merged_local feat/2-unmerged "$(git rev-parse feat/2-unmerged)"' \
@@ -5760,7 +5827,7 @@ awk '/^## / { n++ } n == 1' "$plugin/CHANGELOG.md" | grep -qF '#83' &&
 git -C "$kwork/project" checkout -q main
 git -C "$kwork/project" worktree unlock "$kwork/wt3"
 chmod 755 "$kwork/wt14/locked-away"
-for d in wt2 wt3 project-gate wt6 wt9 wt11/dist/inner wt11 wt13 wt14 wt20 wt21 wt22 wt23 wt24 wt25 wt40 restored1 restored41; do
+for d in wt2 wt3 project-gate wt6 wt9 wt11/dist/inner wt11 wt13 wt14 wt20 wt21 wt22 wt23 wt24 wt25 wt40 wt50 wt51 wt52 wt53 restored1 restored41; do
   [ ! -d "$kwork/$d" ] || git -C "$kwork/project" worktree remove --force "$kwork/$d"
 done
 cd "$work/project" || exit 1
