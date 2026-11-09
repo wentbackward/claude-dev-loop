@@ -348,25 +348,33 @@ doctor_release_denies() {
 # doctor_ask_rules: an ask rule of the project's .claude/settings.json or settings.local.json, or of the user
 # settings (only their permissions.ask), that matches a command the loop runs or one the project configures
 # stops auto mode for confirmation every time (ask beats allow): a note per rule with the first such command.
+# The gate and the format hook run gate_setup, affected and format outside the Bash tool, so a rule that
+# matches only those stops an agent that runs the command itself, and its note says so.
 doctor_ask_rules() {
-  local samples label file rule cmd user
-  samples=$(dl_perm_loop_samples "$(cd "$scripts_dir/.." && pwd)"; dl_perm_configured_commands)
+  local direct configured user rule fix first_match i labels files
+  direct=$(dl_perm_loop_samples "$(cd "$scripts_dir/.." && pwd)"; dl_perm_project_commands)
+  configured=$(dl_perm_configured_commands)
   user="$(dl_mp_claude_dir)/settings.json"
-  while IFS=$'\t' read -r label file; do
+  labels=(.claude/settings.json .claude/settings.local.json "the user settings ($user)")
+  files=("$DL_ROOT/.claude/settings.json" "$DL_ROOT/.claude/settings.local.json" "$user")
+  for i in 0 1 2; do
     while IFS= read -r rule; do
-      cmd=$(doctor_first_match "$rule" "$samples") || continue
-      optional "permissions: ask rule $rule in $label stops \"$cmd\", a command the loop runs: auto mode stops for confirmation every time$(doctor_inside_words "$rule") (narrow it, e.g. to the paths it guards; ask beats allow; the owner edits the settings)"
-    done < <(dl_perm_rules "$file" ask)
-  done < <(printf '%s\t%s\n' .claude/settings.json "$DL_ROOT/.claude/settings.json" \
-    .claude/settings.local.json "$DL_ROOT/.claude/settings.local.json" "the user settings ($user)" "$user")
+      fix="$(doctor_inside_words "$rule") (narrow it, e.g. to the paths it guards; ask beats allow; the owner edits the settings)"
+      if doctor_first_match "$rule" "$direct"; then
+        optional "permissions: ask rule $rule in ${labels[i]} stops \"$first_match\", a command the loop runs: auto mode stops for confirmation every time$fix"
+      elif doctor_first_match "$rule" "$configured"; then
+        optional "permissions: ask rule $rule in ${labels[i]} matches \"$first_match\", a command the gate or the format hook runs outside the Bash tool: it stops auto mode only when an agent runs that command itself through the Bash tool, then every time$fix"
+      fi
+    done < <(dl_perm_rules "${files[i]}" ask)
+  done
 }
 
-# doctor_first_match RULE COMMANDS: the first of the COMMANDS (one per line) the Bash permission RULE matches;
-# fails when it matches none.
+# doctor_first_match RULE COMMANDS: true when the Bash permission RULE matches one of the COMMANDS (one per
+# line); sets first_match (declared local by the caller) to the first such command, without a subshell.
 doctor_first_match() {
   local cmd
   while IFS= read -r cmd; do
-    dl_perm_match "$1" "$cmd" && { printf '%s\n' "$cmd"; return 0; }
+    dl_perm_match "$1" "$cmd" && { first_match=$cmd; return 0; }
   done <<<"$2"
   return 1
 }
@@ -383,11 +391,8 @@ doctor_inside_words() {
 
 # doctor_rule_matches_any RULE COMMANDS: true when the Bash permission RULE matches one of the COMMANDS (one per line).
 doctor_rule_matches_any() {
-  local cmd
-  while IFS= read -r cmd; do
-    dl_perm_match "$1" "$cmd" && return 0
-  done <<<"$2"
-  return 1
+  local first_match
+  doctor_first_match "$1" "$2"
 }
 
 # doctor_worktrees: print worktrees_dir; outside the working directory and not in the project's
