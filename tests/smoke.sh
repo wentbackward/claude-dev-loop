@@ -7470,6 +7470,8 @@ out=$(ssched add 2026-12-28 09:30 '#12' business measure latency again)
 case $out in "already scheduled"*) pass "schedule add: the same item twice is written once" ;; *) fail "schedule add: duplicate ($out)" ;; esac
 expect "schedule add: one line per distinct item" 1 "$(grep -c 'measure latency again' "$sfile")"
 before=$(cat "$sfile")
+ssched add 2026-12-28 10:00 '#1' - "tab$(printf '\t')inside" >/dev/null 2>&1
+expect "schedule add: refuses a tab in a field (it would split the rows)" 2 $?
 for bad in "2026-02-30 10:00 #1 -" "2026-12-28 24:00 #1 -" "2026-12-28 9:30 #1 -" "2026-12-28 10:00 x1 -" "2026-12-28 10:00 #1 two|words"; do
   # shellcheck disable=SC2086  # the fields are split on purpose
   ssched add $bad "do something" >/dev/null 2>&1
@@ -7556,5 +7558,13 @@ expect "schedule timezone: the same item is upcoming in UTC-12" UPCOMING "$(stz 
 printf '{"base_branch": "main", "checks": ["true"], "schedule": {"timezone": "Not/AZone"}}\n' >"$swork/tz.json"
 DEV_LOOP_CONFIG="$swork/tz.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -q '^MISSING schedule.timezone: "Not/AZone"' &&
   pass "schedule timezone: doctor reports an unknown zone" || fail "schedule timezone: doctor accepts an unknown zone"
+# An unknown zone silently reads the clock in UTC: check, the hook and status must say so.
+DEV_LOOP_CONFIG="$swork/tz.json" ssched check 2>&1 >/dev/null | grep -q 'warning: schedule.timezone "Not/AZone" is not a known time zone' &&
+  pass "schedule timezone: check warns about an unknown zone" || fail "schedule timezone: check is silent about an unknown zone"
+echo '{}' | DEV_LOOP_CONFIG="$swork/tz.json" CLAUDE_PROJECT_DIR="$swork/sched" "$plugin/hooks/session-start.sh" 2>/dev/null |
+  grep -q 'warning: schedule.timezone "Not/AZone"' && pass "schedule timezone: the hook's output carries the warning" ||
+  fail "schedule timezone: the hook does not warn about an unknown zone"
+DEV_LOOP_CONFIG="$swork/tz.json" "$plugin/scripts/status.sh" --no-gh | grep -q '^schedule: .*warning: not a known time zone' &&
+  pass "schedule timezone: status warns about an unknown zone" || fail "schedule timezone: status is silent about an unknown zone"
 cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"

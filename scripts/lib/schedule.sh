@@ -32,6 +32,15 @@ dl_schedule_tz_ok() {
   [ -f "/usr/share/zoneinfo/$1" ]
 }
 
+# dl_schedule_tz_warning: one line when schedule.timezone names no known zone (date then silently uses UTC,
+# so items come due hours early or late); nothing otherwise.
+dl_schedule_tz_warning() {
+  local tz
+  tz=$(dl_schedule_tz)
+  dl_schedule_tz_ok "$tz" ||
+    printf 'dev-loop: warning: schedule.timezone "%s" is not a known time zone, so the times below are read in UTC\n' "$tz"
+}
+
 # dl_schedule_days: how many days ahead "check" lists upcoming items (schedule.days, default 7).
 dl_schedule_days() {
   local days

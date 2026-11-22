@@ -15,7 +15,8 @@
 # pending item with its line and class; check prints the OVERDUE (a day before today), DUE (today, at or
 # before now) and UPCOMING (within schedule.days days, default 7, or --days) items and nothing when there
 # are none. Malformed item lines are ignored, with a warning on stderr. DEV_LOOP_NOW="YYYY-MM-DD HH:MM"
-# replaces the clock (tests). Exit: 0, 1 nothing to mark done, 2 usage.
+# replaces the clock (tests). An unknown schedule.timezone is warned about on stderr. One writer is assumed (the
+# orchestrator): add and done take no lock. Exit: 0, 1 nothing to mark done, 2 usage.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -66,6 +67,7 @@ schedule_add() {
   shift 4
   what="$*"
   case $what in *$'\n'* | *$'\r'*) usage_error "what to do must be one line" ;; esac
+  case $ticket$window$what in *$'\t'*) usage_error "no field may hold a tab" ;; esac
   line=$(dl_schedule_line "$time" "$ticket" "$window" "$what")
   # The item must read back as an item: the same parser as check, on the line alone.
   if printf '%s\n' "$line" | dl_schedule_rows "0000-01-01 00:00" 0 - | grep -q '^MALFORMED'; then
@@ -145,6 +147,7 @@ dl_load_config
 command=${1:-}
 [ $# -eq 0 ] || shift
 now=$(now_checked) || exit 2
+case $command in list | check) dl_schedule_tz_warning >&2 ;; esac
 case $command in
   add) schedule_add "$@" ;;
   done) schedule_done "$@" ;;

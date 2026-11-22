@@ -302,7 +302,8 @@ The fields are the time (`YYYY-MM-DD HH:MM`), the ticket (`#<n>` or `-`), a wind
 
 Times are compared as text in the schedule's zone (`TZ=<zone> date`), so it works the same on Linux and
 macOS with no date arithmetic on clock times. A hand-edited line that starts with `- ` and does not parse
-is ignored, named on stderr and in `doctor.sh`.
+is ignored, named on stderr and in `doctor.sh`. One writer (the orchestrator) is assumed: `add` and
+`done` take no lock.
 
 With `"schedule": {}` (or `{"timezone": "Europe/Berlin", "days": 7}`) in `.dev-loop.json`:
 
@@ -313,6 +314,7 @@ With `"schedule": {}` (or `{"timezone": "Europe/Berlin", "days": 7}`) in `.dev-l
 - **`status.sh`** shows the overdue, due and upcoming items (`schedule` in `--json`);
 - **`doctor.sh`** notes each overdue item and each malformed line, and reports a time zone it cannot find
   under `/usr/share/zoneinfo`.
+  `check`, the hook and `status.sh` also warn about such a zone, since `date` then reads the clock in UTC.
 
 Without the key the hook is a silent no-op, `status.sh --json` has no `schedule` field, and nothing
 else changes. The `dev-loop` skill has the orchestrator add a line (plus an in-session timer and a comment on

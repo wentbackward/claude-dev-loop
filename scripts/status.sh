@@ -460,6 +460,7 @@ if dl_schedule_on; then
   s_upcoming=$(printf '%s\n' "$s_counts" | tr ' ' '\n' | grep -c '^UPCOMING$')
   s_tz=$(dl_schedule_tz)
   schedule_line="schedule: $s_overdue overdue, $s_due due, $s_upcoming upcoming in $(dl_schedule_days) days (time zone ${s_tz:-local})"
+  dl_schedule_tz_ok "$s_tz" || schedule_line+="; warning: not a known time zone, times read in UTC"
   schedule_json="{\"file\":$(dl_json_string "$(dl_schedule_file)"),\"timezone\":$(jstr "$s_tz"),\"overdue\":$s_overdue,\"due\":$s_due,\"upcoming\":$s_upcoming,\"items\":[$s_json]}"
 fi
 
