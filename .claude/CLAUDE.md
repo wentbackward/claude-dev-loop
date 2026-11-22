@@ -28,7 +28,8 @@ source of truth for what it does is the open and closed GitHub issues plus `READ
 1. **Tickets:** one GitHub issue per piece of work, with acceptance criteria; large features are split
    into numbered parts (5a, 5b, ...), each its own issue.
 2. **Branch per ticket:** `feat/<issue>-<slug>` (or `fix/`, `chore/`, `docs/`), each in its own worktree.
-3. **Test first:** failing smoke tests (`tests/smoke.sh`, `tests/identity.sh`) for each criterion.
+3. **Test first:** failing smoke or identity tests (`tests/smoke.sh`, `tests/identity.sh`) for each
+   behavioural criterion; a criterion phrased as a grep or a file check is verified once, at review.
 4. **Targeted checks while implementing:** `make lint`, and the test section you touched with
    `tests/smoke.sh --section <id or name>` (`--list` names them), from a fresh `mktemp -d` directory with
    `TMPDIR` set to it. The gate runs `make check` once per batch.
@@ -38,6 +39,38 @@ source of truth for what it does is the open and closed GitHub issues plus `READ
 7. **Gate and merge:** `gate-train.sh`, then `merge-train.sh`; never merge red.
 8. Every user-visible change gets an entry under `## Unreleased` in `CHANGELOG.md` and the README and skill
    text that describe it, in the same branch.
+
+## Engineering standard
+
+Pedantic about *correctness and evidence*: exact behaviour, edge cases, contracts, and proof that a change
+works. Not pedantic about form. Good engineering, not over-engineering: every test, finding and line of code
+must earn its cost.
+
+- Tests run the scripts, hooks and helpers and check what they do: output, exit status, and the files,
+  branches and repositories they change. Never write a test that greps a skill, an agent brief, `README.md`,
+  `CHANGELOG.md`, `docs/`, a template's prose or a script's source. Text a program reads (a
+  `.dev-loop.json` or `settings.json` template, `hooks.json`, the plugin manifests, the section headers
+  `tests/smoke.sh --list` reads) is tested by parsing or executing it, not by grepping it.
+- Acceptance criteria phrased as greps or file checks (a skill names a step, the CHANGELOG has an entry)
+  are verified once, at review, and quoted in the report. They do not become permanent tests.
+- Every review finding states a concrete failure scenario (input/state -> wrong outcome).
+- Severity = likelihood x impact. MUST-FIX: a plausible failure with real impact (wrong behaviour,
+  security, data loss, broken contract). SHOULD-FIX: unlikely or low-impact failures. NIT: no failure
+  scenario; batch nits, never block on them.
+- Test economy: the minimum set of checks that guards the most likely real regressions. Each check's
+  description names the behaviour it guards. Prefer one behaviour check over several narrow ones; a check
+  that cannot fail for a real bug is a cost, not a benefit. New checks go in the section of the script
+  they exercise, runnable alone with `tests/smoke.sh --section <id>`.
+- Four kinds of text check stay, because each guards a safety property no run of a script can show: the
+  holdout scenarios stay hidden (the coding-agent briefs and prompt templates never name the store; the
+  issue lists sealed scenarios only as a count); no skill or brief tells anyone to force-push; each
+  agent's `tools:` line (config Claude Code reads) grants exactly its expected tools; and section 27b
+  checks that both suites keep their work-dir guard before it runs them nested.
+- Checks of a deletion's dangerous direction (what cleanup must keep, what the guard must refuse, what a
+  union merge must not lose) are behaviour checks, not exceptions, and always stay.
+- Findings about tests, comments or docs alone go to the polish backlog once. A review of a polish-backlog
+  ticket never creates another backlog ticket.
+- Deleting code or tests that add no protection is a valid improvement.
 
 ## Engineering rules
 

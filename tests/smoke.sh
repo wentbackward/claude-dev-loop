@@ -1406,8 +1406,6 @@ expect "doctor without architecture prints no architecture lines" 0 \
 expect "the template's empty architecture block keeps the check off" "2 0" \
   "$(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/arch-check.sh" HEAD >/dev/null 2>&1
     echo "$?") $(DEV_LOOP_CONFIG="$plugin/templates/dev-loop.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "arch ")"
-[ -f "$plugin/templates/COMPONENT.md" ] && grep -q "^kind: component" "$plugin/templates/COMPONENT.md" &&
-  pass "the component card template has the header" || fail "no templates/COMPONENT.md"
 
 # Ratchet integrity (#17): a card edit that hides a violation needs a reason, a fixed baseline entry is
 # removed by the branch that fixes it, a placeholder is not a reason, and two cards may not share a glob.
@@ -1564,7 +1562,6 @@ git checkout -q main
 gate_arch "$work/arch.json" feat/124-cards >/dev/null
 echo "$out" | grep -q "arch-check error on the base" && [ "$rc" -eq 2 ] &&
   pass "an error on the base while judging fixed entries ends the gate with exit 2" || fail "base error: rc $rc: $out"
-expect "no line of the implementer's steps is over 110 characters" "" "$(awk 'FNR > 5 && length > 110' "$plugin/agents/implementer.md")"
 
 # 14b. The gate's own rules (#22): a branch that changes a gate-relevant key of .dev-loop.json needs a reason
 # under "## Config"; config blocks compare as normalized JSON; the placeholder filter knows filler and repeats.
@@ -1700,13 +1697,6 @@ expect "a reordered config needs no reason with the python3 fallback too" "0 TRA
 git checkout -q -B feat/146-plain origin/main && echo plain >>src.txt && git commit -q -am "feat: plain" &&
   git push -q -u origin feat/146-plain 2>/dev/null && git checkout -q main
 expect "a branch without a config change needs no reason" "0 TRAIN GREEN" "$(rules_gate feat/146-plain)"
-reviewer="$plugin/agents/code-reviewer.md"
-grep -qF "## Config" "$reviewer" && grep -qF "## Architecture" "$reviewer" && grep -qi "collaborative" "$reviewer" &&
-  pass "the reviewer brief reads every Architecture and Config reason and asks the user before loosening" ||
-  fail "the reviewer brief lacks the rules review"
-grep -qF "\`## Config\`" "$plugin/README.md" && grep -qF "see above" "$plugin/README.md" &&
-  grep -qF "see above" "$reviewer" && pass "the README and the reviewer say the filter stops only lazy placeholders" ||
-  fail "README or reviewer lack ## Config or the filter's limits"
 git checkout -q -f main && git clean -qfd
 
 # 14c. Config-check edges (#25): the first config is announced, not silently skipped; every key is named
@@ -1762,9 +1752,6 @@ cd "$work/project" || exit 1
 rules_gate feat/146-plain >/dev/null
 grep -qF "first .dev-loop.json" "$work/rules-out.txt" && fail "a branch on a base with a config got the notice" ||
   pass "a branch on a base that has a config gets no first-config notice"
-grep -qF "first \`.dev-loop.json\`" "$reviewer" && grep -qF "line by line" "$reviewer" &&
-  pass "the reviewer brief reads a first config with deploy or format commands line by line" ||
-  fail "the reviewer brief lacks the first-config rule"
 git checkout -q -f main && git clean -qfd
 
 # 15. The slice loop and the doc-auditor: docs.prd, docs.audit_every, the audit marker and doctor's audit
@@ -1853,14 +1840,14 @@ expect "the template lists docs.prd, docs.audit_every and the doc-auditor's mode
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"].get("doc-auditor"))' \
     "$plugin/templates/dev-loop.json" 2>/dev/null)"
-auditor="$plugin/agents/doc-auditor.md"
-grep -q "^name: doc-auditor$" "$auditor" 2>/dev/null && pass "the doc-auditor agent exists" || fail "no agents/doc-auditor.md"
-grep "^tools:" "$auditor" 2>/dev/null | grep -qv "Write\|Edit" && pass "the doc-auditor's tools list has no Write or Edit" ||
-  fail "the doc-auditor's tools are not read-only"
-skill="$plugin/skills/dev-loop/SKILL.md"
-[ "$(grep -c "doc-auditor" "$skill")" -ge 3 ] && grep -qF "Components:" "$skill" && grep -qF "docs.prd" "$skill" &&
-  pass "the dev-loop skill starts the doc-auditor and names the ticket lines and the PRD" ||
-  fail "the dev-loop skill lacks the slice loop"
+# The tools each agent gets (Claude Code reads the tools: line): the read-only agents never get Write or
+# Edit, and the scenario writer keeps the file tools it needs to write the store.
+for agent_tools in "doc-auditor:Read, Grep, Glob, Bash" "architect:Read, Grep, Glob, Bash" \
+  "scenario-judge:Read, Grep, Glob, Bash" "code-reviewer:Read, Grep, Glob, Bash" "verifier:Read, Grep, Glob, Bash" \
+  "scenario-writer:Read, Grep, Glob, Write, Edit, Bash"; do
+  expect "the ${agent_tools%%:*} agent's tools are ${agent_tools#*:}" "tools: ${agent_tools#*:}" \
+    "$(awk 'NR > 1 && /^---$/ { exit } /^tools:/' "$plugin/agents/${agent_tools%%:*}.md" 2>/dev/null)"
+done
 git checkout -q -f main && git clean -qfd
 
 # 16. Merge evidence and the architect (#19): the ledger's new fields, arch-evidence.sh on a seeded ledger
@@ -2121,14 +2108,6 @@ expect "the template lists the architect's cadence, scatter and model" "20 3 opu
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(c["architecture"].get("cadence"), c["architecture"].get("scatter"), c["models"].get("architect"))' \
     "$plugin/templates/dev-loop.json" 2>/dev/null)"
-architect="$plugin/agents/architect.md"
-grep -q "^name: architect$" "$architect" 2>/dev/null && pass "the architect agent exists" || fail "no agents/architect.md"
-grep "^tools:" "$architect" 2>/dev/null | grep -qv "Write\|Edit" && pass "the architect's tools list has no Write or Edit" ||
-  fail "the architect's tools are not read-only"
-grep -qi "extraction ladder" "$architect" && grep -qF "user's go" "$architect" &&
-  pass "the architect's brief keeps the extraction ladder's last step for the user's go" || fail "no ladder in the brief"
-grep -qF "arch-evidence.sh" "$skill" && grep -qF "architecture.cadence" "$skill" && grep -qF "models.architect" "$skill" &&
-  pass "the dev-loop skill starts the architect on cadence or signals" || fail "the dev-loop skill lacks the architect"
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 
 # Scenario store (#30): where the holdout scenarios live, their format and validation; doctor reports them.
@@ -2315,9 +2294,6 @@ example="$plugin/templates/scenario.md"
 mkdir -p "$work/scen-example" && cp "$example" "$work/scen-example/"
 expect "the example scenario in templates/ is valid" "1 rc=0" \
   "$(scenlib 'echo "$(dl_scenarios_count "$1") $(dl_scenarios_validate "$1"; echo "rc=$?")"' "$work/scen-example")"
-grep -qF "scenarios.dir" "$plugin/README.md" && grep -qF "min_satisfaction" "$plugin/README.md" &&
-  grep -qF "templates/scenario.md" "$plugin/README.md" && pass "the README documents the scenario keys and the example" ||
-  fail "the README lacks the scenario keys"
 
 # Scenario isolation (#31): the role guard keeps the store from the implementer, test-engineer and reviewer.
 iso="$work/iso"
@@ -2415,10 +2391,11 @@ outside_event='{"tool_name": "Bash", "cwd": "'"$iso_home"'", "agent_type": "dev-
 expect "isolation: from a cwd outside any repository the store comes from the project directory" 2 \
   "$(printf '%s' "$outside_event" | HOME="$iso_home" DEV_LOOP_HOME="$iso_home/.dev-loop" CLAUDE_PROJECT_DIR="$iso/guardproj-1" \
     "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
-grep -qi "scenario" "$plugin/templates/settings.json" && fail "templates/settings.json has a scenario deny rule (it would block the judge)" ||
-  pass "templates/settings.json has no deny rule that would block the scenario-judge"
-grep -qF "agent-type guard" "$plugin/README.md" && grep -qF "no access to the scenarios repository" "$plugin/README.md" &&
-  pass "the README explains the agent-type guard and the identity-mode note" || fail "the README lacks the isolation section"
+expect "templates/settings.json has no deny rule that would block the scenario-judge" "" \
+  "$(python3 -I -c 'import json, sys
+perms = json.load(open(sys.argv[1]))["permissions"]
+print("\n".join(r for k in ("ask", "deny") for r in perms.get(k, []) if "scenario" in r.lower()))' \
+    "$plugin/templates/settings.json")"
 
 # Git stop conditions (#71): the guard parses each git command (quotes, backslashes, bundled short flags,
 # unique long-option prefixes) and refuses what the stop conditions forbid, in every loop project.
@@ -2769,39 +2746,21 @@ expect "git guard: a project without .dev-loop.json is unaffected (no project di
     "tool_input": {"command": "git rebase -x x main"}}))' "$gg/plain" | env -u CLAUDE_PROJECT_DIR "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
 expect "git guard: a non-Bash tool call passes" 0 "$(printf '{"tool_name": "Read", "cwd": "%s", "tool_input": {"file_path": "x"}}' "$gg/proj-1" |
   CLAUDE_PROJECT_DIR="$gg/proj-1" "$plugin/hooks/guard-role.sh" 2>/dev/null; echo $?)"
-grep -qF '"Bash(git rebase *)"' "$plugin/templates/settings.json" && fail "git guard: the template still allows any git rebase" ||
-  pass "git guard: the template no longer allows any git rebase"
-for rule in "git rebase --continue" "git rebase --abort" "git rebase --skip"; do
-  grep -qF "\"Bash($rule)\"" "$plugin/templates/settings.json" && pass "git guard: the template allows exactly \"$rule\"" ||
-    fail "git guard: the template lacks \"$rule\""
-done
-grep -qF '"guard": false' "$plugin/README.md" && pass "git guard: the README documents \"guard\": false" ||
-  fail "git guard: the README does not document \"guard\": false"
-grep -qF "#71" "$plugin/CHANGELOG.md" && pass "git guard: CHANGELOG has an entry for #71" || fail "git guard: no CHANGELOG #71 entry"
-grep -qF "tripwire, not the boundary" "$plugin/README.md" && grep -qF "branch and tag protection" "$plugin/README.md" &&
-  pass "git guard: the README calls the guard a tripwire and names the remote's protection" ||
-  fail "git guard: the README does not say the guard is a tripwire"
-grep -qF '! git worktree remove --force --force' "$plugin/skills/setup/SKILL.md" &&
-  pass "git guard: the setup skill has the owner run the forced worktree removal" ||
-  fail "git guard: the setup skill still has the session run a forced worktree removal"
-grep -qF "git commit -F - <<'EOF'" "$plugin/agents/implementer.md" &&
-  pass "git guard: the implementer brief passes commit messages plainly" || fail "git guard: the implementer brief lacks the plain commit form"
+# template_allows COMMAND: y when an allow rule of templates/settings.json matches COMMAND, else n.
+template_allows() {
+  bash -c '. "$1/scripts/lib/common.sh" && . "$1/scripts/lib/permissions.sh" || exit 1
+    python3 -I -c "import json, sys; print(\"\n\".join(json.load(open(sys.argv[1]))[\"permissions\"][\"allow\"]))" \
+      "$1/templates/settings.json" | while IFS= read -r rule; do dl_perm_match "$rule" "$2" && echo y; done | grep -q y &&
+      echo y || echo n' _ "$plugin" "$1"
+}
+expect "git guard: the template allows the rebase steps, not a rebase or an interactive one" "y y y n n" \
+  "$(template_allows 'git rebase --continue') $(template_allows 'git rebase --abort') $(template_allows 'git rebase --skip') \
+$(template_allows 'git rebase -i main') $(template_allows 'git rebase --onto main x')"
 
 # Scenario writer and the orchestrator's scenario steps (#33): the writer brief writes only to the
 # store, from the spec; no implementer, test-engineer or code-reviewer brief or prompt names the store;
 # doctor's models line gains scenario-writer only when scenarios are on (or it is set).
-writer="$plugin/agents/scenario-writer.md"
 skill="$plugin/skills/dev-loop/SKILL.md"
-if [ -f "$writer" ]; then pass "the scenario-writer agent exists"; else fail "no agents/scenario-writer.md"; fi
-grep -qE '^tools: Read, Grep, Glob, Write, Edit, Bash$' "$writer" 2>/dev/null && pass "the writer has the file tools and Bash" ||
-  fail "the writer's tools line is not Read, Grep, Glob, Write, Edit, Bash"
-grep -qF "paths.sh scenarios" "$writer" 2>/dev/null && pass "the writer finds the store with paths.sh scenarios" ||
-  fail "the writer brief does not name paths.sh scenarios"
-grep -qF "You write only inside the scenario store" "$writer" 2>/dev/null && pass "the writer brief says it writes only to the store" ||
-  fail "the writer brief does not limit its writes to the store"
-grep -qF "never from the code" "$writer" 2>/dev/null && grep -qF "never implement" "$writer" 2>/dev/null &&
-  pass "the writer brief writes from the spec, never from the code, and never implements" ||
-  fail "the writer brief lacks 'never from the code' or 'never implement'"
 for brief in implementer test-engineer code-reviewer; do
   if grep -qiE 'scenarios\.dir|paths\.sh scenarios|scenario store|holdout' "$plugin/agents/$brief.md"; then
     fail "the $brief brief names the scenario store"
@@ -2814,13 +2773,6 @@ coder_prompts=$(awk '/^```/ { if (inblock) { inblock = 0; keep = 0 } else { inbl
 [ -n "$coder_prompts" ] && pass "the skill's implementer and reviewer prompt templates are found" || fail "no prompt templates found"
 if printf '%s\n' "$coder_prompts" | grep -qiE 'scenario'; then fail "a coding agent's prompt template mentions scenarios"
 else pass "no implementer or reviewer prompt template mentions scenarios"; fi
-section=$(awk '/^## / { on = ($0 ~ /^## [0-9a-z]*\.? ?Scenarios/) } on' "$skill")
-[ -n "$section" ] && pass "the dev-loop skill has a Scenarios section" || fail "no Scenarios section in the dev-loop skill"
-for phrase in "scenario-writer" "models.scenario-writer" "at ticket creation" "titles only" "missing behaviour" \
-  "never put the store path"; do
-  printf '%s\n' "$section" | grep -qiF "$phrase" && pass "the Scenarios section covers: $phrase" ||
-    fail "the Scenarios section lacks: $phrase"
-done
 writer_model() { # writer_model CONFIG: the models line of doctor.sh
   DEV_LOOP_CONFIG="$1" "$plugin/scripts/doctor.sh" 2>&1 | grep -E '^ +models +'
 }
@@ -2837,10 +2789,6 @@ printf '{"checks": ["true"], "models": {"scenario-writer": "gpt"}}\n' >"$work/wr
 DEV_LOOP_CONFIG="$work/writer-bad.json" "$plugin/scripts/doctor.sh" 2>&1 |
   grep -qF 'MISSING models.scenario-writer: "gpt"' && pass "doctor reports an unknown scenario-writer model, also without scenarios" ||
   fail "no MISSING for models.scenario-writer"
-grep -qF "scenario-writer" "$plugin/README.md" && grep -qF "models.scenario-writer" "$plugin/README.md" &&
-  pass "the README documents the scenario writer and its model" || fail "the README lacks the scenario writer"
-grep -qF "scenario-writer" "$plugin/CHANGELOG.md" &&
-  pass "the changelog names the scenario writer" || fail "no changelog entry for the scenario writer"
 
 # Scenario judge and gate stage (#32): the gate starts scenarios.run, judges each scenario with the judge
 # command (a fake here: it reads its scores from the scenario's own front matter), rejudges a failure once
@@ -3014,9 +2962,6 @@ printf '%s\n' "$out" | grep -qE '^scenarios red: 2 judged, 1 required unsatisfie
   fail "the red line of a mixed store counts the sealed required failure"
 printf '%s\n' "$out" | cat - "$stage_log" | grep -qE "$sealed_id|SEALED-MISSING" &&
   fail "the sealed scenario of a mixed store is named" || pass "the sealed scenario of a mixed store is not named"
-grep -qiE "daemon that calls .setsid.*escapes" "$plugin/README.md" && grep -qF "setsid" "$plugin/docs/DECISIONS.md" &&
-  pass "the README and DECISIONS record that a setsid daemon escapes the stop (#40)" ||
-  fail "the setsid limit of the scenario stop is not documented"
 printf '{"scenarios": {"dir": "%s", "sealed": 0.5}}\n' "$jstore" >"$work/judge-sealed.json"
 expect "dl_scenario_sealed takes a scenario file or an id, with scenarios.sealed as the default share" "yes yes no" \
   "$(scen_config="$work/judge-sealed.json" scenlib 'for x in "$1" "$(basename "$1" .md)"; do dl_scenario_sealed "$x" && printf "yes " || printf "no "; done; dl_scenario_sealed "$(basename "$1" .md)" 0 && echo yes || echo no' "$jstore/$sealed_id.md")"
@@ -3133,14 +3078,6 @@ printf '%s\n' "$section_1b" | grep -qF "dl_scenario_sealed" && printf '%s\n' "$s
   printf '%s\n' "$section_1b" | grep -qF "never by id or title" &&
   pass "the dev-loop skill lists sealed scenarios on the issue only as a count, told apart by dl_scenario_sealed" ||
   fail "section 1b does not keep sealed scenarios off the issue"
-judge_agent="$plugin/agents/scenario-judge.md"
-awk 'NR == 1, /^tools:/' "$judge_agent" 2>/dev/null | grep -qE '^name: scenario-judge$' &&
-  grep -E '^tools:' "$judge_agent" | grep -vqE 'Write|Edit' && pass "the scenario-judge agent exists and cannot write" ||
-  fail "no read-only scenario-judge agent"
-grep -qF '"missing"' "$judge_agent" && grep -qF '"satisfied"' "$judge_agent" && pass "the judge's brief defines its JSON" ||
-  fail "the judge's brief lacks the JSON"
-grep -qF "scenario-judge" "$plugin/skills/gate/SKILL.md" && grep -qF "scenarios.judge" "$plugin/README.md" &&
-  pass "the gate skill and the README document the scenario stage" || fail "the scenario stage is not documented"
 git checkout -q -f main
 
 # Factory preset (#34): "factory" is collaborative (default) or dark; dark turns scenarios on by default
@@ -3284,25 +3221,6 @@ for name in none collab dark night dark-off dark-null dark-on plain-off plain-nu
   [ "$lib" = "$hook" ] && same=$((same + 1)) || echo "  config $name: dl_scenarios_on says $lib, the guard $hook"
 done
 expect "guard: the hook and dl_scenarios_on agree on every factory and scenarios config" 12 "$same"
-
-# One list of stop conditions for both modes; the skills and the README describe the preset.
-skill="$plugin/skills/dev-loop/SKILL.md"
-expect "the dev-loop skill has exactly one stop-conditions list" 1 "$(grep -c 'Stop and ask the user only for' "$skill")"
-expect "no other skill keeps its own stop-conditions list" "" \
-  "$(grep -l 'Stop and ask the user only for' "$plugin"/skills/*/SKILL.md | grep -v '/dev-loop/')"
-factory_section=$(awk '/^## .*Factory mode/ { on = 1; next } on && /^## / { exit } on' "$skill")
-[ -n "$factory_section" ] && printf '%s\n' "$factory_section" | grep -qF "section 8" &&
-  ! printf '%s\n' "$factory_section" | grep -qiE 'only for:|stop and ask' &&
-  pass "the Factory mode section points to the one list and has no stop conditions of its own" ||
-  fail "the Factory mode section is missing or lists its own stop conditions"
-grep -A6 '^## 8\.' "$skill" | grep -qiE 'every mode|both modes' && pass "the stop conditions say they hold in every mode" ||
-  fail "the stop conditions do not say they hold in every mode"
-grep -qF '"factory"' "$plugin/skills/setup/SKILL.md" && grep -qi 'go dark' "$plugin/skills/setup/SKILL.md" &&
-  pass "the setup skill asks for the mode and has a go-dark step" || fail "the setup skill lacks the mode or go dark"
-grep -qF 'MISSING factory' "$plugin/skills/doctor/SKILL.md" && pass "the doctor skill explains the factory problems" ||
-  fail "the doctor skill lacks the factory rows"
-grep -qE '^## Factory preset' "$plugin/README.md" && grep -qF '| `scenarios` |' "$plugin/README.md" &&
-  pass "the README has the factory preset section and table" || fail "the README lacks the factory preset"
 git checkout -q -f main
 
 # Planned-list hygiene (#45): with docs.planned, doctor reads each planned row's ticket through one batched
@@ -3430,10 +3348,6 @@ expect "planned: days between dates across a year" 1 "$(days 2019-12-31T23:59:59
 expect "planned: days between dates across centuries" 9806 "$(days 2000-01-01 2026-11-06)"
 expect "planned: days between an unreadable date and today are empty" "" "$(days soon 2026-11-06)"
 
-grep -qF '`docs.planned_max_days`' "$plugin/README.md" && grep -qF 'planned row #<n>' "$plugin/skills/doctor/SKILL.md" &&
-  grep -qF '"planned_max_days"' "$plugin/templates/dev-loop.json" &&
-  pass "planned: the README, the doctor skill and the template describe planned_max_days" ||
-  fail "planned: the docs lack planned_max_days"
 cd "$work/project" || exit 1
 git checkout -q -f main
 
@@ -3648,8 +3562,12 @@ echo "$out" | grep -qF "journal docs/DECISIONS.md has 27 lines, over max_lines 1
 expect "doctor without docs notes no journal" 0 \
   "$(DEV_LOOP_CONFIG="$work/archive-off.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -c "journal docs/")"
 rm -f docs/DECISIONS.md
-grep -q '^## Standing decisions' "$plugin/templates/DECISIONS.md" && pass "the DECISIONS template has a standing decisions section" ||
-  fail "no standing decisions in the template"
+# The setup template compacts like any journal: its standing decisions stay in the live file.
+tjournal="$work/template-journal"
+git init -q "$tjournal" && mkdir -p "$tjournal/docs" && cp "$plugin/templates/DECISIONS.md" "$tjournal/docs/"
+printf '\n## 2026-02-0%s — Entry %s\n\n- x\n- y\n' 1 1 2 2 3 3 >>"$tjournal/docs/DECISIONS.md"
+expect "the DECISIONS template's standing decisions stay in place when its journal is compacted" \
+  "0 ## Standing decisions" "$(cd "$tjournal" && archive on journal --apply >/dev/null; echo "$rc $(sed -n 5p docs/DECISIONS.md)")"
 
 # spec: refuse a file the config names; report links to it; move it verbatim and leave a pointer.
 archive on spec docs/specs/prd.md --apply
@@ -3695,45 +3613,8 @@ expect "spec --no-pointer leaves no file behind" "0 no yes" \
 archive on spec docs/specs/prd.md --force --apply
 expect "spec --force archives a file the config names" "0 yes" "$rc $([ -f docs/archive/specs/prd.md ] && echo yes)"
 cd "$work/project" || exit 1
-# 18. Docs maintenance (#47): the dev-loop skill's maintenance ticket on the audit's cadence, and the
-# doc-auditor's housekeeping list in its report (the auditor stays read-only).
-maint_skill="$plugin/skills/dev-loop/SKILL.md"
-maint=$(awk '/^#+ / { on = ($0 ~ /^#+ .*Docs maintenance/) } on' "$maint_skill")
-printf '%s\n' "$maint" | grep -qF 'docs.audit_every' && printf '%s\n' "$maint" | grep -qiE 'after (the|each) (doc )?audit' &&
-  pass "the dev-loop skill has a Docs maintenance section on the doc audit's cadence" ||
-  fail "no Docs maintenance section on the audit's cadence"
-printf '%s\n' "$maint" | grep -qF 'docs: maintenance' && printf '%s\n' "$maint" | grep -qiE 'one .*ticket' &&
-  pass "docs maintenance is one docs: maintenance ticket" || fail "no single docs: maintenance ticket"
-maint_items=0
-for want in 'doctor' 'planned' 'docs-archive.sh journal' 'Standing decisions' 'docs-archive.sh spec' 'split'; do
-  printf '%s\n' "$maint" | grep -qF "$want" && maint_items=$((maint_items + 1))
-done
-expect "the maintenance ticket lists doctor's notes, planned rows, journals, specs and splits" 6 "$maint_items"
-printf '%s\n' "$maint" | grep -qiE 'at most one .*per ticket' && pass "docs maintenance splits at most one doc per ticket" ||
-  fail "no one-split-per-ticket rule"
-printf '%s\n' "$maint" | grep -qiE 'not planned' && printf '%s\n' "$maint" | grep -qiE "user's OK" &&
-  printf '%s\n' "$maint" | grep -qiE 'collaborative' && printf '%s\n' "$maint" | grep -qiE 'dark.*(automatic|without asking)' &&
-  pass "closing a stale ticket needs the user's OK in collaborative mode and is automatic in dark mode" ||
-  fail "no collaborative/dark rule for closing stale tickets"
-printf '%s\n' "$maint" | grep -qiE 'nothing to do' && printf '%s\n' "$maint" | grep -qiE 'reviewed' &&
-  printf '%s\n' "$maint" | grep -qiE 'gated' && pass "docs maintenance is skipped when empty and reviewed and gated like any ticket" ||
-  fail "docs maintenance does not say skipped, reviewed and gated"
-awk '/^## 8a\./ { on = 1; next } /^## / { on = 0 } on' "$maint_skill" | grep -qiE 'not planned' &&
-  pass "factory mode dark closes stale tickets as not planned without asking" || fail "section 8a lacks the stale-ticket rule"
-auditor="$plugin/agents/doc-auditor.md"
-grep -E '^tools:' "$auditor" | grep -vqE 'Write|Edit' && grep -qiE 'never edits files' "$auditor" &&
-  grep -qiE 'you do not change files' "$auditor" && pass "the doc-auditor brief still forbids edits" ||
-  fail "the doc-auditor brief no longer forbids edits"
-auditor_report=$(awk '/^## Report/ { on = 1; next } /^## / { on = 0 } on' "$auditor")
-printf '%s\n' "$auditor_report" | grep -qiE 'maintenance list' && pass "the doc-auditor report has a maintenance list" ||
-  fail "no maintenance list in the doc-auditor report"
-grep -qiE 'one ticket per drift' "$auditor" && grep -qiE 'housekeeping' "$auditor" &&
-  pass "the doc-auditor keeps one ticket per real drift and lists housekeeping instead" || fail "auditor: drift vs housekeeping"
-grep -qF 'Docs maintenance' "$plugin/README.md" && grep -qF 'docs: maintenance' "$plugin/README.md" &&
-  pass "the README describes docs maintenance" || fail "the README lacks docs maintenance"
-
-# 19. Docs adoption (#46): doctor notes when the current-state docs are off (a note, never MISSING), setup
-# step 3b describes a gradual adoption path, and the planned-row parser follows CommonMark fences.
+# 19. Docs adoption (#46): doctor notes when the current-state docs are off (a note, never MISSING)
+# and the planned-row parser follows CommonMark fences.
 awork="$work/adopt"
 git init -q --bare "$awork/origin.git"
 git clone -q "$awork/origin.git" "$awork/project" 2>/dev/null
@@ -3772,27 +3653,6 @@ expect "adopt: a \`\`\` line inside a ~~~ fence does not end it early" "7 8" "$(
 printf '# Planned\n\n````\n```\n- Fenced (#151)\n````\n- Real (#9)\n' >docs/planned.md
 expect "adopt: a fence closes only on a run at least as long" "9" "$(planned_rows docs/planned.md)"
 
-# Setup step 3b's gradual adoption path, and the README, doctor skill and CHANGELOG that describe it.
-step3b=$(awk '/^## 3b\./ {on = 1; print; next} /^## / {on = 0} on' "$plugin/skills/setup/SKILL.md")
-for phrase in "Gradual adoption" "only the Features aspect" "empty \`map\`" "docs.prd" "planned list" \
-  "docs-archive.sh spec" "docs-archive.sh journal" "--apply" "Standing decisions" "rules one aspect at a time" \
-  "docs maintenance tickets" "one split per ticket"; do
-  printf '%s\n' "$step3b" | grep -qF -- "$phrase" && pass "adopt: setup step 3b names \"$phrase\"" ||
-    fail "setup step 3b does not name \"$phrase\""
-done
-gradual=$(printf '%s\n' "$step3b" | awk '/Gradual adoption/ {on = 1} on')
-printf '%s\n' "$gradual" | grep -n 'templates/FEATURES.md\|empty `map`' | head -n 1 | grep -qF 'templates/FEATURES.md' &&
-  pass "adopt: the gradual path creates the Features file before the empty map turns the docs on" ||
-  fail "the gradual path does not create the Features file first"
-printf '%s\n' "$gradual" | grep -qF "Docs maintenance" && pass "adopt: the gradual path points at the Docs maintenance step" ||
-  fail "the gradual path does not point at Docs maintenance"
-grep -qF "current-state docs off" "$plugin/README.md" && grep -qiF "gradual adoption" "$plugin/README.md" &&
-  pass "adopt: the README describes the docs-off note and the gradual adoption path" ||
-  fail "the README lacks the docs-off note or the gradual adoption path"
-grep -qF "note current-state docs off" "$plugin/skills/doctor/SKILL.md" &&
-  pass "adopt: the doctor skill has a row for the docs-off note" || fail "no doctor skill row for the docs-off note"
-grep -qF "#46" "$plugin/CHANGELOG.md" &&
-  pass "adopt: CHANGELOG has an entry for #46" || fail "no CHANGELOG #46 entry"
 # 20. Permissions (#54): permissions.sh merges the loop's allow, ask and deny rules into the project's
 # .claude/settings.json (and the plugin-script rules, which hold this machine's plugin path, into
 # .claude/settings.local.json), only adding; doctor reads only the project's two files and reports a deny
@@ -4030,24 +3890,6 @@ cp "$mwork/before.json" "$mwork/project/.claude/settings.json"
 mperm --apply >/dev/null
 expect "perm: the user's own settings are never read (their deny on gh pr is not reported)" "" \
   "$(mdoctor | grep 'permissions')"
-
-# Docs: the README section, the setup step, the doctor rows, the changelog and the decisions log.
-grep -q '^## Permission modes' "$plugin/README.md" && pass "perm: the README has a Permission modes section" ||
-  fail "perm: no Permission modes section in the README"
-perm_readme=$(awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md")
-for phrase in default auto bypass "permissions.sh" "ask" "settings.local.json"; do
-  printf '%s\n' "$perm_readme" | grep -qF -- "$phrase" && pass "perm: the README section names \"$phrase\"" ||
-    fail "perm: the README section does not name \"$phrase\""
-done
-grep -qF 'Permissions' "$plugin/skills/setup/SKILL.md" && grep -qF 'permissions.sh' "$plugin/skills/setup/SKILL.md" &&
-  pass "perm: the setup skill has a Permissions step running permissions.sh" || fail "perm: no Permissions step in setup"
-grep -qF 'note permissions: no allow list' "$plugin/skills/doctor/SKILL.md" &&
-  grep -qF 'MISSING permissions: deny rule' "$plugin/skills/doctor/SKILL.md" &&
-  pass "perm: the doctor skill has rows for the permissions lines" || fail "perm: no doctor skill rows for permissions"
-grep -qF "#54" "$plugin/CHANGELOG.md" && pass "perm: CHANGELOG has an entry for #54" ||
-  fail "perm: no CHANGELOG #54 entry"
-grep -qF 'permission rule syntax' "$plugin/docs/DECISIONS.md" && pass "perm: the decisions log records the rule syntax" ||
-  fail "perm: the decisions log does not record the rule syntax"
 
 # 21. Never force-push (#53): repush.sh re-pushes a rebased branch as <branch>-vN (notes carried over, a plain
 # -u push), open-pr.sh closes the superseded PRs, the gate and merge take the new name, cleanup.sh deletes a
@@ -4334,19 +4176,10 @@ expect "repush: NUL-ending notes are carried over" "0 fix/739-nul-v2" "$rc $(pri
 expect "repush: NUL-ending notes end with the Supersedes line, no newline added" "0|Supersedes" \
   "$(tail -c 1 "$(rnotes fix/739-nul-v2)" | wc -l | tr -d ' ')|$(tail -n 1 "$(rnotes fix/739-nul-v2)" | cut -c1-10)"
 
-# No skill or agent text tells anyone to force-push; the ones that rebase name repush.sh.
+# No skill or agent text tells anyone to force-push.
 forced=$(grep -rnE -- 'push --force|push -f|--force-with-lease|force-push|force push' "$plugin/skills" "$plugin/agents" |
   grep -viE 'never')
 expect "docs: no skill or agent text tells anyone to force-push" "" "$forced"
-for file in skills/dev-loop/SKILL.md skills/gate/SKILL.md skills/merge/SKILL.md agents/implementer.md README.md; do
-  grep -qF 'repush.sh' "$plugin/$file" && pass "docs: $file names repush.sh" || fail "$file does not name repush.sh"
-done
-grep -qF 'superseded' "$plugin/README.md" && pass "docs: the README describes the superseded class" ||
-  fail "the README lacks the superseded class"
-grep -qF "#53" "$plugin/CHANGELOG.md" && pass "docs: CHANGELOG has an entry for #53" ||
-  fail "no CHANGELOG #53 entry"
-grep -qF 'repush.sh' "$plugin/docs/DECISIONS.md" && pass "docs: DECISIONS records the re-push naming" ||
-  fail "DECISIONS has no #53 entry"
 export FAKE_GH_DIR="$work/gh"
 
 # 22. Status (#55): the event log (gate, merge, heavy and event.sh lines, valid JSON, rotated with one
@@ -4813,27 +4646,6 @@ DEV_LOOP_NO_JQ=1 sstatus --json >/dev/null
 expect "status: status.sh changes no file in the state or lock directories" "$before|" \
   "$(snapshot)|$(find "$shome" "$st_home" "$swork/locks" -newer "$swork/marker" 2>/dev/null)"
 
-# Docs: README section, the skill, CHANGELOG and decisions.
-status_readme=$(awk '/^## / {on = ($0 ~ /^## Status/)} on' "$plugin/README.md")
-for phrase in "status.sh" "--json" "--no-gh" "event.sh" "events.jsonl" "watchdog.stall_minutes" "possibly stalled" \
-  "/dev-loop:status"; do
-  printf '%s\n' "$status_readme" | grep -qF -- "$phrase" && pass "status: the README section names \"$phrase\"" ||
-    fail "status: the README section does not name \"$phrase\""
-done
-grep -q '^name: status$' "$plugin/skills/status/SKILL.md" 2>/dev/null && grep -qF 'status.sh' "$plugin/skills/status/SKILL.md" &&
-  pass "status: the status skill runs status.sh" || fail "status: no status skill"
-grep -qF 'event.sh' "$plugin/skills/dev-loop/SKILL.md" && pass "status: the dev-loop skill records orchestrator events" ||
-  fail "status: the dev-loop skill does not name event.sh"
-grep -qF "#55" "$plugin/CHANGELOG.md" && pass "status: CHANGELOG has an entry for #55" ||
-  fail "status: no CHANGELOG #55 entry"
-grep -qF '(#55)' "$plugin/docs/DECISIONS.md" && pass "status: the decisions log has #55" || fail "status: no #55 decision"
-grep -qF 'idle detail="nothing in flight"' "$plugin/skills/dev-loop/SKILL.md" &&
-  grep -qF 'agent-reported ticket=' "$plugin/skills/dev-loop/SKILL.md" &&
-  pass "status: the dev-loop skill records agent-reported and idle events" || fail "status: skill lacks agent-reported or idle"
-printf '%s\n' "$status_readme" | grep -qF 'agent-reported' && printf '%s\n' "$status_readme" | grep -qF 'event.sh idle' &&
-  pass "status: the README section names agent-reported and the idle event" || fail "status: README lacks the #67 events"
-grep -qF "#67" "$plugin/CHANGELOG.md" && grep -qF '(#67)' "$plugin/docs/DECISIONS.md" &&
-  pass "status: CHANGELOG and decisions have #67" || fail "status: no #67 entry"
 # 23. Merge without a force push (#57): on an origin that refuses non-fast-forward pushes, a branch behind
 # the base merges through a merge commit with the gated tree, pushed as a fast-forward of the branch; a
 # re-run after a stop merges the pushed head as it is, without a second push.
@@ -4917,14 +4729,6 @@ FAKE_GH_REQUIRE_APPROVAL=1 "$plugin/scripts/merge-train.sh" feat/804-d >/dev/nul
 expect "noforce: a re-run after a stop between push and record merges, not exit 6" 0 "$?"
 expect "noforce: it merges the merge commit pushed before" "$d_pushed" "$(cat "$FAKE_GH_DIR/feat_804-d.head")"
 
-# No force push of a branch in the merge path; the docs say how it merges.
-expect "noforce: no forced push in merge-train.sh or open-pr.sh" "" \
-  "$(grep -nE -- '--force|push[^|]* -f( |$)|[[:space:]]\+refs/|--mirror' "$plugin/scripts/merge-train.sh" "$plugin/scripts/open-pr.sh")"
-grep -qiF 'fast-forward' "$plugin/skills/merge/SKILL.md" && ! grep -qiF 'lease' "$plugin/skills/merge/SKILL.md" &&
-  pass "noforce: the merge skill describes the fast-forward, no lease" || fail "noforce: merge skill text"
-grep -qF "#57" "$plugin/CHANGELOG.md" && pass "noforce: CHANGELOG has an entry for #57" ||
-  fail "noforce: no CHANGELOG #57 entry"
-grep -qF '(#57)' "$plugin/docs/DECISIONS.md" && pass "noforce: the decisions log has #57" || fail "noforce: no #57 decision"
 export FAKE_GH_DIR="$work/gh"
 
 cd "$work/project" || exit 1
@@ -5051,24 +4855,6 @@ expect "stall: an invalid stall_minutes is off" "0 odd rc=0" "$rc $(wlines)"
 echo "$out" | grep -q 'stall_minutes' && pass "stall: an invalid stall_minutes is named" ||
   fail "stall: no warning for an invalid stall_minutes"
 
-# The skill text: the heartbeat, the stall handling, what it may and may not stop.
-wskill=$(awk '/^## / {on = ($0 ~ /^## 2a\. /)} on' "$plugin/skills/dev-loop/SKILL.md")
-for phrase in "watchdog.wake_minutes" '"watchdog": false' "status.sh --json" "event.sh" "waiting" "stalled" \
-  "scheduling tool" "background command" "CPU" "log tail" "process group" "section 3a" "never" "loop's own"; do
-  printf '%s\n' "$wskill" | grep -qF -- "$phrase" && pass "watchdog: the heartbeat section names \"$phrase\"" ||
-    fail "watchdog: the heartbeat section does not name \"$phrase\""
-done
-grep -qF 'stall_minutes' "$plugin/skills/gate/SKILL.md" && pass "watchdog: the gate skill documents stall_minutes" ||
-  fail "watchdog: the gate skill does not name stall_minutes"
-wreadme=$(cat "$plugin/README.md")
-for phrase in "watchdog.wake_minutes" '"watchdog": false' "DEV_LOOP_STALL_UNIT_SECONDS" "stalled: no output for"; do
-  printf '%s\n' "$wreadme" | grep -qF -- "$phrase" && pass "watchdog: the README names \"$phrase\"" ||
-    fail "watchdog: the README does not name \"$phrase\""
-done
-grep -qF "#56" "$plugin/CHANGELOG.md" && pass "watchdog: CHANGELOG has an entry for #56" ||
-  fail "watchdog: no CHANGELOG #56 entry"
-grep -qE '^## .*\(#56\)' "$plugin/docs/DECISIONS.md" && pass "watchdog: the decisions log has #56" || fail "watchdog: no #56 decision"
-
 # 25. Marketplace pin (#64): doctor reports the marketplace source and pin in user, managed and project
 # settings (fake files under $work), notes a pin older than the installed plugin, and reports MISSING with
 # the exact add command when a settings entry does not match the configured marketplace. Nothing without entries.
@@ -5194,23 +4980,6 @@ expect "marketplace: control characters in a source are dropped" \
   "$(printf '%s\n' "$out" | grep 'marketplace   user')|$(printf '%s\n' "$out" | grep -c '^MISSING fake')"
 mreset
 
-# The docs: README install from a release tag, the error and how to move a pin; the doctor skill's table.
-mversion=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$plugin/.claude-plugin/plugin.json")
-minstall=$(awk '/^## / {on = ($0 == "## Install")} on' "$plugin/README.md")
-for phrase in "/plugin marketplace add wentbackward/claude-dev-loop@v$mversion" "doesn't match its extraKnownMarketplaces entry" \
-  '"ref"' "claude plugin update dev-loop@claude-dev-loop" "doctor"; do
-  printf '%s\n' "$minstall" | grep -qF -- "$phrase" && pass "marketplace: the README install section names \"$phrase\"" ||
-    fail "marketplace: the README install section does not name \"$phrase\""
-done
-printf '%s\n' "$minstall" | grep -qxF '/plugin marketplace add wentbackward/claude-dev-loop' &&
-  fail "marketplace: the README still installs without a tag" || pass "marketplace: the README installs from a tag"
-for phrase in "MISSING marketplace" "not added yet" "older than the installed plugin"; do
-  grep -qF -- "$phrase" "$plugin/skills/doctor/SKILL.md" && pass "marketplace: the doctor skill explains \"$phrase\"" ||
-    fail "marketplace: the doctor skill does not explain \"$phrase\""
-done
-grep -qF "#64" "$plugin/CHANGELOG.md" && pass "marketplace: CHANGELOG has an entry for #64" ||
-  fail "marketplace: no CHANGELOG #64 entry"
-grep -qE '^## .*\(#64\)' "$plugin/docs/DECISIONS.md" && pass "marketplace: the decisions log has #64" || fail "marketplace: no #64 decision"
 # 25b. Script help (#75): -h / --help print the usage and exit 0 without touching anything; an unknown option
 # of a script that takes branches is a usage error (exit 2), never a branch name.
 git init -q --bare "$work/help-origin.git"
@@ -5261,7 +5030,6 @@ for hflag in -h --help; do
   expect "help: as-role.sh passes a later $hflag to its command" "$hflag" \
     "$("$plugin/scripts/as-role.sh" implementer printf '%s\n' "$hflag" 2>/dev/null)"
 done
-grep -qF "#75" "$plugin/CHANGELOG.md" && pass "help: CHANGELOG has an entry for #75" || fail "help: no CHANGELOG #75 entry"
 # tests/smoke.sh runs chosen sections (#76): the shared setup, the sections they need, in a new work dir.
 hsmoke="$plugin/tests/smoke.sh"
 hout=$("$hsmoke" --help 2>&1)
@@ -5356,7 +5124,6 @@ expect "smoke: an id is matched before a title (19 runs section 19, not 17)" "ra
 hout=$(TMPDIR="$horder/idfirst/tmp" "$horder/idfirst/tests/smoke.sh" --section 'before section' 2>&1)
 expect "smoke: a text that is no id still selects by title" "ran section 17" \
   "$(printf '%s\n' "$hout" | grep '^ran section ')"
-grep -qF "#85" "$plugin/CHANGELOG.md" && pass "smoke: CHANGELOG has an entry for #85" || fail "smoke: no CHANGELOG #85 entry"
 
 # 26. Worktrees dir (#70): "worktrees_dir" puts the implementer worktrees in <dir>/<n> and the gate in
 # <dir>/gate, one directory permissions.sh lists in permissions.additionalDirectories (auto mode edits
@@ -5505,21 +5272,6 @@ expect "wtd: dl_worktree_of (merge-train) finds the new-layout worktree" "$wt12"
   "$(cd "$wwork/project" && DEV_LOOP_CONFIG="$wwork/wtd.json" common_fn dl_worktree_of feat/12-new)"
 git -C "$wwork/project" worktree remove "$wt12"
 
-# The docs: README config table, the dev-loop skill's launch step, setup, the doctor skill and the changelog.
-grep -qE '^\| `worktrees_dir` \|' "$plugin/README.md" && pass "wtd: the README config table has worktrees_dir" ||
-  fail "wtd: no worktrees_dir row in the README"
-wlaunch=$(awk '/^## / { on = ($0 ~ /^## 3\. /) } on' "$plugin/skills/dev-loop/SKILL.md")
-printf '%s\n' "$wlaunch" | grep -qF 'paths.sh worktree <n>' && pass "wtd: the launch step uses paths.sh worktree <n>" ||
-  fail "wtd: the launch step does not use paths.sh worktree <n>"
-printf '%s\n' "$wlaunch" | grep -qF '../<repo-name>-<n>' && fail "wtd: the launch step still hard-codes ../<repo-name>-<n>" ||
-  pass "wtd: the launch step hard-codes no sibling path"
-grep -qF '"worktrees_dir": "../<repo>-worktrees"' "$plugin/skills/setup/SKILL.md" &&
-  grep -qF 'additionalDirectories' "$plugin/skills/setup/SKILL.md" && pass "wtd: the setup skill writes worktrees_dir" ||
-  fail "wtd: the setup skill does not write worktrees_dir"
-grep -qF 'MISSING worktrees:' "$plugin/skills/doctor/SKILL.md" && pass "wtd: the doctor skill has a row for the worktrees lines" ||
-  fail "wtd: no doctor skill row for worktrees"
-grep -qF '#70' "$plugin/CHANGELOG.md" &&
-  pass "wtd: CHANGELOG has a #70 entry" || fail "wtd: no #70 entry"
 # 26b. Owner steps (#73): permissions.sh's dry run ends with the one command the owner runs to apply it (the
 # agent never edits its own permission settings); doctor reports a deny rule in the project's settings that
 # blocks a tag, a release or a tag push as MISSING, with the fix: move it to ask. Quiet with the template.
@@ -5642,23 +5394,6 @@ ospace="! $(printf '%q' "$owork/sp ace/scripts/permissions.sh") --apply"
 printf '%s\n' "$out" | grep -qF -- "$ospace" && printf '%s\n' "$out" | grep -q '\-\-apply$' &&
   pass "owner: the apply line quotes a plugin path with a space" || fail "owner: the apply line does not quote the path ($out)"
 
-# The docs: setup and doctor skills, README, CHANGELOG and decisions.
-osetup=$(awk '/^4\. \*\*Permissions\*\*/ { on = 1 } /^5\. / { on = 0 } on' "$plugin/skills/setup/SKILL.md")
-printf '%s\n' "$osetup" | grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' &&
-  pass "owner: the setup Permissions step shows the owner's ! apply line" || fail "owner: setup does not show the ! apply line"
-printf '%s\n' "$osetup" | grep -qiF 'never edit' && pass "owner: the setup step says the agent never edits the settings itself" ||
-  fail "owner: setup does not forbid editing the settings"
-grep -qiF 'another public repository' "$plugin/skills/setup/SKILL.md" &&
-  pass "owner: the setup skill makes pushes to another public repository an owner step" ||
-  fail "owner: setup does not name pushes to another public repository"
-grep -qF 'move it to `ask`' "$plugin/skills/doctor/SKILL.md" && grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' \
-  "$plugin/skills/doctor/SKILL.md" && pass "owner: the doctor skill has the tag-deny row and the owner's apply line" ||
-  fail "owner: the doctor skill lacks the tag-deny row or the apply line"
-awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF '! ${CLAUDE_PLUGIN_ROOT}/scripts/permissions.sh --apply' &&
-  pass "owner: the README permissions section shows the owner's apply line" || fail "owner: the README lacks the apply line"
-grep -qF '#73' "$plugin/CHANGELOG.md" && pass "owner: CHANGELOG has a #73 entry" ||
-  fail "owner: no #73 entry"
-grep -qF '(#73)' "$plugin/docs/DECISIONS.md" && pass "owner: the decisions log has a #73 entry" || fail "owner: no #73 decision"
 cd "$work/project" || exit 1
 
 # 27. Forced failure (#80): red only when DEV_LOOP_SMOKE_FORCE_FAIL=1, so section 27b can run a red suite.
@@ -5952,8 +5687,6 @@ expect "doctor tmp: a filesystem name with spaces is read from the end of the li
 expect "doctor tmp: a filesystem with no blocks (macOS map auto_home) is skipped without an error" "" \
   "$(FAKE_DF_FS="map auto_home" kdoctor "0 0 0 100%" "")"
 expect "doctor tmp: TMPDIR=/ is checked as /" "ok      TMPDIR /: 80% space free" "$(KTMP=/ kdoctor "1000 200 800 20%" "")"
-grep -qF '#80' "$plugin/CHANGELOG.md" &&
-  pass "work dirs: CHANGELOG has a #80 entry" || fail "work dirs: no #80 entry"
 cd "$work/project" || exit 1
 # 29. Kept worktrees (#83): cleanup.sh lists the worktrees of merged branches that merge-train kept for
 # their changes (a dry run changes nothing); --apply --include worktrees archives each one's patch, staged
@@ -6309,7 +6042,7 @@ expect "kwt: stderr gains only the skip note" "$knote|$knote" \
   "$(diff "$kwork/nlrefdry.err" "$kwork/nldry.err" | sed -n 's/^> //p')|$(diff "$kwork/nlrefapply.err" "$kwork/nlapply.err" | sed -n 's/^> //p')"
 git -C "$kwork/project" worktree remove --force "$knl"
 
-# merge-train's kept line names the command; the dev-loop skill and the CHANGELOG point at it.
+# merge-train's kept line names the command.
 kept=$(bash -c '. "$1/scripts/lib/common.sh"; dl_load_config; dl_remove_merged_local feat/2-unmerged "$(git rev-parse feat/2-unmerged)"' \
   _ "$plugin" 2>&1)
 case "$kept" in
@@ -6317,14 +6050,6 @@ case "$kept" in
     pass "kwt: the kept line names cleanup.sh --apply --include worktrees" ;;
   *) fail "kwt: kept line: $kept" ;;
 esac
-grep -qF -- "--include worktrees" "$plugin/skills/dev-loop/SKILL.md" &&
-  grep -qF "git worktree remove --force" "$plugin/skills/dev-loop/SKILL.md" &&
-  pass "kwt: the dev-loop skill points at the command instead of git worktree remove --force" ||
-  fail "kwt: the dev-loop skill does not point at --include worktrees"
-grep -qF '#83' "$plugin/CHANGELOG.md" &&
-  pass "kwt: CHANGELOG has a #83 entry" || fail "kwt: no #83 entry"
-grep -qF '#93' "$plugin/CHANGELOG.md" &&
-  pass "kwt: CHANGELOG has a #93 entry" || fail "kwt: no #93 entry"
 git -C "$kwork/project" checkout -q main
 git -C "$kwork/project" worktree unlock "$kwork/wt3"
 chmod 755 "$kwork/wt14/locked-away"
@@ -6493,18 +6218,6 @@ qdoctor >/dev/null
 qdoctor 1 >/dev/null
 expect "ask rules: doctor leaves the settings files unchanged" "$qbefore" "$(qsum)"
 
-# The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
-grep -qF 'note permissions: ask rule' "$plugin/skills/doctor/SKILL.md" && pass "ask rules: the doctor skill has the ask-rule row" ||
-  fail "ask rules: the doctor skill lacks the ask-rule row"
-awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md" | grep -qF 'ask beats allow' &&
-  pass "ask rules: the README permissions section describes the ask-rule check" || fail "ask rules: the README lacks the ask-rule check"
-awk '/\(#84\)$/ {on = 1; next} /^## / {on = 0} on' "$plugin/docs/DECISIONS.md" |
-  grep -qF 'characters (letters, digits, `_`, `-`)' && pass "ask rules: DECISIONS names the characters of the short-word heuristic" ||
-  fail "ask rules: the DECISIONS #84 entry does not name the characters the code accepts"
-grep -qF '#91' "$plugin/CHANGELOG.md" && pass "ask rules: CHANGELOG has a #91 entry" ||
-  fail "ask rules: no #91 entry"
-grep -qF '#84' "$plugin/CHANGELOG.md" && pass "ask rules: CHANGELOG has a #84 entry" ||
-  fail "ask rules: no #84 entry"
 cd "$work/project" || exit 1
 # 31. Remote protection (#88): on a GitHub remote, doctor reads (read only) whether the base branch needs a
 # PR and blocks force pushes and deletion (branch protection or rulesets) and whether active tag rulesets
@@ -6817,19 +6530,6 @@ expect "protection: doctor's API calls are reads" "" \
   fail "protection: too few API calls ($(cat "$rwork/gh/calls.log"))"
 expect "protection: the rules and rulesets lists ask for 100 a page" 2 "$(grep -c 'gh api .*?per_page=100' "$rwork/gh/calls.log")"
 
-# The docs: the doctor skill's row, the README permissions section and the CHANGELOG.
-grep -qF 'note remote protection' "$plugin/skills/doctor/SKILL.md" && pass "protection: the doctor skill has the protection row" ||
-  fail "protection: the doctor skill lacks the protection row"
-rreadme=$(awk '/^## Permission modes/ {on = 1; next} /^## / {on = 0} on' "$plugin/README.md")
-printf '%s\n' "$rreadme" | grep -qF 'are tripwires' && printf '%s\n' "$rreadme" | grep -qF "boundary is the remote's branch and tag protection" &&
-  pass "protection: the README permissions section calls the guard a tripwire and protection the boundary" ||
-  fail "protection: the README lacks the tripwire and boundary paragraph"
-printf '%s\n' "$rreadme" | grep -qF 'Restrict creations' && pass "protection: the README names the tag rules to add" ||
-  fail "protection: the README does not name the tag rules"
-grep -F 'note remote protection' "$plugin/skills/doctor/SKILL.md" | grep -qF 'creation' &&
-  pass "protection: the doctor skill row names the tag rules" || fail "protection: the skill row lacks the tag rules"
-grep -qF '#88' "$plugin/CHANGELOG.md" && pass "protection: CHANGELOG has a #88 entry" ||
-  fail "protection: no #88 entry"
 cd "$work/project" || exit 1
 
 # 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
@@ -7114,14 +6814,6 @@ out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/908-h feat/909-i)
 expect "union: the repository's own merge driver for a listed file wins" "3 TRAIN rebase conflict at feat/909-i" \
   "$? $(echo "$out" | tail -n 1)"
 
-# The docs: README (gate, merge, key), the gate and merge skills, CHANGELOG and the decisions log.
-grep -qF 'merge.union_files' "$plugin/README.md" && pass "union: the README names merge.union_files" ||
-  fail "union: the README lacks merge.union_files"
-grep -qF 'merge.union_files' "$plugin/skills/gate/SKILL.md" && grep -qF 'merge.union_files' "$plugin/skills/merge/SKILL.md" &&
-  pass "union: the gate and merge skills describe merge.union_files" || fail "union: skill text"
-grep -qF '#95' "$plugin/CHANGELOG.md" && pass "union: CHANGELOG has a #95 entry" ||
-  fail "union: no #95 entry"
-grep -qF '(#95)' "$plugin/docs/DECISIONS.md" && pass "union: the decisions log has #95" || fail "union: no #95 decision"
 cd "$work/project" || exit 1
 
 # 33. Targeted commands (#72): "targeted" lists the command prefixes implementers run while working. Each must
@@ -7402,26 +7094,6 @@ printf '{"permissions": {"allow": ["Bash(make *)"]}}\n' >"$twork/home/.claude/se
 expect "targeted: the user's own settings are never read for wildcards" "" \
   "$(HOME="$twork/home" tdoctor "$twork/plain.json" | grep 'is a wildcard')"
 
-# The docs: the README config table and its Targeted commands section, setup, the doctor skill, decisions, changelog.
-grep -qE '^\| `targeted` \|' "$plugin/README.md" && pass "targeted: the README config table has targeted" ||
-  fail "targeted: no targeted row in the README"
-tsection=$(awk '/^### Targeted commands/ {on = 1; next} /^##/ {on = 0} on' "$plugin/README.md")
-for word in "go test" "-run" "pytest" "-k" "make <target>" "-j" "npm run <script>" "cargo test" "ruff check" \
-  "still runs the project's own test code" "builtin" "source" "--nocapture" "-test.v" "per-subcommand" "fresh shell" "PYTEST_ADDOPTS" "import path" "1 to 256"; do
-  printf '%s\n' "$tsection" | grep -qF -- "$word" && pass "targeted: the README section names $word" ||
-    fail "targeted: the README Targeted commands section lacks $word"
-done
-for tool in go python node rust make; do
-  grep -qiE "^ *\| *$tool *\|" "$plugin/skills/setup/SKILL.md" && pass "targeted: the setup skill infers targeted for $tool" ||
-    fail "targeted: the setup skill has no targeted row for $tool"
-done
-grep -qF "still runs the project's own test code" "$plugin/skills/setup/SKILL.md" &&
-  pass "targeted: the setup skill states the limit" || fail "targeted: the setup skill does not state the limit"
-grep -qF 'is a wildcard' "$plugin/skills/doctor/SKILL.md" && grep -qF 'not written' "$plugin/skills/doctor/SKILL.md" &&
-  pass "targeted: the doctor skill has rows for the targeted notes" || fail "targeted: no doctor skill rows for targeted"
-grep -qF '(#72)' "$plugin/docs/DECISIONS.md" && pass "targeted: the decisions log has a #72 entry" || fail "targeted: no #72 decision"
-grep -qF '#72' "$plugin/CHANGELOG.md" && pass "targeted: CHANGELOG has a #72 entry" ||
-  fail "targeted: no #72 entry"
 cd "$work/project" || exit 1
 # 34. Durable schedule (#111): schedule.sh keeps time-bound items in ~/.dev-loop/<repo>/schedule.md (paths.sh
 # schedule), classifies them OVERDUE, DUE or UPCOMING in schedule.timezone, and the SessionStart hook, status.sh
