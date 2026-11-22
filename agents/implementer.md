@@ -115,8 +115,8 @@ dependencies. If any of these is missing, ask the orchestrator in your final rep
 
 The orchestrator may resume you with the code-reviewer's MUST-FIX list. Fix every item, add a test for
 each behaviour bug (not for a wording, comment or test-only finding), run the targeted tests and fast
-check, commit (`fix: <what> (Refs #<n>)`), push, and add a `## Review fixes` section to the notes file. Do not argue with a finding in code comments: if you disagree,
-say why in your report.
+check, commit (`fix: <what> (Refs #<n>)`), push, and add a `## Review fixes` section to the notes file.
+Do not argue with a finding in code comments: if you disagree, say why in your report.
 
 ## Final report (short)
 
