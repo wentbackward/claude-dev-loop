@@ -11,7 +11,12 @@
 # empty (an add/add, both sides creating the file differently, stops) and in every conflict hunk both sides
 # only added lines (the hunk's base part is empty): git merge-file in diff3 style, whose hunks are not
 # refined the way merge=union's are (merge=union would fold lines two entries share into one copy), each
-# conflict hunk kept whole, ours (in a rebase: the base being stacked on) first, then theirs (the branch). A
+# conflict hunk kept whole, ours (in a rebase: the base being stacked on) first, then theirs (the branch).
+# When both parts of a hunk begin with the same Markdown heading line (one that starts with #, such as the
+# "## Unreleased" two branches add after a release), that heading is kept once: the heading, ours' blank
+# lines after it, ours' entries, theirs' entries (after one blank line unless theirs' first line is a list
+# item), then the longer of the two trailing blank runs. Only theirs' repeated heading and blank lines at
+# the edges of the parts are dropped; every other line of both parts is kept. A
 # conflict hunk where a side changed or deleted existing lines, a line that starts with 32 of one of git's
 # marker characters (<, |, =, >) in any side, or any failure is a conflict (exit 1, OURS unchanged), so the
 # train stops as it would without the option. Lines of CRLF files keep their CR; the result of a merge with
@@ -32,20 +37,45 @@ marker_scan() {
     END { if (!found) print "clean" }' "$@"
 }
 
-# keep_both: merge-file's diff3 output on stdin with each conflict kept as ours, then theirs; fails (exit 1)
-# when a conflict hunk's base part is not empty (a side changed or deleted existing lines).
+# keep_both: merge-file's diff3 output on stdin with each conflict kept as ours, then theirs (a heading both
+# parts begin with once, see the header); fails (exit 1) when a conflict hunk's base part is not empty (a
+# side changed or deleted existing lines).
 keep_both() {
   awk -v n="$size" '
     function run(ch,   m) { m = sprintf("%" n "s", ""); gsub(/ /, ch, m); return m }
-    BEGIN { lt = run("<"); bar = run("|"); eq = run("="); gt = run(">"); part = ""; bad = 0 }
+    function bare(s) { sub(/\r$/, "", s); return s }
+    function blank(s) { return bare(s) == "" }
+    function item(s) { return bare(s) ~ /^[ \t]*([-*+]|[0-9]+[.)])([ \t]|$)/ }
+    function span(a, from, to,   i) { for (i = from; i <= to; i++) print a[i] }
+    # fold: the hunk whose parts both begin with the same heading: that heading once, then both entries.
+    function fold(   i, oe, j, te) {
+      print o[1]
+      for (i = 2; i <= no && blank(o[i]); i++) print o[i]
+      for (oe = no; oe >= i && blank(o[oe]); oe--) ;
+      for (j = 2; j <= nt && blank(t[j]); j++) ;
+      for (te = nt; te >= j && blank(t[te]); te--) ;
+      span(o, i, oe)
+      if (oe >= i && te >= j && !item(t[j])) print (t[j] ~ /\r$/ ? "\r" : "")
+      span(t, j, te)
+      if (no - oe >= nt - te) span(o, oe + 1, no); else span(t, te + 1, nt)
+    }
+    # hunk_end: print the finished conflict hunk, ours then theirs.
+    function hunk_end() {
+      if (no > 0 && nt > 0 && bare(o[1]) == bare(t[1]) && bare(o[1]) ~ /^#/) fold()
+      else { span(o, 1, no); span(t, 1, nt) }
+      no = 0; nt = 0
+    }
+    BEGIN { lt = run("<"); bar = run("|"); eq = run("="); gt = run(">"); part = ""; bad = 0; no = 0; nt = 0 }
     { line = $0; sub(/\r$/, "", line); head = substr(line, 1, n); rest = substr(line, n + 1) }
     head == lt && (rest == "" || rest ~ /^ /) { part = "ours"; next }
     head == bar && (rest == "" || rest ~ /^ /) { part = "base"; next }
     head == eq && rest == "" { part = "theirs"; next }
-    head == gt && (rest == "" || rest ~ /^ /) { part = ""; next }
+    head == gt && (rest == "" || rest ~ /^ /) { part = ""; hunk_end(); next }
     part == "base" { bad = 1; next }
+    part == "ours" { o[++no] = $0; next }
+    part == "theirs" { t[++nt] = $0; next }
     { print }
-    END { exit bad }'
+    END { if (part != "") bad = 1; exit bad }'
 }
 
 result="" raw=""
