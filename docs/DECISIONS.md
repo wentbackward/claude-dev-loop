@@ -1258,9 +1258,11 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `templates/dev-loop.json` blocks through doctor and the checks, `templates/DECISIONS.md` through
   `docs-archive.sh journal`. Kept as text checks, because they guard a safety property no run can show:
   the coding-agent briefs and prompt templates never name the scenario store, the dev-loop skill lists
-  sealed scenarios on an issue only as a count, no skill or brief tells anyone to force-push, the
-  read-only agents' `tools:` lines have no Write or Edit, and section 27b's check that both suites keep
-  their work-dir guard before it runs them nested. Section 18 (docs maintenance) held only text checks and
+  sealed scenarios on an issue only as a count, no skill or brief tells anyone to force-push, each
+  agent's `tools:` line grants exactly its expected tools (one table in section 15: the read-only agents
+  never Write or Edit, the scenario writer keeps them), and section 27b's check that both suites keep
+  their work-dir guard before it runs them nested. Checks of a deletion's dangerous direction are
+  behaviour checks, not exceptions, and all stay. Section 18 (docs maintenance) held only text checks and
   is gone; its id is not reused. `tests/identity.sh` had no source-shape checks and is unchanged. Section
   34 and after (written to the standard) were left alone.
 - **Reason:** such a check cannot fail for a real bug, and it breaks on wording changes and releases;

@@ -1840,8 +1840,14 @@ expect "the template lists docs.prd, docs.audit_every and the doc-auditor's mode
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(json.dumps(c["docs"].get("prd")), c["docs"].get("audit_every"), c["models"].get("doc-auditor"))' \
     "$plugin/templates/dev-loop.json" 2>/dev/null)"
-grep "^tools:" "$plugin/agents/doc-auditor.md" 2>/dev/null | grep -qv "Write\|Edit" &&
-  pass "the doc-auditor's tools list has no Write or Edit" || fail "the doc-auditor's tools are not read-only"
+# The tools each agent gets (Claude Code reads the tools: line): the read-only agents never get Write or
+# Edit, and the scenario writer keeps the file tools it needs to write the store.
+for agent_tools in "doc-auditor:Read, Grep, Glob, Bash" "architect:Read, Grep, Glob, Bash" \
+  "scenario-judge:Read, Grep, Glob, Bash" "code-reviewer:Read, Grep, Glob, Bash" "verifier:Read, Grep, Glob, Bash" \
+  "scenario-writer:Read, Grep, Glob, Write, Edit, Bash"; do
+  expect "the ${agent_tools%%:*} agent's tools are ${agent_tools#*:}" "tools: ${agent_tools#*:}" \
+    "$(awk 'NR > 1 && /^---$/ { exit } /^tools:/' "$plugin/agents/${agent_tools%%:*}.md" 2>/dev/null)"
+done
 git checkout -q -f main && git clean -qfd
 
 # 16. Merge evidence and the architect (#19): the ledger's new fields, arch-evidence.sh on a seeded ledger
@@ -2102,8 +2108,6 @@ expect "the template lists the architect's cadence, scatter and model" "20 3 opu
   "$(python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1]))
 print(c["architecture"].get("cadence"), c["architecture"].get("scatter"), c["models"].get("architect"))' \
     "$plugin/templates/dev-loop.json" 2>/dev/null)"
-grep "^tools:" "$plugin/agents/architect.md" 2>/dev/null | grep -qv "Write\|Edit" &&
-  pass "the architect's tools list has no Write or Edit" || fail "the architect's tools are not read-only"
 git checkout -q -f main && git reset -q --hard origin/main && git clean -qfd
 
 # Scenario store (#30): where the holdout scenarios live, their format and validation; doctor reports them.
@@ -3074,10 +3078,6 @@ printf '%s\n' "$section_1b" | grep -qF "dl_scenario_sealed" && printf '%s\n' "$s
   printf '%s\n' "$section_1b" | grep -qF "never by id or title" &&
   pass "the dev-loop skill lists sealed scenarios on the issue only as a count, told apart by dl_scenario_sealed" ||
   fail "section 1b does not keep sealed scenarios off the issue"
-judge_agent="$plugin/agents/scenario-judge.md"
-awk 'NR == 1, /^tools:/' "$judge_agent" 2>/dev/null | grep -qE '^name: scenario-judge$' &&
-  grep -E '^tools:' "$judge_agent" | grep -vqE 'Write|Edit' && pass "the scenario-judge agent exists and cannot write" ||
-  fail "no read-only scenario-judge agent"
 git checkout -q -f main
 
 # Factory preset (#34): "factory" is collaborative (default) or dark; dark turns scenarios on by default

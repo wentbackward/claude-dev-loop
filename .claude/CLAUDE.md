@@ -61,11 +61,13 @@ must earn its cost.
   description names the behaviour it guards. Prefer one behaviour check over several narrow ones; a check
   that cannot fail for a real bug is a cost, not a benefit. New checks go in the section of the script
   they exercise, runnable alone with `tests/smoke.sh --section <id>`.
-- Two exceptions keep a text check, because they guard a safety property no run can show: the holdout
-  scenarios stay hidden (the coding-agent briefs and prompt templates never name the store; the issue
-  lists sealed scenarios only as a count), and no skill or brief tells anyone to force-push. The
-  read-only agents' `tools:` lines are config Claude Code reads, so their checks stay too. Checks of a deletion's dangerous direction (what cleanup must keep, what the guard must
-  refuse, what a union merge must not lose) are behaviour checks and always stay.
+- Four kinds of text check stay, because each guards a safety property no run of a script can show: the
+  holdout scenarios stay hidden (the coding-agent briefs and prompt templates never name the store; the
+  issue lists sealed scenarios only as a count); no skill or brief tells anyone to force-push; each
+  agent's `tools:` line (config Claude Code reads) grants exactly its expected tools; and section 27b
+  checks that both suites keep their work-dir guard before it runs them nested.
+- Checks of a deletion's dangerous direction (what cleanup must keep, what the guard must refuse, what a
+  union merge must not lose) are behaviour checks, not exceptions, and always stay.
 - Findings about tests, comments or docs alone go to the polish backlog once. A review of a polish-backlog
   ticket never creates another backlog ticket.
 - Deleting code or tests that add no protection is a valid improvement.
