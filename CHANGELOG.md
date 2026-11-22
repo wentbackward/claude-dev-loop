@@ -2,7 +2,7 @@
 
 All notable changes to this plugin. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.10.0 — 2026-11-22
 
 - Union merge keeps a heading both sides added once (#117). With `merge.union_files`, when both sides of a
   conflict hunk only added lines and both begin with the same Markdown heading line (one starting with
