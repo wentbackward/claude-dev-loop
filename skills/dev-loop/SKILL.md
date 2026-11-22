@@ -39,6 +39,28 @@ absolute paths into their prompts.
    each marked `remove` or `keep` with the reason: run `--apply --include worktrees` to archive the
    `remove` ones (patch and untracked files, to `~/.dev-loop/<repo>/archive/`) and remove them. Never
    type `git worktree remove --force` for them; resolve a `keep` one by hand (finish or save the work).
+7. With `schedule` in `.dev-loop.json`, the SessionStart hook has put the durable schedule's `OVERDUE`,
+   `DUE` and `UPCOMING` items into your context (`${CLAUDE_PLUGIN_ROOT}/scripts/schedule.sh check` shows
+   them again). Do the overdue and due items first, before new work, and mark each done
+   (`schedule.sh done <line>`); then re-create an in-session timer for each upcoming item (section 0a).
+
+## 0a. Time-bound work: the durable schedule (`schedule` in `.dev-loop.json`)
+
+Work that must happen at a set time (a check after a nightly job, a run while an external system is open,
+a re-measurement after a date) goes into the durable schedule, `~/.dev-loop/<repo>/schedule.md`
+(`paths.sh schedule`), which survives restarts; an in-session timer alone dies with the session. Whenever
+you schedule such work:
+
+1. Add the line: `${CLAUDE_PLUGIN_ROOT}/scripts/schedule.sh add <YYYY-MM-DD> <HH:MM> <#ticket|-> <window|-> <what to do>`,
+   the time in `schedule.timezone` (the machine's zone without one).
+2. Create an in-session timer for it as well (the session's scheduling tool: a scheduled wake-up or a
+   one-shot), so a running session does it on time.
+3. Comment the time on the ticket (`gh issue comment <n> --body "Scheduled for <time> <zone>: <what>"`;
+   in identity mode through `as-role.sh orchestrator`).
+4. When it is done, `schedule.sh done <line>` (or `done '#<ticket>'` for all of a ticket's items).
+
+Future work with no time and no plan stays in the spec as pending, not as a parked ticket: a ticket exists
+only for work that is planned or scheduled.
 
 ## 1. Tickets
 

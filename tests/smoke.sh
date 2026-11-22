@@ -7423,4 +7423,157 @@ grep -qF '(#72)' "$plugin/docs/DECISIONS.md" && pass "targeted: the decisions lo
 grep -qF '#72' "$plugin/CHANGELOG.md" && pass "targeted: CHANGELOG has a #72 entry" ||
   fail "targeted: no #72 entry"
 cd "$work/project" || exit 1
+# 34. Durable schedule (#111): schedule.sh keeps time-bound items in ~/.dev-loop/<repo>/schedule.md (paths.sh
+# schedule), classifies them OVERDUE, DUE or UPCOMING in schedule.timezone, and the SessionStart hook, status.sh
+# and doctor.sh show them when the config has "schedule". Without the key the hook is silent and nothing changes.
+swork="$work/sched"
+git init -q --bare "$swork/origin.git"
+git clone -q "$swork/origin.git" "$swork/sched" 2>/dev/null
+cd "$swork/sched" || exit 1
+printf '# Project\n' >CLAUDE.md
+printf '{"base_branch": "main", "fast_check": "true", "checks": ["true"]}\n' >.dev-loop.json
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+sfile="$DEV_LOOP_HOME/sched/schedule.md"
+ssched() { "$plugin/scripts/schedule.sh" "$@"; }
+shook() { echo '{"hook_event_name":"SessionStart"}' | CLAUDE_PROJECT_DIR="$swork/sched" "$plugin/hooks/session-start.sh"; }
+sjson_schedule() { "$plugin/scripts/status.sh" --json --no-gh | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin).get("schedule", "absent")))'; }
+expect "schedule: paths.sh schedule names the file under the loop's state dir" "$sfile" "$("$plugin/scripts/paths.sh" schedule)"
+ssched --help | grep -q '^Usage: schedule.sh add' && pass "schedule: --help prints the usage" || fail "schedule: no usage on --help"
+
+# Off by default: a due item in the file, but no "schedule" key: the hook prints nothing, status and doctor unchanged.
+mkdir -p "$(dirname "$sfile")"
+printf -- '- 2001-01-01 09:00 | #1 | - | long overdue\n' >"$sfile"
+out=$(shook)
+expect "schedule off: the SessionStart hook exits 0" 0 $?
+expect "schedule off: the SessionStart hook prints nothing (no context added to projects without the key)" "" "$out"
+expect "schedule off: status --json has no schedule key (the object is unchanged)" '"absent"' "$(sjson_schedule)"
+"$plugin/scripts/status.sh" --no-gh | grep -q '^schedule' && fail "schedule off: status prints a schedule line" ||
+  pass "schedule off: status prints no schedule line"
+"$plugin/scripts/doctor.sh" 2>&1 | grep -qi 'schedule' && fail "schedule off: doctor mentions the schedule" ||
+  pass "schedule off: doctor says nothing about the schedule"
+rm -f "$sfile"
+
+printf '{"base_branch": "main", "fast_check": "true", "checks": ["true"], "schedule": {"days": 7}}\n' >.dev-loop.json
+git commit -q -am "chore: schedule on"
+# Empty: no file and an empty file are both silent.
+expect "schedule empty: check prints nothing without a file" "" "$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check)"
+expect "schedule empty: the hook prints nothing without a file" "" "$(DEV_LOOP_NOW="2026-12-28 10:00" shook)"
+ssched list | grep -q '^no scheduled items' && pass "schedule empty: list says there are none" || fail "schedule empty: list output"
+
+# add: valid items once, invalid ones refused with the file unchanged.
+ssched add 2026-12-27 18:00 '#5' - rerun the nightly import check >/dev/null
+ssched add 2026-12-28 09:30 12 business measure latency again >/dev/null
+ssched add 2026-12-28 11:00 - business open-hours run >/dev/null
+ssched add 2027-01-03 08:00 '#7' - re-measure after new year >/dev/null
+ssched add 2027-01-05 08:00 '#8' - beyond the horizon >/dev/null
+out=$(ssched add 2026-12-28 09:30 '#12' business measure latency again)
+case $out in "already scheduled"*) pass "schedule add: the same item twice is written once" ;; *) fail "schedule add: duplicate ($out)" ;; esac
+expect "schedule add: one line per distinct item" 1 "$(grep -c 'measure latency again' "$sfile")"
+before=$(cat "$sfile")
+ssched add 2026-12-28 10:00 '#1' - "tab$(printf '\t')inside" >/dev/null 2>&1
+expect "schedule add: refuses a tab in a field (it would split the rows)" 2 $?
+for bad in "2026-02-30 10:00 #1 -" "2026-12-28 24:00 #1 -" "2026-12-28 9:30 #1 -" "2026-12-28 10:00 x1 -" "2026-12-28 10:00 #1 two|words"; do
+  # shellcheck disable=SC2086  # the fields are split on purpose
+  ssched add $bad "do something" >/dev/null 2>&1
+  expect "schedule add: refuses \"$bad\" (exit 2)" 2 $?
+done
+expect "schedule add: refused items leave the file unchanged" "$before" "$(cat "$sfile")"
+
+# check: classes at a fixed clock, across a month and year boundary; LATER items are not shown.
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check)
+printf '%s\n' "$out" | grep -q '^OVERDUE  2026-12-27 18:00 | #5 | - | rerun the nightly import check' &&
+  pass "schedule check: an item of an earlier day is OVERDUE" || fail "schedule check: no OVERDUE ($out)"
+printf '%s\n' "$out" | grep -q '^DUE      2026-12-28 09:30 | #12 | business | measure latency again' &&
+  pass "schedule check: an item earlier today is DUE" || fail "schedule check: no DUE ($out)"
+printf '%s\n' "$out" | grep -q '^UPCOMING 2026-12-28 11:00 | - | business | open-hours run' &&
+  pass "schedule check: an item later today is UPCOMING, not due" || fail "schedule check: later today ($out)"
+printf '%s\n' "$out" | grep -q '^UPCOMING 2027-01-03 08:00 | #7' &&
+  pass "schedule check: an item within the days across the new year is UPCOMING" || fail "schedule check: horizon over the year end ($out)"
+printf '%s\n' "$out" | grep -q 'beyond the horizon' && fail "schedule check: shows an item past schedule.days" ||
+  pass "schedule check: an item past schedule.days is not shown"
+printf '%s\n' "$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check --days 8)" | grep -q 'beyond the horizon' &&
+  pass "schedule check: --days widens the horizon" || fail "schedule check: --days ignored"
+expect "schedule check: items in time order" "OVERDUE DUE UPCOMING UPCOMING" "$(printf '%s\n' "$out" | awk 'NR > 1 { printf "%s%s", s, $1; s = " " }')"
+
+# A malformed hand edit is ignored, named on stderr, and does not hide the other items.
+printf -- '- 2026-13-01 10:00 | #9 | - | bad month\n- tomorrow | #9 | - | no date\n' >>"$sfile"
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check 2>"$swork/err")
+printf '%s\n' "$out" | grep -q 'bad month\|no date' && fail "schedule malformed: a malformed line is shown as an item" ||
+  pass "schedule malformed: malformed lines are not items"
+expect "schedule malformed: the other items still show" 4 "$(printf '%s\n' "$out" | grep -c '^[A-Z]')"
+grep -q 'malformed lines ignored: 9, 10' "$swork/err" && pass "schedule malformed: stderr names the ignored lines" ||
+  fail "schedule malformed: no warning ($(cat "$swork/err"))"
+
+# The SessionStart hook puts the items and what to do into the context.
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" shook)
+expect "schedule hook: exits 0 with items" 0 $?
+printf '%s\n' "$out" | grep -q '^OVERDUE  2026-12-27 18:00' && printf '%s\n' "$out" | grep -q '^UPCOMING 2027-01-03' &&
+  pass "schedule hook: prints the due and upcoming items" || fail "schedule hook: items missing ($out)"
+printf '%s\n' "$out" | grep -q 'first.*in-session timer' && pass "schedule hook: says to do the due items first and re-create timers" ||
+  fail "schedule hook: no instruction ($out)"
+
+# status.sh and doctor.sh show the overdue items.
+sj=$(DEV_LOOP_NOW="2026-12-28 10:00" sjson_schedule)
+expect "schedule status: --json counts overdue, due and upcoming" "1 1 2" \
+  "$(printf '%s' "$sj" | python3 -I -c 'import json, sys; s = json.load(sys.stdin); print(s["overdue"], s["due"], s["upcoming"])')"
+expect "schedule status: --json item fields" "OVERDUE 2026-12-27 18:00 5 None rerun the nightly import check" \
+  "$(printf '%s' "$sj" | python3 -I -c 'import json, sys; i = json.load(sys.stdin)["items"][0]; print(i["class"], i["time"], i["ticket"], i["window"], i["what"])')"
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" "$plugin/scripts/status.sh" --no-gh)
+printf '%s\n' "$out" | grep -q '^schedule: 1 overdue, 1 due, 2 upcoming' && printf '%s\n' "$out" | grep -q '^  OVERDUE 2026-12-27 18:00' &&
+  pass "schedule status: the text names the overdue item" || fail "schedule status: text ($out)"
+expect "schedule status: the verdict stays the last line" verdict "$(printf '%s\n' "$out" | tail -n 1 | cut -d: -f1)"
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" "$plugin/scripts/doctor.sh" 2>&1)
+printf '%s\n' "$out" | grep -q '^note    schedule: overdue since 2026-12-27 18:00: #5 rerun the nightly import check' &&
+  pass "schedule doctor: notes the overdue item" || fail "schedule doctor: no overdue note ($out)"
+printf '%s\n' "$out" | grep -q '^note    schedule: line 9 .* ignored' && pass "schedule doctor: notes a malformed line" ||
+  fail "schedule doctor: no malformed note"
+printf '%s\n' "$out" | grep -q '^note    schedule: overdue.*#12' && fail "schedule doctor: a due item (today) is noted as overdue" ||
+  pass "schedule doctor: only overdue items are noted"
+
+# done: by line, by ticket; done items leave check; nothing to mark is exit 1.
+line=$(grep -n 'rerun the nightly' "$sfile" | cut -d: -f1)
+ssched "done" "$line" >/dev/null
+grep -q '^- \[x\] 2026-12-27 18:00 | #5' "$sfile" && pass "schedule done: marks the item on that line done" || fail "schedule done: by line"
+ssched "done" '#12' >/dev/null
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check 2>/dev/null)
+printf '%s\n' "$out" | grep -q 'nightly\|latency' && fail "schedule done: done items still show in check" ||
+  pass "schedule done: done items leave check"
+ssched "done" '#12' >/dev/null 2>&1
+expect "schedule done: nothing left to mark is exit 1" 1 $?
+ssched "done" 1 >/dev/null 2>&1
+expect "schedule done: a line that is not a pending item is exit 1" 1 $?
+
+# A hand edit without a final newline: the next add starts its own line, so both items fire.
+rm -f "$sfile"
+printf -- '- 2026-12-28 08:00 | - | - | hand edited' >"$sfile"
+ssched add 2026-12-28 09:00 - - added after >/dev/null
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check 2>/dev/null)
+printf '%s\n' "$out" | grep -q '| hand edited (line 1)' && printf '%s\n' "$out" | grep -q '| added after (line 2)' &&
+  pass "schedule add: an item added to a file without a final newline is its own line" ||
+  fail "schedule add: glued onto the last line ($out)"
+
+# Time zone: "now" is read in schedule.timezone. An item at the current clock time of UTC+13 is an hour past in
+# UTC+14 (due or overdue) and still a day ahead in UTC-12 (upcoming).
+rm -f "$sfile"
+# shellcheck disable=SC2046  # date and time are two arguments
+ssched add $(TZ=Etc/GMT-13 date '+%Y-%m-%d %H:%M') - - zone probe >/dev/null
+stz() { # stz ZONE: the class of the probe item with schedule.timezone ZONE
+  printf '{"base_branch": "main", "checks": ["true"], "schedule": {"timezone": "%s", "days": 3}}\n' "$1" >"$swork/tz.json"
+  DEV_LOOP_CONFIG="$swork/tz.json" ssched check | awk '/zone probe/ { print $1 }'
+}
+case $(stz Etc/GMT-14) in DUE | OVERDUE) pass "schedule timezone: an hour-old item is due in UTC+14" ;;
+  *) fail "schedule timezone: UTC+14 class '$(stz Etc/GMT-14)'" ;; esac
+expect "schedule timezone: the same item is upcoming in UTC-12" UPCOMING "$(stz Etc/GMT+12)"
+printf '{"base_branch": "main", "checks": ["true"], "schedule": {"timezone": "Not/AZone"}}\n' >"$swork/tz.json"
+DEV_LOOP_CONFIG="$swork/tz.json" "$plugin/scripts/doctor.sh" 2>&1 | grep -q '^MISSING schedule.timezone: "Not/AZone"' &&
+  pass "schedule timezone: doctor reports an unknown zone" || fail "schedule timezone: doctor accepts an unknown zone"
+# An unknown zone silently reads the clock in UTC: check, the hook and status must say so.
+DEV_LOOP_CONFIG="$swork/tz.json" ssched check 2>&1 >/dev/null | grep -q 'warning: schedule.timezone "Not/AZone" is not a known time zone' &&
+  pass "schedule timezone: check warns about an unknown zone" || fail "schedule timezone: check is silent about an unknown zone"
+echo '{}' | DEV_LOOP_CONFIG="$swork/tz.json" CLAUDE_PROJECT_DIR="$swork/sched" "$plugin/hooks/session-start.sh" 2>/dev/null |
+  grep -q 'warning: schedule.timezone "Not/AZone"' && pass "schedule timezone: the hook's output carries the warning" ||
+  fail "schedule timezone: the hook does not warn about an unknown zone"
+DEV_LOOP_CONFIG="$swork/tz.json" "$plugin/scripts/status.sh" --no-gh | grep -q '^schedule: .*warning: not a known time zone' &&
+  pass "schedule timezone: status warns about an unknown zone" || fail "schedule timezone: status is silent about an unknown zone"
+cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"

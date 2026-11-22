@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # What is the loop doing? The gate, the heavy slots, the loop worktrees, the last merge, the open tickets,
-# the orchestrator's last event and a verdict, from any terminal or session, without waking the session.
+# the orchestrator's last event, the overdue, due and upcoming items of the durable schedule (with "schedule"
+# in the config; schedule.sh) and a verdict, from any terminal or session, without waking the session.
 #
 # Usage: status.sh [--json] [--no-gh]
 #
-# Read-only: it reads files (train-running.txt, the event logs, the stage logs, the notes, the ledger) and
-# git, and asks `gh` for the open tickets unless --no-gh. It never writes, signals or locks anything (a
-# process is "alive" when `ps -p` lists it; a slot is "held" when its slot-acquired event has no release
+# Read-only: it reads files (train-running.txt, the event logs, the stage logs, the notes, the ledger, the
+# schedule) and git, and asks `gh` for the open tickets unless --no-gh. It never writes, signals or locks
+# anything (a process is "alive" when `ps -p` lists it; a slot is "held" when its slot-acquired event has no release
 # and its pid is alive). The heavy slots are read from the event logs of every repository under
 # ~/.dev-loop (DEV_LOOP_HOME), since the slots are shared machine-wide.
 #
@@ -56,7 +57,10 @@
 #    "worktrees": [{"branch", "path", "ticket", "merged", "commit_age_seconds", "notes_age_seconds",
 #                   "pushed", "unpushed_commits", "ahead", "behind"}],
 #    "last_merge": {"branch", "ticket", "merged_at", "age_seconds"}|null, "open_tickets": n|null,
-#    "orchestrator": {"event", "detail", "ticket", "age_seconds"}|null}
+#    "orchestrator": {"event", "detail", "ticket", "age_seconds"}|null,
+#    "schedule": {"file", "timezone": str|null, "overdue": n, "due": n, "upcoming": n,
+#                 "items": [{"class": "OVERDUE|DUE|UPCOMING", "time", "line", "ticket": n|null,
+#                            "window": str|null, "what"}]} (only with "schedule" in the config)}
 # Exit: 0, 2 usage or not in a repository.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -433,6 +437,33 @@ wait_ended() {
   printf '%s' "$reason"
 }
 
+# --- The durable schedule (with "schedule" in the config): overdue, due and upcoming items. ---
+# shellcheck source=lib/schedule.sh
+. "$scripts_dir/lib/schedule.sh"
+schedule_lines=() schedule_json=""
+# schedule_items: the overdue, due and upcoming rows of the schedule (schedule.sh check's items).
+schedule_items() {
+  local s_now
+  s_now=$(dl_schedule_now)
+  dl_schedule_rows "$s_now" "$(dl_schedule_days)" 2>/dev/null | awk -F'\t' '$1 == "OVERDUE" || $1 == "DUE" || $1 == "UPCOMING"'
+}
+if dl_schedule_on; then
+  s_json="" s_counts=""
+  while IFS=$'\t' read -r s_class s_time s_line s_ticket s_window s_what; do
+    [ -n "$s_class" ] || continue
+    schedule_lines+=("  $s_class $s_time | $s_ticket | $s_window | $s_what (line $s_line)")
+    s_counts+="$s_class "
+    s_json+="${s_json:+,}{\"class\":$(dl_json_string "$s_class"),\"time\":$(dl_json_string "$s_time"),\"line\":$(jnum "$s_line"),\"ticket\":$(jnum "${s_ticket#\#}"),\"window\":$(jstr "${s_window#-}"),\"what\":$(dl_json_string "$s_what")}"
+  done < <(schedule_items)
+  s_overdue=$(printf '%s\n' "$s_counts" | tr ' ' '\n' | grep -c '^OVERDUE$')
+  s_due=$(printf '%s\n' "$s_counts" | tr ' ' '\n' | grep -c '^DUE$')
+  s_upcoming=$(printf '%s\n' "$s_counts" | tr ' ' '\n' | grep -c '^UPCOMING$')
+  s_tz=$(dl_schedule_tz)
+  schedule_line="schedule: $s_overdue overdue, $s_due due, $s_upcoming upcoming in $(dl_schedule_days) days (time zone ${s_tz:-local})"
+  dl_schedule_tz_ok "$s_tz" || schedule_line+="; warning: not a known time zone, times read in UTC"
+  schedule_json="{\"file\":$(dl_json_string "$(dl_schedule_file)"),\"timezone\":$(jstr "$s_tz"),\"overdue\":$s_overdue,\"due\":$s_due,\"upcoming\":$s_upcoming,\"items\":[$s_json]}"
+fi
+
 # --- The verdict. ---
 threshold=$((stall_minutes * 60))
 state="" what="" wait_over=false wait_reason=""
@@ -489,8 +520,8 @@ if [ -n "$json" ]; then
     "$([ -n "$gate_running" ] && echo true || echo false)" "$gate_died" "$(jnum "$gate_pid")" \
     "$(printf '%s\n' "$gate_train" | tr ' ' '\n' | dl_json_list)" "$(jnum "$gate_elapsed")" "$stage_json"
   printf '"heavy":{"slots":%s,"held":[%s],"waiting":[%s]},' "$(jnum "$heavy_slots")" "$held_json" "$waiting_json"
-  printf '"worktrees":[%s],"last_merge":%s,"open_tickets":%s,"orchestrator":%s}\n' \
-    "$worktree_json" "$last_merge_json" "$(jnum "$open_tickets")" "$orch_json"
+  printf '"worktrees":[%s],"last_merge":%s,"open_tickets":%s,"orchestrator":%s%s}\n' \
+    "$worktree_json" "$last_merge_json" "$(jnum "$open_tickets")" "$orch_json" "${schedule_json:+,\"schedule\":$schedule_json}"
   exit 0
 fi
 
@@ -504,5 +535,9 @@ for line in "${worktree_lines[@]+"${worktree_lines[@]}"}"; do echo "$line"; done
 echo "$last_merge_line"
 echo "$open_line"
 echo "$orch_line"
+if dl_schedule_on; then
+  echo "$schedule_line"
+  for line in "${schedule_lines[@]+"${schedule_lines[@]}"}"; do echo "$line"; done
+fi
 [ -z "$agents_text" ] || echo "agents in flight: $agents_text"
 echo "verdict: $verdict"

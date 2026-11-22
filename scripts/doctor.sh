@@ -270,6 +270,28 @@ doctor_scenarios() {
   done < <(dl_scenarios_validate "$dir")
 }
 
+# shellcheck source=lib/schedule.sh
+. "$scripts_dir/lib/schedule.sh"
+
+# doctor_schedule: with "schedule", the schedule file, a bad time zone or days (MISSING), and a note for each
+# overdue item and for malformed item lines.
+doctor_schedule() {
+  local tz days rows pending class time line ticket _window what
+  tz=$(dl_schedule_tz)
+  days=$(cfg schedule.days 7)
+  dl_schedule_tz_ok "$tz" || missing "schedule.timezone: \"$tz\" is not a time zone under /usr/share/zoneinfo (e.g. Europe/Berlin, America/New_York, UTC)"
+  case $days in "" | *[!0-9]*) missing "schedule.days: \"$days\" is not a whole number of days" ;; esac
+  rows=$(dl_schedule_rows "$(dl_schedule_now)" "$(dl_schedule_days)")
+  pending=$(printf '%s\n' "$rows" | grep -c -v -e '^MALFORMED' -e '^$')
+  ok "schedule $(dl_schedule_file) (time zone ${tz:-local}): $pending pending items"
+  while IFS=$'\t' read -r class time line ticket _window what; do
+    case $class in
+      OVERDUE) optional "schedule: overdue since $time: $ticket $what (line $line): do it now, or mark it done (schedule.sh done $line)" ;;
+      MALFORMED) optional "schedule: line $time of $(dl_schedule_file) is not an item (- YYYY-MM-DD HH:MM | #ticket | window | what), ignored" ;;
+    esac
+  done <<<"$rows"
+}
+
 # shellcheck source=lib/permissions.sh
 . "$scripts_dir/lib/permissions.sh"
 
@@ -869,6 +891,7 @@ else
   dl_arch_on && doctor_arch
   doctor_factory
   dl_scenarios_on && doctor_scenarios
+  dl_schedule_on && doctor_schedule
   if [ -f "$DL_ROOT/CLAUDE.md" ]; then ok "CLAUDE.md"; elif [ -f "$DL_ROOT/.claude/CLAUDE.md" ]; then
     ok ".claude/CLAUDE.md"
   else missing "CLAUDE.md or .claude/CLAUDE.md (run the setup skill)"; fi

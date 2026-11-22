@@ -77,6 +77,10 @@ session as the owner) or the rule to move, and wait; never edit those files your
 | `MISSING architect marker ...` | write one UTC time to it: `date -u +%Y-%m-%dT%H:%M:%SZ >"$(paths.sh architect)"` |
 | `MISSING scenario <file>: <reason>` | fix the scenario's front matter or body (see `templates/scenario.md`); a duplicate id gets a new id |
 | `MISSING scenarios.<key>: ... is not a number from 0 to 1` | set `pass`, `min_satisfaction` or `sealed` to a share such as `0.8` |
+| `note schedule: overdue since <time>: ...` | a scheduled item was not done on its day: do it now (the `dev-loop` skill, section 0a), then `schedule.sh done <line>`; or mark it done if it no longer applies |
+| `note schedule: line <n> of <file> is not an item ...` | fix the line by hand (`- YYYY-MM-DD HH:MM \| #ticket \| window \| what`), or remove it |
+| `MISSING schedule.timezone: ...` | a zone name under `/usr/share/zoneinfo` such as `Europe/Berlin`, or `""` for the machine's zone |
+| `MISSING schedule.days: ...` | a whole number of days (default 7) |
 | `note scenario store ... does not exist yet` | create the folder (`paths.sh scenarios`) and add scenarios written from the spec |
 | `note the scenario store ... is inside the repository` | move it outside every worktree (the default `~/.dev-loop/<repo>/scenarios`) |
 | `MISSING factory: "<value>" is not collaborative or dark` | set `"factory"` to `collaborative` or `dark`, or remove it (collaborative) |

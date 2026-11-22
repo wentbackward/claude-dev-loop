@@ -23,6 +23,16 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   ticket: "remove source-shape tests and redundant tests; keep or replace only those that guard real
   behaviour; report suite size and run time before/after".
 
+## Unreleased
+
+- Durable schedule (#111): `scripts/schedule.sh add|done|list|check` keeps time-bound loop work in
+  `~/.dev-loop/<repo>/schedule.md` (`paths.sh schedule`), one line per item
+  (`- YYYY-MM-DD HH:MM | #ticket | window | what to do`) in `schedule.timezone`. With `schedule` in
+  `.dev-loop.json`, a new SessionStart hook prints the overdue, due and upcoming items into the session,
+  `status.sh` shows them (`schedule` in `--json`) and `doctor.sh` notes the overdue ones. The `dev-loop`
+  skill acts on due items at session start and adds a line, an in-session timer and a ticket comment when
+  it schedules work. Without the key nothing changes.
+
 ## 0.9.0 — 2026-11-09
 
 - Targeted refusal hints (#105): for a bundled short flag the guard's hint names the flag letter

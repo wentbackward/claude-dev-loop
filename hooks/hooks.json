@@ -1,5 +1,5 @@
 {
-  "description": "dev-loop: refuse git commands that hit a stop condition (unless \"guard\": false), keep the scenario store from the coding agents and guard GitHub writes in identity mode, format the edited file, and keep Claude from stopping on red fast checks or uncommitted work. All are no-ops in projects without .dev-loop.json.",
+  "description": "dev-loop: refuse git commands that hit a stop condition (unless \"guard\": false), keep the scenario store from the coding agents and guard GitHub writes in identity mode, format the edited file, keep Claude from stopping on red fast checks or uncommitted work, and show the due and upcoming items of the durable schedule at session start (with \"schedule\"). All are no-ops in projects without .dev-loop.json.",
   "hooks": {
     "PreToolUse": [
       {
@@ -32,6 +32,17 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.sh\"",
             "timeout": 300
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
+            "timeout": 20
           }
         ]
       }

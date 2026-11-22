@@ -1,6 +1,6 @@
 ---
 name: status
-description: Show what the dev loop is doing right now without waking the session that runs it - the batch gate and its current stage (with how long ago its log last grew), the heavy-job slots and what holds them, each loop worktree, the last merge, open tickets, the orchestrator's last step, and a verdict (idle, working, waiting on something, or possibly stalled). Use when asked for the loop's status, whether the loop or the gate is stuck or still running, or what the loop is waiting on.
+description: Show what the dev loop is doing right now without waking the session that runs it - the batch gate and its current stage (with how long ago its log last grew), the heavy-job slots and what holds them, each loop worktree, the last merge, open tickets, the orchestrator's last step, the overdue and upcoming scheduled items, and a verdict (idle, working, waiting on something, or possibly stalled). Use when asked for the loop's status, whether the loop or the gate is stuck or still running, or what the loop is waiting on.
 ---
 
 # Status
@@ -14,6 +14,8 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/status.sh            # add --no-gh to skip the ope
 It only reads: files under `~/.dev-loop/<repo>/` (the event log `events.jsonl`, `train-running.txt`, the
 stage logs, the notes, the ledger), git, and `gh issue list` for the count. It never writes, signals or
 locks anything, so it is safe to run while the loop works. `--json` prints the same as one object.
+With `schedule` in `.dev-loop.json` it also shows the durable schedule's overdue, due and upcoming items
+(`schedule: <n> overdue, <n> due, <n> upcoming ...`): name the overdue ones to the user.
 
 ## Report
 
