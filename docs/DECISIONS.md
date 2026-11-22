@@ -1188,3 +1188,38 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Reason:** almost every branch appends to both files at the same spot, and each such pair cost a
   rebase-only review round.
 - **Alternatives:** keeping it off and rebasing by hand (the cost this removes).
+
+## 2026-11-22 — Durable schedule: classes by date, no clock arithmetic (#111)
+
+- **Decision:** `schedule.sh check` reads "now" as `TZ=<schedule.timezone> date '+%Y-%m-%d %H:%M'` and
+  compares the zero-padded `YYYY-MM-DD HH:MM` fields as text. An item is `OVERDUE` when its day is before
+  today, `DUE` when it is today at or before now, `UPCOMING` when it is later within `schedule.days`
+  (default 7; the horizon date comes from a day-number calculation in awk), else not shown. A done item
+  stays in the file as `- [x] ...`; a line starting `- ` that does not parse is ignored and named on
+  stderr and by `doctor.sh`. `DEV_LOOP_NOW` replaces the clock for tests.
+- **Reason:** no `date -d` or epoch conversion of a zone's clock time is portable between GNU and BSD
+  date; text comparison in one zone is exact and works on both. Keeping done items is the record of what
+  ran.
+- **Alternatives:** a grace period in minutes before "overdue" (needs clock arithmetic); deleting done
+  lines (loses the record); a JSON file (not hand-editable at a glance).
+
+## 2026-11-22 — Schedule on only with the "schedule" key; status.sh adds its field only then (#111)
+
+- **Decision:** the SessionStart hook, `status.sh` and `doctor.sh` read the schedule only when
+  `.dev-loop.json` has a `schedule` object (or `true`); `schedule.sh` and `paths.sh schedule` work either
+  way. Without the key the hook prints nothing and `status.sh --json` has no `schedule` field (not
+  `null`), so its object is exactly as before. `schedule.sh` joins the plugin scripts that get an allow
+  rule (`permissions.sh`), so an existing project's doctor notes one missing loop rule until the owner
+  re-applies the rules.
+- **Reason:** every option is off by default and a project without it behaves as before.
+- **Alternatives:** a `"schedule": null` field always (changes the object for every project).
+
+## 2026-11-22 — Named windows and the user-timer safety net left for later (#111)
+
+- **Decision:** the optional proposal items are not built here: named windows in `.dev-loop.json`
+  (`check` warning when an item tagged with a window falls outside it) and a documented systemd/launchd
+  user timer that runs a daily overdue check and opens a `scheduled-due` issue. The window tag is stored
+  and shown, not checked.
+- **Reason:** the ticket marks both optional; the schedule, the hook, status and doctor cover the
+  acceptance list, and each is a separate change with its own tests.
+- **Alternatives:** building both now (a larger branch, a timer that writes to GitHub outside a session).

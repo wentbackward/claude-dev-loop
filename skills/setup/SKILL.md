@@ -61,6 +61,10 @@ running system against holdout scenarios". Skip any question whose answer you al
      the user agrees on a layout.
    - `architecture`: the component cards and the dependency check, see step 3c; leave `check` empty
      (off) until the user confirms the component map.
+   - `schedule`: keep the template's block (the machine's time zone, 7 days ahead) so every session
+     starts with the durable schedule's due and upcoming items; set `timezone` when the project's times
+     follow another zone (a market's or a service's), or remove the block for a project with no
+     time-bound work.
    - `"factory"`: the mode the user chose; leave it out for `collaborative`. For `dark`, run step 3d
      before the first gate.
    - `"worktrees_dir": "../<repo>-worktrees"` (with the repository's name for `<repo>`) for a new project:

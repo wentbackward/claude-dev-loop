@@ -232,6 +232,8 @@ session, read-only: it never writes, signals or locks anything.
   the **orchestrator's last event** with its age, and the **agents in flight** (`agent-started` or
   `watchdog-resumed` not yet followed by `agent-reported`, a merge of that ticket (a `merged` event or
   the ledger), or an `idle` event).
+- **The schedule** (with `schedule` in the config): the overdue, due and upcoming items of the durable
+  schedule (see Durable schedule below), above the verdict.
 - **The verdict**, the last line: `idle` (nothing running and nothing in flight; a recent event on its own
   is not work), `working` (a loop worktree with unmerged work, or an agent in flight; worktrees unchanged
   since the orchestrator's last `idle` event do not count), `waiting on <what> (output <n>s ago)` (a
@@ -275,6 +277,47 @@ a hung loop command is stopped after reading its log tail (only the gate's own s
 heavy jobs its gate started), an agent with no report is resumed or replaced. It records what it did
 with `event.sh`, and never kills anything that is not the loop's own. `"watchdog": false` turns the
 heartbeat off.
+
+## Durable schedule (optional)
+
+Some loop work must happen at a set time, not whenever the orchestrator next looks: a check after a nightly
+job, a run while an external system is open, a re-measurement after a date. In-session timers die with
+the session, and a parked ticket is only picked up by chance. The durable schedule is one file per
+project, outside git, next to the notes and logs: `~/.dev-loop/<repo>/schedule.md` (`paths.sh schedule`).
+One line per item, in the time zone `schedule.timezone` (default: the machine's):
+
+```markdown
+- 2026-11-23 18:30 | #42 | business | re-run the latency check after the nightly import
+```
+
+The fields are the time (`YYYY-MM-DD HH:MM`), the ticket (`#<n>` or `-`), a window tag (a word such as
+`business`, or `-`) and what to do. `scripts/schedule.sh` keeps the file:
+
+| command | what it does |
+|---------|--------------|
+| `schedule.sh add <YYYY-MM-DD> <HH:MM> <#ticket\|-> <window\|-> <what to do...>` | appends a valid item (a bad date or time is refused, exit 2); the same item again is a no-op |
+| `schedule.sh done <line\|#ticket>` | marks the item on that line, or every pending item of the ticket, done (`- [x] ...`, kept as a record); exit 1 when nothing matches |
+| `schedule.sh list` | every pending item in time order, with its class and line |
+| `schedule.sh check [--days <n>]` | the `OVERDUE` (a day before today), `DUE` (today, at or before now) and `UPCOMING` (within `schedule.days`, default 7) items; nothing at all when there are none |
+
+Times are compared as text in the schedule's zone (`TZ=<zone> date`), so it works the same on Linux and
+macOS with no date arithmetic on clock times. A hand-edited line that starts with `- ` and does not parse
+is ignored, named on stderr and in `doctor.sh`.
+
+With `"schedule": {}` (or `{"timezone": "Europe/Berlin", "days": 7}`) in `.dev-loop.json`:
+
+- the plugin's **SessionStart hook** runs `schedule.sh check` at every session start (and after a clear or
+  a compaction) and puts its output into the session's context, with the instruction to do the due items
+  first and re-create an in-session timer for each upcoming one; it prints nothing when there is nothing
+  to do;
+- **`status.sh`** shows the overdue, due and upcoming items (`schedule` in `--json`);
+- **`doctor.sh`** notes each overdue item and each malformed line, and reports a time zone it cannot find
+  under `/usr/share/zoneinfo`.
+
+Without the key the hook is a silent no-op, `status.sh --json` has no `schedule` field, and nothing
+else changes. The `dev-loop` skill has the orchestrator add a line (plus an in-session timer and a comment on
+the ticket) whenever it schedules time-bound work. Future work with no time stays in the spec as pending,
+not as a parked ticket.
 
 ## Branch lifecycle
 
@@ -856,6 +899,8 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `guard` | on | `"guard": false` turns off the role guard's git check (see Permission modes: the git guard); an object (`guard.agents`) keeps it on |
 | `guard.agents` | built in | extra agent-type to roles mapping for the role guard (identity mode; not the scenario isolation) |
 | `deploy` | none | the deploy command the orchestrator uses |
+| `schedule` | none (off) | an object turns the durable schedule on for the SessionStart hook, `status.sh` and `doctor.sh` (see Durable schedule) |
+| `schedule.timezone`, `schedule.days` | the machine's zone, `7` | the zone the schedule's times are in (a name under `/usr/share/zoneinfo`, e.g. `Europe/Berlin`); how many days ahead `check` lists upcoming items |
 | `docs.aspects` | none (docs off; `doctor.sh` notes it) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
 | `docs.planned` | none | the planned list (built and planned are kept apart); `doctor.sh` notes rows whose ticket closed |
 | `docs.planned_max_days` | none (off) | `doctor.sh` notes a planned row whose ticket is open longer than this with no loop branch; `0` is off |
