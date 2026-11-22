@@ -2,7 +2,7 @@
 # Print the dev-loop paths of the current repository, so prompts and notes use absolute paths.
 #
 # Usage: paths.sh notes <branch> | notes-dir | logs | events | gate | worktree <n> | worktrees | state | doc-audit |
-#        architect | scenarios | config | root
+#        architect | scenarios | schedule | config | root
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -10,6 +10,8 @@ scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 dl_help "$0" "${1:-}"
 # shellcheck source=lib/scenarios.sh
 . "$scripts_dir/lib/scenarios.sh"
+# shellcheck source=lib/schedule.sh
+. "$scripts_dir/lib/schedule.sh"
 
 dl_load_config
 [ -n "$DL_ROOT" ] || dl_die "not inside a git repository"
@@ -38,7 +40,8 @@ case "${1:-}" in
     dl_architect_file
     ;;
   scenarios) dl_scenarios_dir ;;
+  schedule) dl_schedule_file ;;
   config) printf '%s\n' "$DL_CONFIG" ;;
   root) printf '%s\n' "$DL_ROOT" ;;
-  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | events | gate | worktree <n> | worktrees | state | doc-audit | architect | scenarios | config | root" ;;
+  *) dl_die "usage: paths.sh notes <branch> | notes-dir | logs | events | gate | worktree <n> | worktrees | state | doc-audit | architect | scenarios | schedule | config | root" ;;
 esac
