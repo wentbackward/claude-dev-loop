@@ -251,7 +251,7 @@ delete them; leave the tree clean. Run only the targeted tests and the fast chec
 <Round 2 or later: the previous round's must-fix list, verbatim. Check each item, then review the whole
 diff again as if for the first time.>
 <Polish-backlog ticket: this ticket is the polish backlog; its review creates no further backlog work.>
-Every finding states its failure scenario (input or state -> wrong outcome); severity is likelihood x
+Every finding states how the code fails (input or state -> wrong outcome); severity is likelihood x
 impact. Output: MUST-FIX / SHOULD-FIX / NIT lists, then VERDICT: APPROVE or VERDICT: CHANGES REQUIRED.
 ```
 
