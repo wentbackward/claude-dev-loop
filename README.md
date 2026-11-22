@@ -50,8 +50,11 @@ and a systemd user session (`systemd-run --user`), which give the heavy-job queu
 In the project, ask Claude to run the **setup** skill (`/dev-loop:setup`). It looks at the repository
 first: language, toolchain, Makefile, CI, spec. Then it asks only for what it could not find out. It writes:
 
-- `CLAUDE.md` from the template: operating mode, stop conditions, workflow, engineering, test and safety
-  rules;
+- `CLAUDE.md` from the template: operating mode, stop conditions, workflow, the engineering standard
+  (pedantic about correctness and evidence, not form), engineering, test and safety rules. In a project
+  that already has a `CLAUDE.md`, setup adds only the missing sections and keeps the project's own. A
+  plugin update never rewrites `CLAUDE.md`, so a project set up before the standard existed merges it in
+  by hand from `templates/CLAUDE.md`;
 - `docs/DECISIONS.md`, the decisions log (date, decision, reason, alternatives);
 - `.dev-loop.json`, the project config (see below);
 - permission rules in `.claude/settings.json`: what the loop runs is allowed, releases and tags ask, force
@@ -68,17 +71,25 @@ else `~/.claude`) and `DEV_LOOP_MANAGED_SETTINGS` point it at other files.
 
 Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 
-1. **Tickets.** One GitHub issue per work item, with acceptance criteria and dependencies.
+1. **Tickets.** One GitHub issue per work item, with acceptance criteria and dependencies. The criteria
+   state behaviour; one phrased as a grep or a file check is verified once, at review, and never becomes
+   a permanent test.
 2. **Implementers.** At most 3 at a time, one ticket each, each in its own worktree
    (`feat/<n>-<slug>`). Each one writes the failing tests first, then the code, and runs only targeted
-   tests and the fast check. It makes small Conventional Commits (`Refs #n`), pushes its branch and writes
-   a PR notes file. That file sits outside git; its first line is a plain title, then a summary,
-   `Closes #n`, the doc changes (`## Docs`), the reasons for new architecture exceptions
-   (`## Architecture`, when there are any) and the test evidence. Implementers never open or merge PRs.
+   tests and the fast check. The tests go through public interfaces, never read source files, comments
+   or other tests, and are the minimum set that guards the likely regressions (test economy). It makes
+   small Conventional Commits (`Refs #n`), pushes its branch and writes a PR notes file. That file sits
+   outside git; its first line is a plain title, then a summary, `Closes #n`, the doc changes
+   (`## Docs`), the reasons for new architecture exceptions (`## Architecture`, when there are any) and
+   the test evidence. Implementers never open or merge PRs.
 3. **Review.** The `code-reviewer` agent reviews every branch, independently of the implementer's own
    review. It reproduces suspected bugs as throwaway tests, and applies a deeper checklist on paths that
-   touch money, orders, auth or deleting data. Must-fix items go back to the implementer, and the branch is
-   reviewed again until `VERDICT: APPROVE`.
+   touch money, orders, auth or deleting data. Every finding states a failure scenario (input or state ->
+   wrong outcome) and a severity by likelihood x impact: MUST-FIX (a plausible failure with real impact),
+   SHOULD-FIX (unlikely or low impact) or NIT (no failure scenario). MUST-FIX items go back to the
+   implementer, and the branch is reviewed again until `VERDICT: APPROVE`. Findings about tests, comments
+   or docs alone go to one polish-backlog issue per ticket, once; the review of a polish-backlog ticket
+   never opens another.
 4. **Batch gate.** `gate-train.sh b1 b2 ...` stacks the approved branches, in merge order, on the latest
    base in a separate gate worktree. It then runs the configured checks once on the top of the stack. A red
    train is never merged, not even for an apparent flake: re-run it, then bisect. A branch that conflicts
@@ -145,8 +156,8 @@ Start it with `/dev-loop:dev-loop` or simply "work through the open tickets".
 | skill | `doctor` | check the machine and the project (`/dev-loop:doctor`), and explain each problem's fix |
 | skill | `status` | what the loop is doing now, without waking its session (`/dev-loop:status`; see Status) |
 | agent | `implementer` | one ticket, test first, in its worktree; pushes and writes the notes file |
-| agent | `code-reviewer` | strict independent review; must fix / should fix; verdict |
-| agent | `test-engineer` | failing tests from the acceptance criteria, before the code |
+| agent | `code-reviewer` | independent review of correctness and evidence; MUST-FIX / SHOULD-FIX / NIT, each with its failure scenario; verdict |
+| agent | `test-engineer` | the minimum failing behaviour tests for the ticket's regression risks, before the code |
 | agent | `verifier` | read-only audit of a real run's outputs |
 | agent | `doc-auditor` | read-only audit of the current-state docs and component cards; one ticket per drift, a maintenance list for housekeeping |
 | agent | `architect` | read-only architecture review from the merge evidence; refactoring tickets and extraction-ladder steps |
@@ -397,7 +408,7 @@ every merge:
 - **The agents.** Each ticket names the doc sections it changes; for a feature, the change to Features is
   written first. The implementer updates the docs in the same branch and writes a required `## Docs`
   section in its notes: the doc changes, or `none: <reason>`. The reviewer treats a false or missing doc
-  change as a must fix. A spec whose work has all merged is archived.
+  change as a MUST-FIX. A spec whose work has all merged is archived.
 - **`scripts/docs-check.sh <from> <to> [<notes file>]`** (deterministic; exit 0 green, 1 red, 2 usage or
   config) is red when a file changed in the range matches a map rule but none of that rule's docs changed
   and the notes' `## Docs` section has no `none: <reason>` line, or when a changed Markdown file has a
@@ -584,7 +595,7 @@ violations may only shrink:
 - **The agents.** Each ticket names its components and is sliced to one where possible (the interface
   first, then the consumers). The implementer keeps the cards true and allows a new dependency only
   through the cards, or says why under `## Architecture`. The reviewer treats a false card or a new upward
-  dependency solved by an exception as a must fix: the fix is an interface the lower layer defines. Setup
+  dependency solved by an exception as a MUST-FIX: the fix is an interface the lower layer defines. Setup
   drafts the first component map from the code, asks the user to confirm the boundaries and layers, and
   records the baseline.
 

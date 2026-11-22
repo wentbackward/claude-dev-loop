@@ -27,13 +27,15 @@ The spec is `{{SPEC_PATH}}`. It is the source of truth.
 1. **Tickets.** One GitHub issue per work item of the spec's work breakdown, with acceptance criteria,
    dependencies and labels. Keep issues current; close them through `Closes #n` on merge.
 2. **Branch per ticket:** `feat/<issue>-<slug>` (or `fix/`, `chore/`, `docs/`), each in its own worktree.
-3. **Test first.** Failing tests from the acceptance criteria, then the code.
+3. **Test first.** Failing tests for the behavioural acceptance criteria, then the code: the minimum set
+   that guards the likely regressions (test economy, see the Engineering standard). A criterion phrased
+   as a grep or file check is verified once, at review, and never becomes a permanent test.
 4. **Targeted tests only** while implementing, plus the fast check (`{{FAST_CHECK_COMMAND}}`). The full
    checks run once per batch in the gate.
 5. **Commit often:** small Conventional Commits (`feat:`, `fix:`, `test:`, `refactor:`, `chore:`,
    `docs:`), each referencing the issue (`Refs #12`).
-6. **Review:** the `code-reviewer` agent on every branch diff; fix every "must fix" item; re-review until
-   APPROVE.
+6. **Review:** the `code-reviewer` agent on every branch diff; each finding states a failure scenario and a
+   severity (likelihood x impact); fix every MUST-FIX item; re-review until APPROVE.
 7. **Batch gate and merge:** approved branches are stacked on the latest `origin/{{BASE_BRANCH}}` and
    checked once (`{{FULL_CHECK_COMMANDS}}`); a green train is merged in order, one squash merge per
    ticket. A red train is never merged. Local checks are the merge gate; {{CI_POLICY_E_G_CI_ONLY_ON_TAGS}}.
@@ -68,6 +70,31 @@ The current-state docs say what the system does now: {{DOCS_ASPECTS_E_G_FEATURES
   file holds rules for agents, not a description of the system.
 - **Small enough to read:** one folder per aspect with an index and one file per area, each under
   `docs.max_lines` lines (`doctor.sh` notes the bigger ones).
+
+## Engineering standard
+I am a pedantic engineer about *correctness and evidence*: exact behaviour,
+edge cases, contracts, and proof that a change works. I am not pedantic about
+form. Good engineering, not over-engineering: every test, finding and line of
+code must earn its cost.
+
+- Tests verify behaviour through public interfaces. Never write tests that
+  read source files, comments, file layout, or other tests. To verify config
+  (CI, YAML), parse or execute it rather than grep it.
+- Acceptance criteria phrased as greps or file checks are verified once, at
+  review, and quoted in the report. They do not become permanent tests.
+- Every review finding states a concrete failure scenario
+  (input/state -> wrong outcome).
+- Severity = likelihood x impact. MUST-FIX: a plausible failure with real
+  impact (wrong behaviour, security, data loss, broken contract).
+  SHOULD-FIX: unlikely or low-impact failures. NIT: no failure scenario;
+  batch nits, never block on them.
+- Test economy: the minimum set of tests that guards the most likely real
+  regressions. Each test names the regression it prevents. Prefer one
+  behaviour test over several narrow ones. A test that cannot fail for a
+  real bug is a cost, not a benefit.
+- Findings about tests, comments or docs alone go to the polish backlog once.
+  A review of a polish-backlog ticket never creates another backlog ticket.
+- Deleting code or tests that add no protection is a valid improvement.
 
 ## Engineering rules
 
