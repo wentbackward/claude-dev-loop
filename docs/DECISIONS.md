@@ -1189,6 +1189,30 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   rebase-only review round.
 - **Alternatives:** keeping it off and rebasing by hand (the cost this removes).
 
+## 2026-11-22 — The engineering standard: severity by likelihood x impact, one polish backlog (#112)
+
+- **Decision:** the standard goes verbatim into `templates/CLAUDE.md` as its own `## Engineering
+  standard` section, before the engineering rules; the agent briefs and the `dev-loop` skill carry the
+  parts each one acts on. The reviewer keeps its blocking rules (secrets and safety, data, the deeper
+  safety checklist, false docs and cards, a reason for a gate rule change that says nothing, loosened
+  rules without the user's OK) as MUST-FIX, each with a one-line failure scenario; on the deeper
+  checklist's paths an unlikely failure is still MUST-FIX, because the impact is high. Its output is
+  three lists (MUST-FIX, SHOULD-FIX, NIT); `VERDICT: CHANGES REQUIRED` only when MUST-FIX is not empty.
+  The polish backlog is one issue per ticket, opened by the orchestrator after the APPROVE and titled
+  `Polish backlog: <ticket title> (#<n>)`; the reviewer prompt marks a polish-backlog ticket, whose review
+  opens no further backlog issue (its remaining items are listed in the PR notes and dropped). Setup adds
+  the standard to an existing `CLAUDE.md` as a missing section; projects set up earlier merge it by hand
+  (the CHANGELOG says how). No test greps the briefs for the new wording, as the ticket asks; this
+  repository's own `CLAUDE.md` adopts the standard in a separate ticket.
+- **Reason:** observed runs turned the old wording ("strict", "is a must fix", "every acceptance
+  criterion into at least one named test") into source-shape tests, grep criteria pinned as tests,
+  recursive polish tickets and late blocking findings the reviewer itself rated unlikely. A title prefix
+  needs no label to exist in the project.
+- **Alternatives:** a `polish` label (fails where the label does not exist); dropping the blocking rules
+  in favour of the generic severity rule (the gate's own rules and safety would then depend on a
+  likelihood guess); rewriting an existing `CLAUDE.md` on plugin update (the plugin never edits a
+  project's own rules).
+
 ## 2026-11-22 — Durable schedule: classes by date, no clock arithmetic (#111)
 
 - **Decision:** `schedule.sh check` reads "now" as `TZ=<schedule.timezone> date '+%Y-%m-%d %H:%M'` and

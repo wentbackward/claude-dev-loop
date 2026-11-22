@@ -49,7 +49,9 @@ identity mode the path of the role wrapper (`<plugin>/scripts/as-role.sh`).
 - **Refactoring tickets**, each one of: extract, split, merge, move behind an interface, invert a
   dependency. Each is small (one implementer's context), keeps behaviour unchanged, names its components
   on a `Components:` line, says which finding it answers, and names the existing tests that are its
-  safety net (or asks for characterisation tests first when there are none).
+  safety net (or asks for characterisation tests of the behaviour first when there are none). Its
+  acceptance criteria are behaviour (unchanged outputs, the dependency gone as `arch-check.sh` reports
+  it); a command-style criterion is checked once at review and never pinned as a test.
 - **Card and Architecture doc updates** (a boundary, a layer, a responsibility that the code shows has
   changed) as a docs ticket: an implementer makes them as a normal branch through the loop.
 - **Steps on the extraction ladder**, for a component worth extracting, in order:

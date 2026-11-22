@@ -4,6 +4,27 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Engineering standard: pedantic about correctness, not form (#112). `templates/CLAUDE.md` carries a new
+  `## Engineering standard` section: tests verify behaviour through public interfaces and never read
+  source files, comments, file layout or other tests; grep and file-check acceptance criteria are verified
+  once at review and quoted, never pinned as permanent tests; every review finding states a failure
+  scenario (input or state -> wrong outcome); severity is likelihood x impact (MUST-FIX, SHOULD-FIX, NIT;
+  only MUST-FIX blocks); test economy (the minimum set that guards the likely regressions, each test
+  naming the regression it prevents); findings about tests, comments or docs alone go to the polish
+  backlog once, and a review of a polish-backlog ticket never creates another. The `code-reviewer`,
+  `implementer`, `test-engineer` and `architect` briefs and the `dev-loop` skill (ticket writing, the
+  implementer and reviewer prompts, the review loop) follow it. The reviewer's blocking rules stay
+  blocking (secrets and safety, data, the deeper safety checklist, false docs and cards, the gate's rules
+  loosened without the user's OK), each with the failure it prevents. The `VERDICT: APPROVE` and
+  `VERDICT: CHANGES REQUIRED` lines are unchanged. Setup adds the standard to a `CLAUDE.md` it writes or
+  completes, but a plugin update never rewrites an existing `CLAUDE.md`. For a project already on the
+  loop: update the plugin, merge the `## Engineering standard` section from `templates/CLAUDE.md` into
+  the project's own `CLAUDE.md` (and qualify its "Test first" step the same way), then raise one cleanup
+  ticket: "remove source-shape tests and redundant tests; keep or replace only those that guard real
+  behaviour; report suite size and run time before/after".
+
+## Unreleased
+
 - Durable schedule (#111): `scripts/schedule.sh add|done|list|check` keeps time-bound loop work in
   `~/.dev-loop/<repo>/schedule.md` (`paths.sh schedule`), one line per item
   (`- YYYY-MM-DD HH:MM | #ticket | window | what to do`) in `schedule.timezone`. With `schedule` in
