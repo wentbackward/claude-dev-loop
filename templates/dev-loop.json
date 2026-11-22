@@ -39,7 +39,7 @@
     "architect": "opus"
   },
   "deploy": "",
-  "schedule": { "timezone": "", "days": 7 },
+  "schedule": { "timezone": "", "days": 7, "windows": {} },
   "docs": {
     "aspects": {},
     "planned": "",

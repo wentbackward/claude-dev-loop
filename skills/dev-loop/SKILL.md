@@ -52,12 +52,17 @@ a re-measurement after a date) goes into the durable schedule, `~/.dev-loop/<rep
 you schedule such work:
 
 1. Add the line: `${CLAUDE_PLUGIN_ROOT}/scripts/schedule.sh add <YYYY-MM-DD> <HH:MM> <#ticket|-> <window|-> <what to do>`,
-   the time in `schedule.timezone` (the machine's zone without one).
+   the time in `schedule.timezone` (the machine's zone without one). When the work must run inside a
+   named window (`schedule.windows`, e.g. `business`), tag it with that window; if `add` warns that the
+   time is outside it, pick a time inside the window and add that instead (`done` the wrong line).
 2. Create an in-session timer for it as well (the session's scheduling tool: a scheduled wake-up or a
    one-shot), so a running session does it on time.
 3. Comment the time on the ticket (`gh issue comment <n> --body "Scheduled for <time> <zone>: <what>"`;
    in identity mode through `as-role.sh orchestrator`).
 4. When it is done, `schedule.sh done <line>` (or `done '#<ticket>'` for all of a ticket's items).
+5. An open issue labelled `scheduled-due` was filed by the owner's daily timer
+   (`schedule.sh check --overdue --issue`, README "Daily overdue safety net"): do its items first, mark
+   each done, then close the issue.
 
 Future work with no time and no plan stays in the spec as pending, not as a parked ticket: a ticket exists
 only for work that is planned or scheduled.

@@ -4,6 +4,10 @@
 # as. Like GitHub, a PR author cannot approve its own PR, and a merge needs an approval when
 # FAKE_GH_REQUIRE_APPROVAL=1. PRs get numbers in creation order; issues come from $FAKE_GH_DIR/issues.tsv
 # ("<number>\t<state>\t<reason>[\t<createdAt>]"). `pr list` and `issue list` print the rows the scripts' --jq asks for.
+# `issue create` stores an issue as $FAKE_GH_DIR/issues/<n>.{title,body,labels,state} (its labels must exist in
+# $FAKE_GH_DIR/labels, which `label create` appends to), `issue edit <n> --body-file` replaces its body, and
+# `issue list --label L` prints the numbers of the open stored issues with that label. FAKE_GH_FAIL_ISSUE=1 makes
+# `issue create` and `issue edit` fail, as an expired token does.
 # `auth status` succeeds once $FAKE_GH_DIR/logged-in exists. `gh api PATH` prints $FAKE_GH_DIR/api/<PATH with / as
 # _> when it exists (else nothing); a <file>.fail next to it makes the call fail with its text, as gh does
 # for an HTTP error ("gh: Not Found (HTTP 404)" on stderr, the body on stdout), and a <file>.sleep holding a
@@ -56,11 +60,59 @@ case "${1:-} ${2:-}" in
     done
     ;;
   "issue list")
+    label=$(printf '%s\n' "$@" | grep -A1 -x -- --label | sed -n 2p)
+    if [ -n "$label" ]; then
+      # With --label: the numbers of the open created issues ($FAKE_GH_DIR/issues/<n>.*) with that label.
+      for state_file in "$dir"/issues/*.state; do
+        [ -f "$state_file" ] && [ "$(cat "$state_file")" = OPEN ] || continue
+        ! grep -qxF -- "$label" "${state_file%.state}.labels" || basename "${state_file%.state}"
+      done | sort -n
+      exit 0
+    fi
     # The rows have a fourth column, createdAt, printed only when the call asks for it.
     columns=3
     case " $* " in *createdAt*) columns=4 ;; esac
     [ ! -f "$dir/issues.tsv" ] ||
       awk -F'\t' -v OFS='\t' -v n="$columns" '{ out = $1; for (i = 2; i <= n; i++) out = out OFS $i; print out }' "$dir/issues.tsv"
+    ;;
+  "issue create")
+    # Like GitHub, a label that does not exist ($FAKE_GH_DIR/labels) fails the create.
+    [ "${FAKE_GH_FAIL_ISSUE:-}" != 1 ] || { echo "fake gh: HTTP 401: Bad credentials" >&2; exit 1; }
+    shift 2
+    title="" body_file="" labels=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title) title=$2; shift 2 ;;
+        --body-file) body_file=$2; shift 2 ;;
+        --label) labels="$labels$2"$'\n'; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    while IFS= read -r label; do
+      grep -qxF -- "$label" "$dir/labels" 2>/dev/null || { echo "could not add label: '$label' not found" >&2; exit 1; }
+    done < <(printf '%s' "$labels")
+    mkdir -p "$dir/issues"
+    count=$(($(cat "$dir/issue-count" 2>/dev/null || echo 0) + 1))
+    echo "$count" >"$dir/issue-count"
+    printf '%s\n' "$title" >"$dir/issues/$count.title"
+    cp "$body_file" "$dir/issues/$count.body"
+    printf '%s' "$labels" >"$dir/issues/$count.labels"
+    echo OPEN >"$dir/issues/$count.state"
+    echo "https://github.invalid/fake/issues/$count"
+    ;;
+  "issue edit")
+    number=$3
+    [ "${FAKE_GH_FAIL_ISSUE:-}" != 1 ] || { echo "fake gh: HTTP 401: Bad credentials" >&2; exit 1; }
+    [ -f "$dir/issues/$number.state" ] || { echo "fake gh: no issue $number" >&2; exit 1; }
+    body_file=$(printf '%s\n' "$@" | grep -A1 -x -- --body-file | sed -n 2p)
+    [ -z "$body_file" ] || cp "$body_file" "$dir/issues/$number.body"
+    ;;
+  "label create")
+    if grep -qxF -- "$3" "$dir/labels" 2>/dev/null; then
+      echo "label with name \"$3\" already exists; use --force to update its color and description" >&2
+      exit 1
+    fi
+    printf '%s\n' "$3" >>"$dir/labels"
     ;;
   "pr review")
     branch=$3

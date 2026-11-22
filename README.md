@@ -310,6 +310,7 @@ The fields are the time (`YYYY-MM-DD HH:MM`), the ticket (`#<n>` or `-`), a wind
 | `schedule.sh done <line\|#ticket>` | marks the item on that line, or every pending item of the ticket, done (`- [x] ...`, kept as a record); exit 1 when nothing matches |
 | `schedule.sh list` | every pending item in time order, with its class and line |
 | `schedule.sh check [--days <n>]` | the `OVERDUE` (a day before today), `DUE` (today, at or before now) and `UPCOMING` (within `schedule.days`, default 7) items; nothing at all when there are none |
+| `schedule.sh check --overdue [--issue]` | only the `OVERDUE` items, exit 1 when there are any, else 0 and silent; `--issue` also files them on GitHub (the daily safety net below), exit 2 when that fails |
 
 Times are compared as text in the schedule's zone (`TZ=<zone> date`), so it works the same on Linux and
 macOS with no date arithmetic on clock times. A hand-edited line that starts with `- ` and does not parse
@@ -331,6 +332,106 @@ Without the key the hook is a silent no-op, `status.sh --json` has no `schedule`
 else changes. The `dev-loop` skill has the orchestrator add a line (plus an in-session timer and a comment on
 the ticket) whenever it schedules time-bound work. Future work with no time stays in the spec as pending,
 not as a parked ticket.
+
+### Named windows
+
+A window tag can name a window in `schedule.windows`, in the schedule's time zone:
+
+```json
+"schedule": {"timezone": "America/New_York", "windows": {"business": "Mon-Fri 09:30-16:00", "night": "Fri 22:00-02:00"}}
+```
+
+A window is `<days> <HH:MM>-<HH:MM>`: the days are `daily` or a comma list of `Mon` to `Sun` and ranges
+(`Mon-Fri`, `Sat,Sun`, `Fri-Mon`); the start is inside, the end is not (`24:00` is allowed as an end). An
+end before the start runs past midnight: `Fri 22:00-02:00` is Friday 22:00 to Saturday 02:00. With a
+window named, `schedule.sh add` warns on stderr (and still adds the item) and `schedule.sh check` warns
+under the item when the item's time is outside its window or its window does not parse. `doctor.sh`
+reports a malformed window (`MISSING`) and notes an item whose tag names no window. Without
+`schedule.windows` a tag is only a label and nothing is checked.
+
+### Daily overdue safety net (a timer the owner installs)
+
+The SessionStart hook only helps when a session starts. For a day with no session, a user timer can run
+`schedule.sh check --overdue --issue` once a day from the repository. When items are overdue it opens one
+issue labelled `scheduled-due` listing them (creating the label when it is missing), or, when such an
+issue is already open, replaces its body with the current list; when nothing is overdue it prints
+nothing, exits 0 and does not touch GitHub. It runs `gh` through `as-role.sh orchestrator` (the user's
+own `gh` login outside identity mode). The exit status tells the cases apart: 0 nothing overdue, 1 items
+overdue and filed, 2 items overdue but the issue could not be filed (`gh` failed: an expired token, no
+network; the reason is on stderr). Watch for 2: it means the safety net is not reaching you. The issue
+names the schedule file under `~`, never the full home path. Do the items, mark them done, and close the
+issue.
+
+Nothing installs the timer: it is off unless you add it. In both files below `<repo>` is the
+repository's absolute path, `<home>` your home directory's absolute path (launchd does not expand `~`),
+`<name>` a short name for it, and `<plugin>` the installed plugin's
+directory (`~/.claude/plugins/cache/claude-dev-loop/dev-loop/<version>`; point it at the new version
+after a plugin update).
+
+**Linux (systemd user units).** `~/.config/systemd/user/dev-loop-overdue-<name>.service`:
+
+```ini
+[Unit]
+Description=dev-loop overdue schedule check for <name>
+
+[Service]
+Type=oneshot
+WorkingDirectory=<repo>
+ExecStart=<plugin>/scripts/schedule.sh check --overdue --issue
+# Exit 1 means "items overdue, issue filed", not a failed run; exit 2 (not filed) stays a failure.
+SuccessExitStatus=1
+```
+
+and `~/.config/systemd/user/dev-loop-overdue-<name>.timer`:
+
+```ini
+[Unit]
+Description=Daily dev-loop overdue schedule check for <name>
+
+[Timer]
+OnCalendar=*-*-* 08:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then `systemctl --user daemon-reload && systemctl --user enable --now dev-loop-overdue-<name>.timer`.
+`Persistent=true` runs a missed day at the next boot; user timers run only while you are logged in unless
+`loginctl enable-linger` is on for your user. `journalctl --user -u dev-loop-overdue-<name>` shows its runs;
+a run that could not file the issue leaves the unit `failed` (`systemctl --user --failed` lists it).
+
+**macOS (launchd agent).** `~/Library/LaunchAgents/dev-loop.overdue.<name>.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev-loop.overdue.<name></string>
+  <key>ProgramArguments</key>
+  <array>
+    <string><plugin>/scripts/schedule.sh</string>
+    <string>check</string><string>--overdue</string><string>--issue</string>
+  </array>
+  <key>WorkingDirectory</key><string><repo></string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string><home>/Library/Logs/dev-loop-overdue.<name>.log</string>
+  <key>StandardErrorPath</key><string><home>/Library/Logs/dev-loop-overdue.<name>.log</string>
+</dict>
+</plist>
+```
+
+Then `launchctl load ~/Library/LaunchAgents/dev-loop.overdue.<name>.plist`. The `PATH` must reach `gh`
+and `jq` (or `python3`); launchd starts a run missed during sleep at the next wake (not one missed while
+the Mac was off). The log under `~/Library/Logs/` (yours only, not world-readable like `/tmp`) holds each
+run's output. `launchctl list dev-loop.overdue.<name>` shows `"LastExitStatus"`: a non-zero value means
+the last run found overdue items or failed (launchd usually reports a wait status, the exit code times
+256), and the log under `<home>/Library/Logs/` says which. To remove either timer, disable it
+(`systemctl --user disable --now ...`, `launchctl unload ...`) and delete its files.
 
 ## Branch lifecycle
 
@@ -914,6 +1015,7 @@ Lives at the repository root and is committed. Every key is optional unless mark
 | `deploy` | none | the deploy command the orchestrator uses |
 | `schedule` | none (off) | an object turns the durable schedule on for the SessionStart hook, `status.sh` and `doctor.sh` (see Durable schedule) |
 | `schedule.timezone`, `schedule.days` | the machine's zone, `7` | the zone the schedule's times are in (a name under `/usr/share/zoneinfo`, e.g. `Europe/Berlin`); how many days ahead `check` lists upcoming items |
+| `schedule.windows` | none (tags not checked) | window name to `"<days> HH:MM-HH:MM"` (e.g. `"Mon-Fri 09:30-16:00"`); `add` and `check` warn about an item outside its window (see Named windows) |
 | `docs.aspects` | none (docs off; `doctor.sh` notes it) | current-state docs: aspect name to a file or folder; at least one turns the docs check on (see Current-state docs) |
 | `docs.planned` | none | the planned list (built and planned are kept apart); `doctor.sh` notes rows whose ticket closed |
 | `docs.planned_max_days` | none (off) | `doctor.sh` notes a planned row whose ticket is open longer than this with no loop branch; `0` is off |

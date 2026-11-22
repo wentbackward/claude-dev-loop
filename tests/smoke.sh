@@ -7576,4 +7576,89 @@ echo '{}' | DEV_LOOP_CONFIG="$swork/tz.json" CLAUDE_PROJECT_DIR="$swork/sched" "
 DEV_LOOP_CONFIG="$swork/tz.json" "$plugin/scripts/status.sh" --no-gh | grep -q '^schedule: .*warning: not a known time zone' &&
   pass "schedule timezone: status warns about an unknown zone" || fail "schedule timezone: status is silent about an unknown zone"
 cd "$work/project" || exit 1
+# 35. Schedule windows and the overdue safety net (#114): schedule.windows names windows ("Mon-Fri 09:30-16:00",
+# in schedule.timezone); add and check warn about an item outside its window. check --overdue prints only the
+# overdue items (exit 1 when there are any), and --issue opens or updates one issue labelled scheduled-due.
+wwork="$work/win"
+git init -q --bare "$wwork/origin.git"
+git clone -q "$wwork/origin.git" "$wwork/win" 2>/dev/null
+cd "$wwork/win" || exit 1
+printf '{"base_branch": "main", "checks": ["true"], "schedule": {}}\n' >.dev-loop.json
+git add . && git commit -q -m "chore: start" && git push -q -u origin main
+wfile="$DEV_LOOP_HOME/win/schedule.md"
+wsched() { "$plugin/scripts/schedule.sh" "$@"; }
+# wadd DATE TIME WINDOW: add an item tagged WINDOW and print what add says on stderr (its warnings).
+wadd() { wsched add "$1" "$2" - "$3" "item at $1 $2 in $3" 3>&1 1>/dev/null 2>&3; }
+
+# Without schedule.windows a tag is only a label: no warning, whatever the time (projects without the key unchanged).
+expect "windows off: a tagged item is not checked without schedule.windows" "" "$(wadd 2027-01-02 03:00 business)"
+rm -f "$wfile"
+
+printf '%s\n' '{"base_branch": "main", "checks": ["true"], "schedule": {"timezone": "UTC", "windows": {' \
+  '"business": "Mon-Fri 09:30-16:00", "night": "Fri 22:00-02:00", "broken": "Mon-Fry 09:00-17:00"}}}' >.dev-loop.json
+# 2026-12-28 is a Monday, 2026-12-31 a Thursday, 2027-01-01 a Friday, 2027-01-02 a Saturday.
+expect "windows: an item inside its window gets no warning" "" "$(wadd 2026-12-28 09:30 business)"
+wadd 2026-12-28 16:00 business | grep -q 'outside window business (Mon-Fri 09:30-16:00)' &&
+  pass "windows: the end of a window is outside it" || fail "windows: an item at the window's end is accepted"
+wadd 2027-01-02 10:00 business | grep -q 'outside window business' &&
+  pass "windows: a Saturday is outside Mon-Fri (weekday across the year end)" || fail "windows: Saturday accepted in Mon-Fri"
+expect "windows: Friday 23:00 is inside Fri 22:00-02:00" "" "$(wadd 2027-01-01 23:00 night)"
+expect "windows: Saturday 01:30 is inside Fri 22:00-02:00 (across midnight)" "" "$(wadd 2027-01-02 01:30 night)"
+wadd 2026-12-31 23:00 night | grep -q 'outside window night' &&
+  pass "windows: Thursday night is outside a Friday-night window" || fail "windows: Thursday accepted in a Friday window"
+wadd 2027-01-02 02:30 night | grep -q 'outside window night' &&
+  pass "windows: after the end past midnight is outside" || fail "windows: Saturday 02:30 accepted in Fri 22:00-02:00"
+wadd 2026-12-28 10:00 broken | grep -q 'window broken is not .*"Mon-Fry 09:00-17:00"' &&
+  pass "windows: a malformed window is named, not silently accepted" || fail "windows: no warning for a malformed window"
+grep -q 'item at 2026-12-28 16:00 in business' "$wfile" && pass "windows: an item outside its window is still scheduled" ||
+  fail "windows: an item outside its window was not written"
+
+# check shows the warning under the item it concerns, not under the others.
+out=$(DEV_LOOP_NOW="2026-12-28 12:00" wsched check --days 7 2>/dev/null)
+printf '%s\n' "$out" | grep -A1 '2026-12-28 16:00 | - | business' | grep -q 'outside window business' &&
+  pass "windows check: the warning follows the item outside its window" || fail "windows check: no warning ($out)"
+printf '%s\n' "$out" | grep -A1 '2026-12-28 09:30 | - | business' | tail -n 1 | grep -q 'outside' &&
+  fail "windows check: a warning under an item inside its window" || pass "windows check: no warning under an item inside its window"
+
+# doctor notes an item whose tag names no window.
+wsched add 2026-12-29 10:00 - lunch "unknown tag" >/dev/null 2>&1
+DEV_LOOP_NOW="2026-12-28 12:00" "$plugin/scripts/doctor.sh" 2>&1 | grep -q '^note    schedule: line [0-9]* uses window lunch, which schedule.windows does not name' &&
+  pass "windows doctor: an unknown window tag is a note" || fail "windows doctor: no note for an unknown tag"
+
+# --overdue: only the overdue items, exit 1; none overdue is silent, exit 0.
+rm -f "$wfile"
+wsched add 2026-12-27 09:00 '#3' - overdue one >/dev/null
+wsched add 2026-12-28 08:00 '#4' - due today >/dev/null
+wsched add 2026-12-29 08:00 '#5' - upcoming >/dev/null
+out=$(DEV_LOOP_NOW="2026-12-28 12:00" wsched check --overdue 2>/dev/null)
+expect "overdue: exit 1 when an item is overdue" 1 $?
+expect "overdue: prints only the overdue items (not due or upcoming)" "OVERDUE  2026-12-27 09:00 | #3 | - | overdue one (line 4)" "$out"
+out=$(DEV_LOOP_NOW="2026-12-27 12:00" wsched check --overdue 2>/dev/null)
+expect "overdue: exit 0 when nothing is overdue" 0 $?
+expect "overdue: prints nothing when nothing is overdue" "" "$out"
+
+# --issue, with a fake GitHub that has no scheduled-due label yet: one issue opened, then updated, never a second.
+export FAKE_GH_DIR="$wwork/gh"
+wissue() { DEV_LOOP_NOW="$1" wsched check --overdue --issue >/dev/null 2>&1; }
+wissue "2026-12-27 12:00"
+expect "overdue issue: nothing overdue opens nothing" 0 "$(cat "$FAKE_GH_DIR/calls.log" 2>/dev/null | grep -c 'issue create')"
+wissue "2026-12-28 12:00"
+expect "overdue issue: the run exits 1 (items overdue)" 1 $?
+expect "overdue issue: one issue opened" 1 "$(grep -c 'gh issue create' "$FAKE_GH_DIR/calls.log")"
+grep -q 'scheduled-due' "$FAKE_GH_DIR/issues/1.labels" && pass "overdue issue: labelled scheduled-due (label created first)" ||
+  fail "overdue issue: not labelled ($(cat "$FAKE_GH_DIR/calls.log"))"
+grep -q 'overdue one' "$FAKE_GH_DIR/issues/1.body" && pass "overdue issue: the body lists the overdue item" ||
+  fail "overdue issue: body ($(cat "$FAKE_GH_DIR/issues/1.body"))"
+wissue "2026-12-30 12:00"
+expect "overdue issue: the next run opens no second issue" 1 "$(grep -c 'gh issue create' "$FAKE_GH_DIR/calls.log")"
+grep -q 'due today' "$FAKE_GH_DIR/issues/1.body" && pass "overdue issue: the next run updates the open issue's list" ||
+  fail "overdue issue: not updated ($(cat "$FAKE_GH_DIR/issues/1.body"))"
+# A failed filing (an expired token) must not look like "overdue and filed": exit 2, on update and on create.
+FAKE_GH_FAIL_ISSUE=1 wissue "2026-12-30 12:00"
+expect "overdue issue: a failed update exits 2, not 1" 2 $?
+export FAKE_GH_DIR="$wwork/gh-fail"
+FAKE_GH_FAIL_ISSUE=1 wissue "2026-12-30 12:00"
+expect "overdue issue: a failed create exits 2, not 1" 2 $?
+export FAKE_GH_DIR="$work/gh"
+cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"
