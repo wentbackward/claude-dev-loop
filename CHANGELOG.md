@@ -4,6 +4,13 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- Union merge keeps a heading both sides added once (#117). With `merge.union_files`, when both sides of a
+  conflict hunk only added lines and both begin with the same Markdown heading line (one starting with
+  `#`, such as the `## Unreleased` two branches add after a release), `scripts/union-merge.sh` keeps that
+  heading once, then the base side's entries, then the branch's, with the blank lines of a normal
+  changelog; before, the heading appeared twice. Insertions that begin with different lines are kept whole
+  as before, and every other conflict still stops the train. This repository's `CHANGELOG.md` had two
+  `## Unreleased` sections from that bug; they are one again.
 - Schedule windows and a daily overdue safety net (#114). `schedule.windows` names windows such as
   `{"business": "Mon-Fri 09:30-16:00"}` (days `daily`, `Mon` to `Sun`, ranges and comma lists; an end
   before the start runs past midnight; in `schedule.timezone`): `schedule.sh add` warns on stderr and
@@ -37,9 +44,6 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   the project's own `CLAUDE.md` (and qualify its "Test first" step the same way), then raise one cleanup
   ticket: "remove source-shape tests and redundant tests; keep or replace only those that guard real
   behaviour; report suite size and run time before/after".
-
-## Unreleased
-
 - Durable schedule (#111): `scripts/schedule.sh add|done|list|check` keeps time-bound loop work in
   `~/.dev-loop/<repo>/schedule.md` (`paths.sh schedule`), one line per item
   (`- YYYY-MM-DD HH:MM | #ticket | window | what to do`) in `schedule.timezone`. With `schedule` in

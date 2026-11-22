@@ -1304,3 +1304,27 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Alternatives:** rewrite each text check as a behaviour check of the command it documents (most
   document agent steps no script runs, so there is nothing to execute); keep them as a separate docs
   lint (still form, not behaviour).
+
+## 2026-11-22 — Union merge keeps a heading both sides added once (#117)
+
+- **Decision:** in `scripts/union-merge.sh`, a conflict hunk whose base part is empty and whose ours and
+  theirs parts begin with the same line, when that line starts with `#` (a Markdown heading; a CR before
+  the line end is ignored in the comparison), is written as: the heading once (ours' copy), ours' blank
+  lines right after it, ours' entries (ours' part without those leading and its trailing blank lines),
+  then theirs' entries (theirs' part without the heading and its leading and trailing blank lines),
+  separated from ours' entries by one blank line unless theirs' first entry line is a list item (`-`,
+  `*`, `+` or `1.`/`1)`), then the longer of the two trailing blank runs (ours' on a tie). Only the
+  repeated heading and blank lines at the edges of the parts are dropped; no non-blank line of either side
+  is. Parts that begin with different lines, or with the same line that is no heading, are kept whole as
+  before (#95). A hunk with no end marker is now a conflict (exit 1), since its buffered lines would
+  otherwise be lost.
+- **Reason:** after a release both branches add `## Unreleased` and an entry at the same spot; keeping
+  both hunks whole gave two headings on main (lines 5 and 41 before this branch merged them). A list item
+  continues the list of ours' entries, as changelog entries are written here; other entries (paragraphs,
+  sub-headings) need the blank line to stay separate blocks. The trailing run keeps the separator to what
+  follows in the base.
+- **Alternatives:** fold any shared first line (would merge two entries that happen to start alike, such
+  as `- **Decision:**`, and drop a line); a full LCS refinement inside the hunk (what `merge=union` does,
+  and the reason it was rejected in #95); always one blank line between the entries (a loose list in every
+  changelog); leave it to the release step to merge the headings (main stays broken in between and later
+  branches pick one of the two).
