@@ -274,7 +274,7 @@ doctor_scenarios() {
 . "$scripts_dir/lib/schedule.sh"
 
 # doctor_schedule: with "schedule", the schedule file, a bad time zone or days (MISSING), and a note for each
-# overdue item and for malformed item lines.
+# overdue item and for malformed item lines; with schedule.windows, its malformed windows and unknown tags.
 doctor_schedule() {
   local tz days rows pending class time line ticket _window what
   tz=$(dl_schedule_tz)
@@ -290,6 +290,19 @@ doctor_schedule() {
       MALFORMED) optional "schedule: line $time of $(dl_schedule_file) is not an item (- YYYY-MM-DD HH:MM | #ticket | window | what), ignored" ;;
     esac
   done <<<"$rows"
+  doctor_schedule_windows "$rows"
+}
+
+# doctor_schedule_windows ROWS: with schedule.windows, each malformed window (MISSING) and each item whose tag
+# names no window (a note).
+doctor_schedule_windows() {
+  local kind line window spec
+  while IFS=$'\t' read -r kind line window spec; do
+    case $kind:$line in
+      BADWINDOW:0) missing "schedule.windows.$window: $(dl_schedule_window_message BADWINDOW "$window" "$spec")" ;;
+      UNKNOWN:*) optional "schedule: line $line uses window $window, which schedule.windows does not name (add it, or retag the item)" ;;
+    esac
+  done < <(printf '%s\n' "$1" | dl_schedule_window_notes)
 }
 
 # shellcheck source=lib/permissions.sh
