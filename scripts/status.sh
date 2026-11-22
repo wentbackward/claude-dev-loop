@@ -60,7 +60,7 @@
 #    "orchestrator": {"event", "detail", "ticket", "age_seconds"}|null,
 #    "schedule": {"file", "timezone": str|null, "overdue": n, "due": n, "upcoming": n,
 #                 "items": [{"class": "OVERDUE|DUE|UPCOMING", "time", "line", "ticket": n|null,
-#                            "window": str|null, "what"}]}|null (null without "schedule" in the config)}
+#                            "window": str|null, "what"}]} (only with "schedule" in the config)}
 # Exit: 0, 2 usage or not in a repository.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -440,7 +440,7 @@ wait_ended() {
 # --- The durable schedule (with "schedule" in the config): overdue, due and upcoming items. ---
 # shellcheck source=lib/schedule.sh
 . "$scripts_dir/lib/schedule.sh"
-schedule_lines=() schedule_json=null
+schedule_lines=() schedule_json=""
 # schedule_items: the overdue, due and upcoming rows of the schedule (schedule.sh check's items).
 schedule_items() {
   local s_now
@@ -519,8 +519,8 @@ if [ -n "$json" ]; then
     "$([ -n "$gate_running" ] && echo true || echo false)" "$gate_died" "$(jnum "$gate_pid")" \
     "$(printf '%s\n' "$gate_train" | tr ' ' '\n' | dl_json_list)" "$(jnum "$gate_elapsed")" "$stage_json"
   printf '"heavy":{"slots":%s,"held":[%s],"waiting":[%s]},' "$(jnum "$heavy_slots")" "$held_json" "$waiting_json"
-  printf '"worktrees":[%s],"last_merge":%s,"open_tickets":%s,"orchestrator":%s,"schedule":%s}\n' \
-    "$worktree_json" "$last_merge_json" "$(jnum "$open_tickets")" "$orch_json" "$schedule_json"
+  printf '"worktrees":[%s],"last_merge":%s,"open_tickets":%s,"orchestrator":%s%s}\n' \
+    "$worktree_json" "$last_merge_json" "$(jnum "$open_tickets")" "$orch_json" "${schedule_json:+,\"schedule\":$schedule_json}"
   exit 0
 fi
 

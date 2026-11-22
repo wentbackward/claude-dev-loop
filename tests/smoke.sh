@@ -7436,7 +7436,7 @@ git add . && git commit -q -m "chore: start" && git push -q -u origin main
 sfile="$DEV_LOOP_HOME/sched/schedule.md"
 ssched() { "$plugin/scripts/schedule.sh" "$@"; }
 shook() { echo '{"hook_event_name":"SessionStart"}' | CLAUDE_PROJECT_DIR="$swork/sched" "$plugin/hooks/session-start.sh"; }
-sjson_schedule() { "$plugin/scripts/status.sh" --json --no-gh | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["schedule"]))'; }
+sjson_schedule() { "$plugin/scripts/status.sh" --json --no-gh | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin).get("schedule", "absent")))'; }
 expect "schedule: paths.sh schedule names the file under the loop's state dir" "$sfile" "$("$plugin/scripts/paths.sh" schedule)"
 ssched --help | grep -q '^Usage: schedule.sh add' && pass "schedule: --help prints the usage" || fail "schedule: no usage on --help"
 
@@ -7446,7 +7446,7 @@ printf -- '- 2001-01-01 09:00 | #1 | - | long overdue\n' >"$sfile"
 out=$(shook)
 expect "schedule off: the SessionStart hook exits 0" 0 $?
 expect "schedule off: the SessionStart hook prints nothing (no context added to projects without the key)" "" "$out"
-expect "schedule off: status --json has schedule null" null "$(sjson_schedule)"
+expect "schedule off: status --json has no schedule key (the object is unchanged)" '"absent"' "$(sjson_schedule)"
 "$plugin/scripts/status.sh" --no-gh | grep -q '^schedule' && fail "schedule off: status prints a schedule line" ||
   pass "schedule off: status prints no schedule line"
 "$plugin/scripts/doctor.sh" 2>&1 | grep -qi 'schedule' && fail "schedule off: doctor mentions the schedule" ||
@@ -7472,7 +7472,7 @@ expect "schedule add: one line per distinct item" 1 "$(grep -c 'measure latency 
 before=$(cat "$sfile")
 for bad in "2026-02-30 10:00 #1 -" "2026-12-28 24:00 #1 -" "2026-12-28 9:30 #1 -" "2026-12-28 10:00 x1 -" "2026-12-28 10:00 #1 two|words"; do
   # shellcheck disable=SC2086  # the fields are split on purpose
-  ssched add $bad do something >/dev/null 2>&1
+  ssched add $bad "do something" >/dev/null 2>&1
   expect "schedule add: refuses \"$bad\" (exit 2)" 2 $?
 done
 expect "schedule add: refused items leave the file unchanged" "$before" "$(cat "$sfile")"
@@ -7530,15 +7530,15 @@ printf '%s\n' "$out" | grep -q '^note    schedule: overdue.*#12' && fail "schedu
 
 # done: by line, by ticket; done items leave check; nothing to mark is exit 1.
 line=$(grep -n 'rerun the nightly' "$sfile" | cut -d: -f1)
-ssched done "$line" >/dev/null
+ssched "done" "$line" >/dev/null
 grep -q '^- \[x\] 2026-12-27 18:00 | #5' "$sfile" && pass "schedule done: marks the item on that line done" || fail "schedule done: by line"
-ssched done '#12' >/dev/null
+ssched "done" '#12' >/dev/null
 out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check 2>/dev/null)
 printf '%s\n' "$out" | grep -q 'nightly\|latency' && fail "schedule done: done items still show in check" ||
   pass "schedule done: done items leave check"
-ssched done '#12' >/dev/null 2>&1
+ssched "done" '#12' >/dev/null 2>&1
 expect "schedule done: nothing left to mark is exit 1" 1 $?
-ssched done 1 >/dev/null 2>&1
+ssched "done" 1 >/dev/null 2>&1
 expect "schedule done: a line that is not a pending item is exit 1" 1 $?
 
 # Time zone: "now" is read in schedule.timezone. An item at the current clock time of UTC+13 is an hour past in
