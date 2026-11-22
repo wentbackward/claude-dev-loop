@@ -6534,7 +6534,8 @@ cd "$work/project" || exit 1
 
 # 32. Union logs (#95): with merge.union_files, branches that each add a CHANGELOG and a decisions entry at
 # the same spot gate together and merge in order with no rebase, both entries kept whole (base first, then
-# the branch; also with shared lines and CRLF), also in the merge replay; what git merges cleanly merges as
+# the branch; also with shared lines and CRLF; a heading both added, such as ## Unreleased, once (#117)),
+# also in the merge replay; what git merges cleanly merges as
 # git does (a same change once); a conflict hunk that changes or deletes existing lines (amend vs prepend,
 # delete vs modify), a failing awk in the driver, a conflict in any other file, a listed file the repository's
 # .gitattributes gives another merge driver, and the option off still stop the train. The user's global
@@ -6760,6 +6761,26 @@ udriver_files '' 'a\n' 'b\n'
 udriver
 expect "union: an add/add with different content stops the driver, the file unchanged" "1|a" \
   "$?|$(paste -sd'|' - <"$udrv/ours")"
+# Both sides add the same heading at the same spot (#117): the heading is kept once, then ours' entries, then
+# theirs', each with all its lines; a heading-led block of paragraphs keeps a blank line between the entries.
+udriver_files '# C\n\n## 1.0\n\n- old\n' '# C\n\n## Unreleased\n\n- A\n  more A\n\n## 1.0\n\n- old\n' \
+  '# C\n\n## Unreleased\n\n- B\n  more B\n\n## 1.0\n\n- old\n'
+udriver
+expect "union: a heading both sides added is kept once, then ours' and theirs' entries whole" \
+  "0|# C||## Unreleased||- A|  more A|- B|  more B||## 1.0||- old" "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files '# D\n\n## 1\n' '# D\n\n## Notes\n\nPara A.\n\n## 1\n' '# D\n\n## Notes\n\nPara B.\n\n## 1\n'
+udriver
+expect "union: paragraph entries under a heading both added keep a blank line between them" \
+  "0|# D||## Notes||Para A.||Para B.||## 1" "$?|$(paste -sd'|' - <"$udrv/ours")"
+# Only a shared heading is folded: different headings, or a shared first line that is no heading, stay whole.
+udriver_files '# C\n\n## 1.0\n' '# C\n\n## A\n\n- a\n\n## 1.0\n' '# C\n\n## B\n\n- b\n\n## 1.0\n'
+udriver
+expect "union: insertions led by different headings are both kept whole" \
+  "0|# C||## A||- a||## B||- b||## 1.0" "$?|$(paste -sd'|' - <"$udrv/ours")"
+udriver_files 'a\n' 'a\n- same\nours\n' 'a\n- same\ntheirs\n'
+udriver
+expect "union: a shared first line that is no heading is kept on both sides" "0|a|- same|ours|- same|theirs" \
+  "$?|$(paste -sd'|' - <"$udrv/ours")"
 expect "union: the driver removes its temporary files" "" "$(ls -A "$udrv/tmp")"
 # Through the gate: a marker-like line in a listed file, an amended decision next to an appended one, and
 # overlapping edits each stop the train and name the file.
@@ -6799,6 +6820,20 @@ DL_UNION_ATTRIBUTES="$uwork/inherited" ugate feat/910-j >/dev/null
 DL_UNION_ATTRIBUTES="$uwork/inherited" umerge feat/no-such-branch >/dev/null
 [ -f "$uwork/inherited" ] && pass "union: an inherited DL_UNION_ATTRIBUTES path is not removed" ||
   fail "union: the scripts removed an inherited DL_UNION_ATTRIBUTES path"
+# After a release (no Unreleased section), two branches each add "## Unreleased" and an entry (#117): the
+# gated changelog has the heading once and both entries, in branch order.
+git checkout -q main && git merge -q --ff-only origin/main &&
+  printf '# Changelog\n\n## 1.0.0\n\n- released\n' >CHANGELOG.md && git commit -q -am "chore: release 1.0.0" &&
+  git push -q origin main
+for b in feat/924-x feat/925-y; do
+  ucase "$b" CHANGELOG.md "/^## 1\\.0\\.0\$/ { print \"## Unreleased\"; print \"\"; print \"- $b\"; print \"\" } { print }"
+done
+out=$(DEV_LOOP_CONFIG="$uwork/union.json" ugate feat/924-x feat/925-y)
+expect "union: two branches that each add the Unreleased heading gate green with it once, entries in order" \
+  "0 TRAIN GREEN|# Changelog||## Unreleased||- feat/924-x|- feat/925-y||## 1.0.0||- released" \
+  "$? $(echo "$out" | tail -n 1)|$(git show train-feat/925-y:CHANGELOG.md | paste -sd'|' -)"
+printf '# Changelog\n\n## Unreleased\n\n- start\n' >CHANGELOG.md && git commit -q -am "docs: unreleased again" &&
+  git push -q origin main
 
 expect "union: the user's and the repository's git config are unchanged" "$ugit_before" "$(ugit_snapshot)"
 expect "union: the gate's git config is unchanged" "" \

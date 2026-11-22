@@ -172,7 +172,8 @@ stage does not exist and the gate's output is unchanged; a check may not be name
   when a conflict hunk changes or deletes existing lines (an amended entry next to a new one), when a side
   has a line like a long conflict marker, on an add/add, when the driver fails (git older than 2.43 too), or
   when a merge driver set in the repository's or the user's attributes wins; otherwise (both sides only
-  added lines) the stacking keeps both conflicting hunks whole, the base first, then the branch. Any other
+  added lines) the stacking keeps both conflicting hunks whole, the base first, then the branch (a
+  Markdown heading both hunks begin with, such as `## Unreleased`, once). Any other
   conflict gets here. Drop that branch, gate the others, and have its implementer rebase it onto the new
   base after they merge (`git rebase --onto <remote>/<base> <old base> <branch>` when it was stacked; that
   form is not in the allow list, so it asks for permission). Never force-push it: publish it with
