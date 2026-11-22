@@ -428,8 +428,10 @@ a run that could not file the issue leaves the unit `failed` (`systemctl --user 
 Then `launchctl load ~/Library/LaunchAgents/dev-loop.overdue.<name>.plist`. The `PATH` must reach `gh`
 and `jq` (or `python3`); launchd starts a run missed during sleep at the next wake (not one missed while
 the Mac was off). The log under `~/Library/Logs/` (yours only, not world-readable like `/tmp`) holds each
-run's output; `launchctl list dev-loop.overdue.<name>` shows `"LastExitStatus"`, which is 256 for exit 1
-(overdue, filed) and 512 for exit 2 (overdue, not filed: check the log). To remove either timer, disable it (`systemctl --user disable --now ...`, `launchctl unload ...`) and delete its files.
+run's output. `launchctl list dev-loop.overdue.<name>` shows `"LastExitStatus"`: a non-zero value means
+the last run found overdue items or failed (launchd usually reports a wait status, the exit code times
+256), and the log under `<home>/Library/Logs/` says which. To remove either timer, disable it
+(`systemctl --user disable --now ...`, `launchctl unload ...`) and delete its files.
 
 ## Branch lifecycle
 

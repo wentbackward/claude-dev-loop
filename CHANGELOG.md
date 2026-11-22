@@ -11,10 +11,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
   not parse; `doctor.sh` reports a malformed window and notes a tag that names no window. `schedule.sh
   check --overdue` prints only the overdue items and exits 1 when there are any (else 0); `--issue` also
   opens, or updates the body of, the one open issue labelled `scheduled-due` (creating the label when
-  missing), exits 2 when that filing fails, and touches GitHub not at all when nothing is overdue. The README documents a daily systemd
-  user timer and a launchd agent that run it; nothing installs them. Without `schedule.windows` and
-  without the timer nothing changes. `tests/fake-gh` gains `issue create`, `issue edit`, `label create`
-  and `issue list --label`.
+  missing), exits 2 when that filing fails, and touches GitHub not at all when nothing is overdue. The
+  README documents a daily systemd user timer and a launchd agent that run it; nothing installs them.
+  Without `schedule.windows` and without the timer nothing changes. `tests/fake-gh` gains `issue create`,
+  `issue edit`, `label create` and `issue list --label`.
 - Engineering standard: pedantic about correctness, not form (#112). `templates/CLAUDE.md` carries a new
   `## Engineering standard` section: tests verify behaviour through public interfaces and never read
   source files, comments, file layout or other tests; grep and file-check acceptance criteria are verified
