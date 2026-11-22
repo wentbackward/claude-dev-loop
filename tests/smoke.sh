@@ -7588,7 +7588,7 @@ git add . && git commit -q -m "chore: start" && git push -q -u origin main
 wfile="$DEV_LOOP_HOME/win/schedule.md"
 wsched() { "$plugin/scripts/schedule.sh" "$@"; }
 # wadd DATE TIME WINDOW: add an item tagged WINDOW and print what add says on stderr (its warnings).
-wadd() { wsched add "$1" "$2" - "$3" "item at $1 $2 in $3" 2>&1 >/dev/null; }
+wadd() { wsched add "$1" "$2" - "$3" "item at $1 $2 in $3" 3>&1 1>/dev/null 2>&3; }
 
 # Without schedule.windows a tag is only a label: no warning, whatever the time (projects without the key unchanged).
 expect "windows off: a tagged item is not checked without schedule.windows" "" "$(wadd 2027-01-02 03:00 business)"
