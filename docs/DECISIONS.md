@@ -1271,7 +1271,8 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
   `gh label create scheduled-due` (a failure, such as the label existing, is ignored) and then
   `gh issue create --label scheduled-due`. With nothing overdue it calls no `gh` at all, and an open issue
   is left for the session that does the work to close. `gh` runs through `as-role.sh orchestrator`. The
-  exit status is 1 while anything is overdue, also when `gh` fails (with a warning on stderr). The issue
+  exit status is 1 while anything is overdue and filed, 2 when `gh` fails (the reason on stderr), so a timer
+  that keeps `SuccessExitStatus=1` still fails visibly on an expired token. The issue
   names the schedule file under `~`, not the home path. The timer itself is README text for a systemd
   user unit and a launchd agent; no code installs it.
 - **Reason:** one command shares the parser, the clock and the time zone with `check`; editing the body

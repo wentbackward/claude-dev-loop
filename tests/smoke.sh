@@ -7653,6 +7653,12 @@ wissue "2026-12-30 12:00"
 expect "overdue issue: the next run opens no second issue" 1 "$(grep -c 'gh issue create' "$FAKE_GH_DIR/calls.log")"
 grep -q 'due today' "$FAKE_GH_DIR/issues/1.body" && pass "overdue issue: the next run updates the open issue's list" ||
   fail "overdue issue: not updated ($(cat "$FAKE_GH_DIR/issues/1.body"))"
+# A failed filing (an expired token) must not look like "overdue and filed": exit 2, on update and on create.
+FAKE_GH_FAIL_ISSUE=1 wissue "2026-12-30 12:00"
+expect "overdue issue: a failed update exits 2, not 1" 2 $?
+export FAKE_GH_DIR="$wwork/gh-fail"
+FAKE_GH_FAIL_ISSUE=1 wissue "2026-12-30 12:00"
+expect "overdue issue: a failed create exits 2, not 1" 2 $?
 export FAKE_GH_DIR="$work/gh"
 cd "$work/project" || exit 1
 dl_suite_end smoke "$work" "$passed" "$failed"

@@ -310,7 +310,7 @@ The fields are the time (`YYYY-MM-DD HH:MM`), the ticket (`#<n>` or `-`), a wind
 | `schedule.sh done <line\|#ticket>` | marks the item on that line, or every pending item of the ticket, done (`- [x] ...`, kept as a record); exit 1 when nothing matches |
 | `schedule.sh list` | every pending item in time order, with its class and line |
 | `schedule.sh check [--days <n>]` | the `OVERDUE` (a day before today), `DUE` (today, at or before now) and `UPCOMING` (within `schedule.days`, default 7) items; nothing at all when there are none |
-| `schedule.sh check --overdue [--issue]` | only the `OVERDUE` items, exit 1 when there are any, else 0 and silent; `--issue` also files them on GitHub (the daily safety net below) |
+| `schedule.sh check --overdue [--issue]` | only the `OVERDUE` items, exit 1 when there are any, else 0 and silent; `--issue` also files them on GitHub (the daily safety net below), exit 2 when that fails |
 
 Times are compared as text in the schedule's zone (`TZ=<zone> date`), so it works the same on Linux and
 macOS with no date arithmetic on clock times. A hand-edited line that starts with `- ` and does not parse
@@ -356,11 +356,15 @@ The SessionStart hook only helps when a session starts. For a day with no sessio
 issue labelled `scheduled-due` listing them (creating the label when it is missing), or, when such an
 issue is already open, replaces its body with the current list; when nothing is overdue it prints
 nothing, exits 0 and does not touch GitHub. It runs `gh` through `as-role.sh orchestrator` (the user's
-own `gh` login outside identity mode), and exits 1 while anything is overdue. The issue names the
-schedule file under `~`, never the full home path. Do the items, mark them done, and close the issue.
+own `gh` login outside identity mode). The exit status tells the cases apart: 0 nothing overdue, 1 items
+overdue and filed, 2 items overdue but the issue could not be filed (`gh` failed: an expired token, no
+network; the reason is on stderr). Watch for 2: it means the safety net is not reaching you. The issue
+names the schedule file under `~`, never the full home path. Do the items, mark them done, and close the
+issue.
 
 Nothing installs the timer: it is off unless you add it. In both files below `<repo>` is the
-repository's absolute path, `<name>` a short name for it, and `<plugin>` the installed plugin's
+repository's absolute path, `<home>` your home directory's absolute path (launchd does not expand `~`),
+`<name>` a short name for it, and `<plugin>` the installed plugin's
 directory (`~/.claude/plugins/cache/claude-dev-loop/dev-loop/<version>`; point it at the new version
 after a plugin update).
 
@@ -374,7 +378,7 @@ Description=dev-loop overdue schedule check for <name>
 Type=oneshot
 WorkingDirectory=<repo>
 ExecStart=<plugin>/scripts/schedule.sh check --overdue --issue
-# Exit 1 means "items overdue, issue filed", not a failed run.
+# Exit 1 means "items overdue, issue filed", not a failed run; exit 2 (not filed) stays a failure.
 SuccessExitStatus=1
 ```
 
@@ -394,7 +398,8 @@ WantedBy=timers.target
 
 Then `systemctl --user daemon-reload && systemctl --user enable --now dev-loop-overdue-<name>.timer`.
 `Persistent=true` runs a missed day at the next boot; user timers run only while you are logged in unless
-`loginctl enable-linger` is on for your user. `journalctl --user -u dev-loop-overdue-<name>` shows its runs.
+`loginctl enable-linger` is on for your user. `journalctl --user -u dev-loop-overdue-<name>` shows its runs;
+a run that could not file the issue leaves the unit `failed` (`systemctl --user --failed` lists it).
 
 **macOS (launchd agent).** `~/Library/LaunchAgents/dev-loop.overdue.<name>.plist`:
 
@@ -414,16 +419,17 @@ Then `systemctl --user daemon-reload && systemctl --user enable --now dev-loop-o
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-  <key>StandardOutPath</key><string>/tmp/dev-loop-overdue.<name>.log</string>
-  <key>StandardErrorPath</key><string>/tmp/dev-loop-overdue.<name>.log</string>
+  <key>StandardOutPath</key><string><home>/Library/Logs/dev-loop-overdue.<name>.log</string>
+  <key>StandardErrorPath</key><string><home>/Library/Logs/dev-loop-overdue.<name>.log</string>
 </dict>
 </plist>
 ```
 
 Then `launchctl load ~/Library/LaunchAgents/dev-loop.overdue.<name>.plist`. The `PATH` must reach `gh`
 and `jq` (or `python3`); launchd starts a run missed during sleep at the next wake (not one missed while
-the Mac was off). To remove either timer,
-disable it (`systemctl --user disable --now ...`, `launchctl unload ...`) and delete its files.
+the Mac was off). The log under `~/Library/Logs/` (yours only, not world-readable like `/tmp`) holds each
+run's output; `launchctl list dev-loop.overdue.<name>` shows `"LastExitStatus"`, which is 256 for exit 1
+(overdue, filed) and 512 for exit 2 (overdue, not filed: check the log). To remove either timer, disable it (`systemctl --user disable --now ...`, `launchctl unload ...`) and delete its files.
 
 ## Branch lifecycle
 

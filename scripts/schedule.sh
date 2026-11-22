@@ -22,7 +22,7 @@
 # and touches GitHub not at all when nothing is overdue. Malformed item lines are ignored, with a warning on
 # stderr. DEV_LOOP_NOW="YYYY-MM-DD HH:MM" replaces the clock (tests). An unknown schedule.timezone is warned
 # about on stderr. One writer is assumed (the orchestrator): add and done take no lock. Exit: 0, 1 nothing to
-# mark done or (--overdue) items overdue, 2 usage.
+# mark done or (--overdue) items overdue (and filed, with --issue), 2 usage or (--issue) the issue not filed.
 set -u
 scripts_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
@@ -165,7 +165,7 @@ schedule_check() {
 }
 
 # schedule_overdue [--issue]: the overdue items only, and with --issue the scheduled-due issue; exit 1 when
-# anything is overdue, else 0 (silent).
+# anything is overdue (and, with --issue, filed), 2 when the issue could not be filed, else 0 (silent).
 schedule_overdue() {
   local overdue text
   overdue=$(rows 0 | awk -F'\t' '$1 == "OVERDUE"')
@@ -174,7 +174,7 @@ schedule_overdue() {
     print_row "$class" "$time" "$line" "$ticket" "$window" "$what"
   done)
   printf '%s\n' "$text"
-  [ -z "${1:-}" ] || overdue_issue "$text" || dl_warn "the overdue items were not filed on GitHub (gh failed)"
+  [ -z "${1:-}" ] || overdue_issue "$text" || dl_die "the overdue items were not filed on GitHub (gh failed)"
   exit 1
 }
 
