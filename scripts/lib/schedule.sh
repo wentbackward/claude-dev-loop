@@ -53,8 +53,9 @@ dl_schedule_now() {
 }
 
 # dl_schedule_rows NOW DAYS [FILE, "-" for stdin]: one tab-separated row per pending item, sorted by time
-# then line: class (OVERDUE: a day before today; DUE: today, at or before NOW; UPCOMING: after NOW, within DAYS days;
-# LATER), time, line number, ticket, window, what. Malformed item lines come first, as "MALFORMED<TAB><line>".
+# then line: class (OVERDUE: a day before today; DUE: today, at or before NOW; UPCOMING: after NOW, within
+# DAYS days; LATER), time, line number, ticket, window, what. Malformed item lines come first, as
+# "MALFORMED<TAB><line>".
 dl_schedule_rows() {
   local file=${3:-$(dl_schedule_file)}
   [ "$file" = - ] || [ -f "$file" ] || return 0
