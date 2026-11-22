@@ -44,7 +44,10 @@ absolute paths into their prompts.
 
 - At the start of a project (or a new spec section), create one GitHub issue per work item of the spec's
   work breakdown: the acceptance criteria as a checklist, the dependencies (`Depends on #n`), labels, and
-  a milestone if the project uses them. In identity mode:
+  a milestone if the project uses them. Write the criteria as behaviour a user or caller can observe
+  (input or state -> outcome). A criterion that must be a command or a file check (a grep, a file that
+  exists) says so: the reviewer runs it once and quotes the output; it never becomes a permanent test.
+  In identity mode:
   `${CLAUDE_PLUGIN_ROOT}/scripts/as-role.sh orchestrator gh issue create ...`.
 - **Current-state docs** (`docs` in `.dev-loop.json`): the current-state docs describe only what is
   built; planned work stays in the tickets and the `docs.planned` list, which links them. Slice tickets
@@ -198,7 +201,9 @@ Implement ticket #<n>: <title>.
 - Components: <the ticket's Components: line>; keep their cards true; a new dependency must be allowed
   by the cards (arch-check.sh HEAD), or say why under ## Architecture in the notes.
 - Dependencies: <none | #m merged | stacked on <branch>>. Files other agents are editing now: <list>; avoid them.
-- Tests: write the failing tests first. Run ONLY the tests for what you touch, plus the fast check:
+- Tests: write the failing tests first, for the behavioural criteria (grep or file criteria are checked
+  once and quoted in the notes, never pinned as tests). Run ONLY the tests for what you touch, plus the
+  fast check:
   <fast_check>. Do NOT run the full suite, coverage gate, e2e or long builds: the batch gate runs them
   once for all ready branches. If one heavy run is unavoidable, use
   <plugin>/scripts/heavy.sh <command> (never `timeout <command>`).
@@ -209,7 +214,8 @@ Implement ticket #<n>: <title>.
   (it pushes <branch>-vN and carries the notes over) and report the new name.
   Never open, approve or merge PRs. Never read .env or credential files. Never write secrets or personal
   identifiers anywhere.
-- Report: branch, head commit, tests added per criterion, commands run with results, anything open.
+- Report: branch, head commit, tests added per behavioural criterion, commands run with results,
+  anything open.
 ```
 
 ## 3a. Agent lifetimes
@@ -244,13 +250,19 @@ delete them; leave the tree clean. Run only the targeted tests and the fast chec
 <plugin>/scripts/as-role.sh reviewer gh pr review <branch> --approve|--request-changes --body "...">
 <Round 2 or later: the previous round's must-fix list, verbatim. Check each item, then review the whole
 diff again as if for the first time.>
-Output: Must fix / Should fix lists, then VERDICT: APPROVE or VERDICT: CHANGES REQUIRED.
+<Polish-backlog ticket: this ticket is the polish backlog; its review creates no further backlog work.>
+Every finding states its failure scenario (input or state -> wrong outcome); severity is likelihood x
+impact. Output: MUST-FIX / SHOULD-FIX / NIT lists, then VERDICT: APPROVE or VERDICT: CHANGES REQUIRED.
 ```
 
 3. CHANGES REQUIRED: resume the same implementer (SendMessage to its agent id) with the must-fix list
    verbatim, or start a fresh one per section 3a; when it reports, launch a fresh code-reviewer with the
-   previous must-fix list. Repeat until `VERDICT: APPROVE`. Should-fix items:
-   fix now if cheap, else open a follow-up issue.
+   previous must-fix list. Repeat until `VERDICT: APPROVE`. Only MUST-FIX items block. SHOULD-FIX
+   items with a behaviour failure: fix now if cheap, else open a follow-up issue. Findings about tests,
+   comments or docs alone, and NITs, go to the polish backlog once: one issue per ticket, opened after
+   its APPROVE, titled `Polish backlog: <ticket title> (#<n>)`. A review of a polish-backlog ticket never
+   creates another backlog issue: its remaining SHOULD-FIX and NIT items are listed in the PR notes and
+   dropped.
 4. The review is independent: never skip it because the implementer reviewed itself, and never merge a
    branch whose last verdict is not APPROVE.
 
