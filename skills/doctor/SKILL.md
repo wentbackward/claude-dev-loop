@@ -81,6 +81,8 @@ session as the owner) or the rule to move, and wait; never edit those files your
 | `note schedule: line <n> of <file> is not an item ...` | fix the line by hand (`- YYYY-MM-DD HH:MM \| #ticket \| window \| what`), or remove it |
 | `MISSING schedule.timezone: ...` | a zone name under `/usr/share/zoneinfo` such as `Europe/Berlin`, or `""` for the machine's zone |
 | `MISSING schedule.days: ...` | a whole number of days (default 7) |
+| `MISSING schedule.windows.<name>: window <name> is not ...` | write the window as `<days> HH:MM-HH:MM`, e.g. `Mon-Fri 09:30-16:00` (days `daily`, `Mon` to `Sun`, ranges, comma lists) |
+| `note schedule: line <n> uses window <tag>, which schedule.windows does not name` | add the window to `schedule.windows`, or retag the item (edit the line, or `done` it and `add` it again) |
 | `note scenario store ... does not exist yet` | create the folder (`paths.sh scenarios`) and add scenarios written from the spec |
 | `note the scenario store ... is inside the repository` | move it outside every worktree (the default `~/.dev-loop/<repo>/scenarios`) |
 | `MISSING factory: "<value>" is not collaborative or dark` | set `"factory"` to `collaborative` or `dark`, or remove it (collaborative) |
