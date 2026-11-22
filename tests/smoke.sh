@@ -7543,6 +7543,15 @@ expect "schedule done: nothing left to mark is exit 1" 1 $?
 ssched "done" 1 >/dev/null 2>&1
 expect "schedule done: a line that is not a pending item is exit 1" 1 $?
 
+# A hand edit without a final newline: the next add starts its own line, so both items fire.
+rm -f "$sfile"
+printf -- '- 2026-12-28 08:00 | - | - | hand edited' >"$sfile"
+ssched add 2026-12-28 09:00 - - added after >/dev/null
+out=$(DEV_LOOP_NOW="2026-12-28 10:00" ssched check 2>/dev/null)
+printf '%s\n' "$out" | grep -q '| hand edited (line 1)' && printf '%s\n' "$out" | grep -q '| added after (line 2)' &&
+  pass "schedule add: an item added to a file without a final newline is its own line" ||
+  fail "schedule add: glued onto the last line ($out)"
+
 # Time zone: "now" is read in schedule.timezone. An item at the current clock time of UTC+13 is an hour past in
 # UTC+14 (due or overdue) and still a day ahead in UTC-12 (upcoming).
 rm -f "$sfile"

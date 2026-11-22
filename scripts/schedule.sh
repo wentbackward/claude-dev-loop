@@ -85,6 +85,8 @@ schedule_add() {
       echo
     } >"$file" || dl_die "cannot write $file"
   fi
+  # A hand edit may leave no newline at the end: the item must start on its own line.
+  if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then printf '\n' >>"$file" || dl_die "cannot write $file"; fi
   printf '%s\n' "$line" >>"$file" || dl_die "cannot write $file"
   echo "scheduled (line $(wc -l <"$file" | tr -d ' ')): $line"
 }
