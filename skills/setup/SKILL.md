@@ -91,8 +91,8 @@ running system against holdout scenarios". Skip any question whose answer you al
      (notes then live in `~/.dev-loop/<repo>/notes`, outside git and shared by all worktrees).
 2. **`CLAUDE.md`** from `templates/CLAUDE.md`: fill every `{{...}}` placeholder from what you found and
    the answers; delete lines that do not apply. With an existing CLAUDE.md, add only the missing sections
-   (operating mode and stop conditions, workflow loop, parallel work, secrets and safety) and keep the
-   project's own rules.
+   (operating mode and stop conditions, workflow loop, parallel work, the engineering standard, secrets
+   and safety) and keep the project's own rules. The engineering standard goes in verbatim.
 3. **`docs/DECISIONS.md`** from `templates/DECISIONS.md` if missing; add a first entry recording the setup
    choices you made without asking.
 4. **Permissions** (`.claude/settings.json` and `.claude/settings.local.json`), after `.dev-loop.json`: run
