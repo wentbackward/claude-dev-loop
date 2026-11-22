@@ -4,6 +4,10 @@ All notable changes to this plugin. Versions follow [Semantic Versioning](https:
 
 ## Unreleased
 
+- This repository adopts the engineering standard (#113): `.claude/CLAUDE.md` carries it, worded for the
+  bash scripts and the smoke and identity suites, and `tests/smoke.sh` drops its source-shape checks (greps
+  of skill, agent, README, CHANGELOG, decisions and template text, and of script source). The plugin's own
+  suite only; projects that use the plugin are unaffected.
 - Engineering standard: pedantic about correctness, not form (#112). `templates/CLAUDE.md` carries a new
   `## Engineering standard` section: tests verify behaviour through public interfaces and never read
   source files, comments, file layout or other tests; grep and file-check acceptance criteria are verified

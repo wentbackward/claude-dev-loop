@@ -1247,3 +1247,24 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Reason:** the ticket marks both optional; the schedule, the hook, status and doctor cover the
   acceptance list, and each is a separate change with its own tests.
 - **Alternatives:** building both now (a larger branch, a timer that writes to GitHub outside a session).
+
+## 2026-11-22 — Which smoke checks guard behaviour (#113)
+
+- **Decision:** a check stays when it runs a script, hook or helper and checks its output, exit status or
+  the files and repositories it changes. A check goes when it greps a skill, an agent brief, `README.md`,
+  `CHANGELOG.md`, `docs/DECISIONS.md` or a template's prose, or a script's source, or when `claude plugin
+  validate --strict` already covers it (an agent file exists with its name). Text a program reads is
+  tested by running that program: the `templates/settings.json` rules through `dl_perm_match`, the
+  `templates/dev-loop.json` blocks through doctor and the checks, `templates/DECISIONS.md` through
+  `docs-archive.sh journal`. Kept as text checks, because they guard a safety property no run can show:
+  the coding-agent briefs and prompt templates never name the scenario store, the dev-loop skill lists
+  sealed scenarios on an issue only as a count, no skill or brief tells anyone to force-push, the
+  read-only agents' `tools:` lines have no Write or Edit, and section 27b's check that both suites keep
+  their work-dir guard before it runs them nested. Section 18 (docs maintenance) held only text checks and
+  is gone; its id is not reused. `tests/identity.sh` had no source-shape checks and is unchanged. Section
+  34 and after (written to the standard) were left alone.
+- **Reason:** such a check cannot fail for a real bug, and it breaks on wording changes and releases;
+  the reviewer verifies documented text once, at review (#112).
+- **Alternatives:** rewrite each text check as a behaviour check of the command it documents (most
+  document agent steps no script runs, so there is nothing to execute); keep them as a separate docs
+  lint (still form, not behaviour).
