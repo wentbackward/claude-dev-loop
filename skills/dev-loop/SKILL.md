@@ -250,19 +250,21 @@ delete them; leave the tree clean. Run only the targeted tests and the fast chec
 <plugin>/scripts/as-role.sh reviewer gh pr review <branch> --approve|--request-changes --body "...">
 <Round 2 or later: the previous round's must-fix list, verbatim. Check each item, then review the whole
 diff again as if for the first time.>
-<Polish-backlog ticket: this ticket is the polish backlog; its review creates no further backlog work.>
+<Always when the ticket title starts with "Polish backlog:": this ticket is the polish backlog; its review
+creates no further backlog work.>
 Every finding states how the code fails (input or state -> wrong outcome); severity is likelihood x
 impact. Output: MUST-FIX / SHOULD-FIX / NIT lists, then VERDICT: APPROVE or VERDICT: CHANGES REQUIRED.
 ```
 
 3. CHANGES REQUIRED: resume the same implementer (SendMessage to its agent id) with the must-fix list
    verbatim, or start a fresh one per section 3a; when it reports, launch a fresh code-reviewer with the
-   previous must-fix list. Repeat until `VERDICT: APPROVE`. Only MUST-FIX items block. SHOULD-FIX
-   items with a behaviour failure: fix now if cheap, else open a follow-up issue. Findings about tests,
-   comments or docs alone, and NITs, go to the polish backlog once: one issue per ticket, opened after
-   its APPROVE, titled `Polish backlog: <ticket title> (#<n>)`. A review of a polish-backlog ticket never
-   creates another backlog issue: its remaining SHOULD-FIX and NIT items are listed in the PR notes and
-   dropped.
+   previous must-fix list. Repeat until `VERDICT: APPROVE`. Only MUST-FIX items block. Every SHOULD-FIX
+   item lands somewhere: fixed now if cheap; else a SHOULD-FIX with a behaviour failure gets a follow-up
+   issue, and one about tests, comments or docs alone goes to the polish backlog, with the NITs. The
+   polish backlog is one issue per ticket, opened after its APPROVE and titled
+   `Polish backlog: <ticket title> (#<n>)`; that title prefix is how a backlog ticket is recognised. A
+   review of a polish-backlog ticket never creates another backlog issue: its remaining SHOULD-FIX and
+   NIT items are listed in the PR notes and dropped.
 4. The review is independent: never skip it because the implementer reviewed itself, and never merge a
    branch whose last verdict is not APPROVE.
 

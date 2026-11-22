@@ -107,11 +107,13 @@ Severity is likelihood x impact:
 - **SHOULD-FIX**: a failure that is unlikely or of low impact.
 - **NIT**: no failure scenario (naming, wording, layout, style). Batch them; never block on them.
 
-Findings about tests, comments or docs alone (their wording, style or tidiness, with no wrong behaviour
-for a user; a doc that states something false is a false doc above) are SHOULD-FIX or NIT; the
-orchestrator moves them to the polish backlog once. When the ticket under review is itself a polish-backlog
-ticket, list no new backlog work: its review never creates another backlog ticket. Deleting code or tests
-that add no protection is a valid fix to propose.
+A behavioural criterion with no test that would fail for a plausible regression is a MUST-FIX (failure:
+the behaviour breaks in a later change and the suite stays green). Findings about tests, comments or docs
+alone (redundant, weak or form-only tests, wording, style or tidiness, with no wrong behaviour for a user;
+a doc that states something false is a false doc above) are SHOULD-FIX or NIT; the orchestrator moves
+them to the polish backlog once. A ticket whose title starts with `Polish backlog:` is a polish-backlog
+ticket, whether or not the prompt says so: list no new backlog work for it; its review never creates
+another backlog ticket. Deleting code or tests that add no protection is a valid fix to propose.
 
 ## Output
 
