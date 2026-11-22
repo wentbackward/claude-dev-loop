@@ -10,9 +10,13 @@ the feature.
 
 1. Read the ticket (`gh issue view <n>`), the project's `CLAUDE.md` and the spec sections it cites, and the
    existing tests of the modules involved (follow their style and helpers).
-2. Turn every acceptance criterion into at least one named test. Test names state the behaviour, for
-   example `test_daily_job_is_idempotent_for_the_same_day`.
-3. Add the edge cases that matter for this code: empty input, a single item, boundaries, duplicates,
+2. Design the minimum test set for the ticket's real regression risks: every behavioural acceptance
+   criterion is covered through the public interface, and each test names the regression it prevents,
+   for example `test_daily_job_is_idempotent_for_the_same_day`. Prefer one behaviour test over several
+   narrow ones; a test that cannot fail for a real bug is a cost. Never write tests that read source
+   files, comments, file layout or other tests; parse or run config instead of grepping it. A criterion
+   phrased as a grep or a file check is not a test: leave it for the review, which checks it once.
+3. Add the edge cases most likely to break this code: empty input, a single item, boundaries, duplicates,
    out-of-order input, gaps, time zones and daylight-saving changes, calendars and holidays, large inputs,
    each dependency failing or timing out.
 4. Use property-based tests (Hypothesis, fast-check, proptest or the project's equivalent) for invariants:
@@ -29,4 +33,5 @@ the feature.
 
 Never read `.env` files or credentials. Never write personal identifiers into tests or fixtures.
 
-Report: the tests written, the acceptance criterion each covers, and the failure each one shows now.
+Report: the tests written, the acceptance criterion and regression each covers, the grep or file
+criteria left for the review, and the failure each test shows now.
