@@ -1247,3 +1247,36 @@ One entry per decision where the spec is silent. Newest last. Format: date, deci
 - **Reason:** the ticket marks both optional; the schedule, the hook, status and doctor cover the
   acceptance list, and each is a separate change with its own tests.
 - **Alternatives:** building both now (a larger branch, a timer that writes to GitHub outside a session).
+
+## 2026-11-22 — Schedule windows: day list and hours, end exclusive, warnings only (#114)
+
+- **Decision:** a window in `schedule.windows` is `<days> <HH:MM>-<HH:MM>` in `schedule.timezone`: days
+  `daily` or a comma list of `Mon`..`Sun` and ranges (a range may wrap, `Fri-Mon`), the start inclusive,
+  the end exclusive (`24:00` allowed), an end before the start running past midnight into the next day
+  (the part after midnight belongs to the listed day before it); start equal to end is malformed. The
+  weekday comes from the same awk day-number code as the horizon, not `date`. A time outside its window,
+  or a malformed window, is a warning (add still adds the item; check prints it under the item); an
+  unknown tag is only a `doctor.sh` note; without `schedule.windows` nothing is checked.
+- **Reason:** one range per window covers business hours and night runs; an exclusive end makes
+  "09:30-16:00" mean what a market or office means by it; warnings, not refusals, keep `add` usable for a
+  deliberate exception; awk arithmetic is portable to BSD and GNU.
+- **Alternatives:** several hour ranges per window (more grammar for no current need); refusing items
+  outside the window (blocks exceptions); `date -d` for the weekday (GNU only).
+
+## 2026-11-22 — Overdue safety net in schedule.sh: check --overdue --issue edits one issue (#114)
+
+- **Decision:** the timer's step is `schedule.sh check --overdue --issue`, not a separate script. With
+  overdue items it looks up the open issue labelled `scheduled-due` (`gh issue list --label`) and
+  replaces its body with the current list (`gh issue edit --body-file`); with none open it runs
+  `gh label create scheduled-due` (a failure, such as the label existing, is ignored) and then
+  `gh issue create --label scheduled-due`. With nothing overdue it calls no `gh` at all, and an open issue
+  is left for the session that does the work to close. `gh` runs through `as-role.sh orchestrator`. The
+  exit status is 1 while anything is overdue, also when `gh` fails (with a warning on stderr). The issue
+  names the schedule file under `~`, not the home path. The timer itself is README text for a systemd
+  user unit and a launchd agent; no code installs it.
+- **Reason:** one command shares the parser, the clock and the time zone with `check`; editing the body
+  keeps one current list instead of a daily comment; creating the label on demand works in a repository
+  that never had it; leaving GitHub alone when nothing is overdue keeps the timer silent on good days.
+- **Alternatives:** a comment per run (a daily notification while items wait); closing the issue
+  automatically when nothing is overdue (closes it before anyone confirmed the work); a separate script
+  (a second copy of the option handling); installing the timer from setup (changes the owner's machine).
